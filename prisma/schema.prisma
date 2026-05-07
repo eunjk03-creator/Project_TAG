@@ -1,0 +1,204 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── 직원 ───────────────────────────────────────────
+model Employee {
+  id            String   @id @default(uuid())
+  employeeNo    String   @unique @map("employee_no")
+  name          String
+  department    String
+  role          String
+  userRole      UserRole @default(EMPLOYEE) @map("user_role")
+  flexStartTime String   @default("08:30") @map("flex_start_time")
+  managerId     String?  @map("manager_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  manager          Employee?         @relation("TeamMembers", fields: [managerId], references: [id])
+  teamMembers      Employee[]        @relation("TeamMembers")
+  capsLogs         RawCapsLog[]
+  leaveRecords     ErpLeaveRecord[]
+  slackLogs        SlackStatusLog[]
+  dailyAttendances DailyAttendance[]
+
+  @@map("employees")
+}
+
+enum UserRole {
+  EMPLOYEE
+  MANAGER
+  HR
+  ADMIN
+}
+
+// ─── CAPS 원본 로그 ──────────────────────────────────
+model RawCapsLog {
+  id         String   @id @default(uuid())
+  employeeId String   @map("employee_id")
+  taggedAt   DateTime @map("tagged_at")
+  direction  String
+  deviceId   String   @map("device_id")
+  logDate    DateTime @map("log_date") @db.Date
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, logDate])
+  @@map("raw_caps_logs")
+}
+
+// ─── ERP 휴가·결재 ───────────────────────────────────
+model ErpLeaveRecord {
+  id         String    @id @default(uuid())
+  employeeId String    @map("employee_id")
+  leaveDate  DateTime  @map("leave_date") @db.Date
+  leaveType  LeaveType @map("leave_type")
+  status     String    @default("APPROVED")
+  syncedAt   DateTime  @default(now()) @map("synced_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, leaveDate])
+  @@map("erp_leave_records")
+}
+
+enum LeaveType {
+  ANNUAL
+  HALF_AM
+  HALF_PM
+  SICK
+  BUSINESS_TRIP
+  SPECIAL
+}
+
+// ─── Slack 상태 로그 ─────────────────────────────────
+model SlackStatusLog {
+  id         String      @id @default(uuid())
+  employeeId String      @map("employee_id")
+  statusDate DateTime    @map("status_date") @db.Date
+  emoji      String?
+  labelType  SlackLabel? @map("label_type")
+  fetchedAt  DateTime    @default(now()) @map("fetched_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, statusDate])
+  @@map("slack_status_logs")
+}
+
+enum SlackLabel {
+  OUT_OF_OFFICE
+  BUSINESS_TRIP
+  REMOTE
+  VACATION
+  SICK
+}
+
+// ─── 일별 근태 (Sieve 최종 결과) ────────────────────
+model DailyAttendance {
+  id            String      @id @default(uuid())
+  employeeId    String      @map("employee_id")
+  policyId      String?     @map("policy_id")
+  workDate      DateTime    @map("work_date") @db.Date
+  clockIn       DateTime?   @map("clock_in")
+  clockOut      DateTime?   @map("clock_out")
+  regularHours  Float       @default(0) @map("regular_hours")
+  overtimeHours Float       @default(0) @map("overtime_hours")
+  nightHours    Float       @default(0) @map("night_hours")
+  finalStatus   FinalStatus @map("final_status")
+  sieveStep     Int         @map("sieve_step")
+  calculatedAt  DateTime    @default(now()) @map("calculated_at")
+
+  employee  Employee            @relation(fields: [employeeId], references: [id])
+  policy    PolicyConfig?       @relation(fields: [policyId], references: [id])
+  anomalies AttendanceAnomaly[]
+
+  @@unique([employeeId, workDate])
+  @@index([workDate])
+  @@map("daily_attendance")
+}
+
+enum FinalStatus {
+  NORMAL
+  ON_LEAVE
+  BUSINESS_TRIP
+  ANOMALY_PENDING
+  ANOMALY_RESOLVED
+  HOLIDAY
+  WEEKEND
+}
+
+// ─── 이상치 ──────────────────────────────────────────
+model AttendanceAnomaly {
+  id               String           @id @default(uuid())
+  dailyAttendanceId String          @map("daily_attendance_id")
+  anomalyType      AnomalyType      @map("anomaly_type")
+  resolutionStatus ResolutionStatus @default(UNRESOLVED) @map("resolution_status")
+  resolvedBy       String?          @map("resolved_by")
+  hrNote           String?          @map("hr_note")
+  hrAction         String?          @map("hr_action")
+  flaggedAt        DateTime         @default(now()) @map("flagged_at")
+  resolvedAt       DateTime?        @map("resolved_at")
+
+  dailyAttendance DailyAttendance @relation(fields: [dailyAttendanceId], references: [id])
+  appeals         AnomalyAppeal[]
+
+  @@map("attendance_anomalies")
+}
+
+enum AnomalyType {
+  NO_TAG
+  LATE_CLOCK_IN
+  EARLY_CLOCK_OUT
+  NO_CLOCK_OUT
+  OVERTIME_EXCESS
+}
+
+enum ResolutionStatus {
+  UNRESOLVED
+  IN_REVIEW
+  RESOLVED
+  ESCALATED
+}
+
+// ─── 이상치 이의신청 ─────────────────────────────────
+model AnomalyAppeal {
+  id          String   @id @default(uuid())
+  anomalyId   String   @map("anomaly_id")
+  appealNote  String   @map("appeal_note")
+  hrAction    String?  @map("hr_action")
+  submittedAt DateTime @default(now()) @map("submitted_at")
+
+  anomaly AttendanceAnomaly @relation(fields: [anomalyId], references: [id])
+
+  @@map("anomaly_appeals")
+}
+
+// ─── 정책 설정 ───────────────────────────────────────
+model PolicyConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  isLocked    Boolean  @default(false) @map("is_locked")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedBy   String?  @map("updated_by")
+
+  dailyAttendances DailyAttendance[]
+
+  @@map("policy_config")
+}
+
+// ─── 공휴일 ──────────────────────────────────────────
+model Holiday {
+  id   String   @id @default(uuid())
+  date DateTime @unique @db.Date
+  name String
+
+  @@map("holidays")
+}
