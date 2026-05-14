@@ -14,7 +14,7 @@ function seededRand(seed: number) {
   }
 }
 
-const HOLIDAYS = new Set(['2026-01-01','2026-02-16','2026-02-17','2026-02-18','2026-03-01'])
+export const HOLIDAYS = new Set(['2026-01-01','2026-02-16','2026-02-17','2026-02-18','2026-03-01','2026-05-01','2026-05-05'])
 
 function getDayType(dateStr: string): { dayType: DayType; dayLabel: string } {
   if (HOLIDAYS.has(dateStr)) {
@@ -46,13 +46,13 @@ function generateRecords(
     const { dayType, dayLabel } = getDayType(dateStr)
 
     if (dayType !== 'WEEKDAY') {
-      records.push({ employeeId, date: dateStr, dayType, dayLabel, clockIn: null, clockOut: null, erpOtApplied: false })
+      records.push({ employeeId, date: dateStr, dayType, dayLabel, clockIn: null, clockOut: null, erpOtApplied: false, leaveType: null, isHolidayWork: false })
       cur.setDate(cur.getDate() + 1)
       continue
     }
 
     if (rand() < 0.05) {
-      records.push({ employeeId, date: dateStr, dayType, dayLabel, clockIn: null, clockOut: null, erpOtApplied: false })
+      records.push({ employeeId, date: dateStr, dayType, dayLabel, clockIn: null, clockOut: null, erpOtApplied: false, leaveType: null, isHolidayWork: false })
       cur.setDate(cur.getDate() + 1)
       continue
     }
@@ -76,6 +76,8 @@ function generateRecords(
       clockIn: fromMins(actualIn),
       clockOut: outMins >= 1440 ? `+${fromMins(outMins - 1440)}` : fromMins(outMins),
       erpOtApplied,
+      leaveType: null,
+      isHolidayWork: false,
     })
     cur.setDate(cur.getDate() + 1)
   }
@@ -160,12 +162,37 @@ const KANG_RECORDS: RawRecord[] = KANG_DATA.map(([date, label, ci, co]) => {
     erpOtApplied: co !== null && !co.startsWith('+')
       ? parseInt(co.split(':')[0]) * 60 + parseInt(co.split(':')[1]) > 1140
       : co !== null,
+    leaveType: null,
+    isHolidayWork: false,
   }
 })
 
 const P = { s: '2026-01-01', e: '2026-04-29' }
 
-export const ALL_RECORDS: RawRecord[] = [
+// ── Edge-case patches for HR scenario testing ─────────────────────────────
+// Applied on top of generated records to simulate real-world leave / holiday-work cases.
+//
+//  E1111112  2026-04-22 (수)  오전반차 → 오후 출근 14:00
+//  E1111113  2026-04-23 (목)  오후반차 → 오전 근무 후 14:00 퇴근
+//  E1111114  2026-04-24 (금)  연차    → 출퇴근 없음
+//  E2222221  2026-04-26 (일)  휴일근무 → 실제 태깅 있음
+const EDGE_PATCHES: Record<string, Partial<RawRecord>> = {
+// src/data/mockData.ts 의 EDGE_PATCHES 부분
+'E1111111_2026-04-26': { isHolidayWork: true, clockIn: '09:00', clockOut: '18:00', erpOtApplied: true },
+  'E1111112_2026-04-22': { leaveType: '오전반차', clockIn: '14:00', clockOut: '18:30', erpOtApplied: false },
+  'E1111113_2026-04-23': { leaveType: '오후반차', clockIn: '09:00', clockOut: '14:00', erpOtApplied: false },
+  'E1111114_2026-04-24': { leaveType: '연차',    clockIn: null,    clockOut: null,    erpOtApplied: false },
+  'E2222221_2026-04-26': { isHolidayWork: true,  clockIn: '10:00', clockOut: '18:00', erpOtApplied: true  },
+}
+
+function applyPatches(records: RawRecord[]): RawRecord[] {
+  return records.map(r => {
+    const patch = EDGE_PATCHES[`${r.employeeId}_${r.date}`]
+    return patch ? { ...r, ...patch } : r
+  })
+}
+
+export const ALL_RECORDS: RawRecord[] = applyPatches([
   ...KANG_RECORDS,
   ...generateRecords('E1111112', P.s, P.e, 1112, 'normal'),
   ...generateRecords('E1111113', P.s, P.e, 1113, 'overworker'),
@@ -189,4 +216,4 @@ export const ALL_RECORDS: RawRecord[] = [
   ...generateRecords('E9999992', P.s, P.e, 9992, 'overworker'),
   ...generateRecords('E0000001', P.s, P.e, 101, 'normal'),
   ...generateRecords('E0000002', P.s, P.e, 102, 'standard'),
-]
+])

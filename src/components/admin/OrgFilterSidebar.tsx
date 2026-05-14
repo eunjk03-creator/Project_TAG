@@ -1,16 +1,10 @@
 'use client'
 import { useState } from 'react'
-import { EMPLOYEES } from '@/data/orgChart'
+import { DIVISIONS, DIVISION_TEAMS } from '@/data/orgChart'
 import { useOrgFilter } from '@/context/OrgFilterContext'
 
-const divisionTeams: Record<string, string[]> = {}
-for (const emp of EMPLOYEES) {
-  if (!divisionTeams[emp.division]) divisionTeams[emp.division] = []
-  if (!divisionTeams[emp.division].includes(emp.team)) {
-    divisionTeams[emp.division].push(emp.team)
-  }
-}
-const divisions = Object.keys(divisionTeams)
+const divisionTeams: Record<string, readonly string[]> = DIVISION_TEAMS
+const divisions = DIVISIONS.filter(d => d !== '기타' && DIVISION_TEAMS[d].length > 0)
 
 export function OrgFilterSidebar() {
   const { division: activeDivision, team: activeTeam, setDivision, setTeam } = useOrgFilter()

@@ -1,19 +1,12 @@
 'use client'
 import { useMemo } from 'react'
-import { EMPLOYEES } from '@/data/orgChart'
+import { DIVISIONS, DIVISION_TEAMS } from '@/data/orgChart'
 import { useOrgFilter } from '@/context/OrgFilterContext'
 import { useDateRange } from '@/context/DateRangeContext'
 import { DateRangePicker } from '@/components/admin/DateRangePicker'
 
-const divisions = [...new Set(EMPLOYEES.map(e => e.division))]
-
-const divisionTeams: Record<string, string[]> = {}
-for (const emp of EMPLOYEES) {
-  if (!divisionTeams[emp.division]) divisionTeams[emp.division] = []
-  if (!divisionTeams[emp.division].includes(emp.team)) {
-    divisionTeams[emp.division].push(emp.team)
-  }
-}
+const divisions = DIVISIONS.filter(d => d !== '기타' && DIVISION_TEAMS[d].length > 0)
+const divisionTeams: Record<string, readonly string[]> = DIVISION_TEAMS
 
 export function OrgFilterBar() {
   const { division, team, setDivision, setTeam } = useOrgFilter()

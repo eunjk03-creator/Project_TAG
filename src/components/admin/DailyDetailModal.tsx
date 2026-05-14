@@ -1,8 +1,9 @@
 'use client'
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { processRecord } from '@/hooks/useAttendanceLogic'
-import type { ProcessedRecord, Employee, PolicySettings } from '@/types/tag'
+import type { ProcessedRecord, Employee, PolicySettings, EditHistoryEntry } from '@/types/tag'
+import { FINAL_STATUS_CATEGORY } from '@/types/tag'
+import { useSlack } from '@/context/SlackContext'
 
 const FLAG_LABEL: Record<string, string> = {
   LATE: '지각',
@@ -48,28 +49,18 @@ function minsToHHMM(mins: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
-/** Deterministic mock Slack messages based on employee + date + flag */
-function getSlackMessages(
-  emp: Employee,
-  date: string,
-  flag: ProcessedRecord['flag'],
-): { time: string; channel: string; text: string }[] {
-  if (flag === 'LATE') {
-    return [{ time: '08:47', channel: '#general', text: '오늘 지하철 지연으로 조금 늦겠습니다. 09:20 전후 도착 예정입니다.' }]
-  }
-  if (flag === 'UNAPPROVED_OT') {
-    return [{ time: '18:52', channel: '#dev-ops', text: '오늘 배포 작업으로 야근할 예정입니다. 20:00~21:00 사이 완료 목표.' }]
-  }
-  if (flag === 'EARLY_DEPARTURE') {
-    return [{ time: '14:30', channel: '#general', text: '오늘 병원 예약이 있어 15:30 조기 퇴근합니다.' }]
-  }
-  // seeded pseudo-random: some normal days have incidental activity
-  const seed = emp.id.charCodeAt(5) * 31 + date.charCodeAt(8) * 17
-  if (seed % 7 === 0) {
-    return [{ time: '10:15', channel: '#general', text: '오전 미팅 완료. 오늘 재택 병행 예정입니다.' }]
-  }
-  return []
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso)
+  const yyyy = d.getFullYear()
+  const mo   = String(d.getMonth() + 1).padStart(2, '0')
+  const dd   = String(d.getDate()).padStart(2, '0')
+  const hh   = String(d.getHours()).padStart(2, '0')
+  const mm   = String(d.getMinutes()).padStart(2, '0')
+  return `${yyyy}-${mo}-${dd} ${hh}:${mm}`
 }
+
+function fmtTime(t: string | null) { return t ?? '미태깅' }
+
 
 // ── Sub-components ──────────────────────────────────────────
 
@@ -97,11 +88,12 @@ function SummaryCard({
 }
 
 function SourceBlock({
-  icon, label, statusDot, children,
+  icon, label, statusDot, editButton, children,
 }: {
   icon: string
   label: string
   statusDot: 'ok' | 'warn' | 'info'
+  editButton?: ReactNode
   children: ReactNode
 }) {
   const dot = { ok: 'bg-green-400', warn: 'bg-red-400', info: 'bg-gray-300' }[statusDot]
@@ -110,7 +102,10 @@ function SourceBlock({
       <div className="flex items-center gap-2 mb-2.5">
         <span className="text-base">{icon}</span>
         <span className="text-xs font-semibold text-gray-700">{label}</span>
-        <span className={`ml-auto w-2 h-2 rounded-full shrink-0 ${dot}`} />
+        <div className="ml-auto flex items-center gap-2">
+          {editButton}
+          <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+        </div>
       </div>
       <div className="text-sm text-gray-600 space-y-0.5">{children}</div>
     </div>
@@ -140,81 +135,119 @@ function BreakRow({
 
 // ── Main Modal ──────────────────────────────────────────────
 
-type Props = {
-  employee: Employee
-  record: ProcessedRecord
-  policy: PolicySettings
-  onClose: () => void
-  onApprove: () => void
+export type SavePayload = {
+  newClockIn:      string | null
+  newClockOut:     string | null
+  newErpOtApplied: boolean | null  // null = not edited, preserve existing
+  newErpLeaveType: string  | null  // null = not edited, preserve existing
+  finalStatus:     string
+  finalReason:     string
+  auditEntry:      EditHistoryEntry
 }
 
-export function DailyDetailModal({ employee, record, policy, onClose, onApprove }: Props) {
-  const [isEditing, setIsEditing] = useState(false)
-  const [editIn,  setEditIn]  = useState(record.clockIn?.startsWith('+') ? record.clockIn.slice(1) : (record.clockIn ?? ''))
-  const [editOut, setEditOut] = useState(record.clockOut?.startsWith('+') ? record.clockOut.slice(1) : (record.clockOut ?? ''))
-  const [editSaved,  setEditSaved]  = useState(false)
-  const [isApproved, setIsApproved] = useState(false)
+type Props = {
+  employee:             Employee
+  record:               ProcessedRecord
+  policy:               PolicySettings
+  initialEditHistory?:  EditHistoryEntry[]
+  initialApproved?:     boolean
+  initialErpLeaveType?: string
+  showExactTime?:       boolean
+  onClose:              () => void
+  onSave:               (payload: SavePayload) => void
+}
 
-  /** Re-run business logic on edited times for live preview */
-  const editedRecord = useMemo(() => {
-    if (!isEditing && !editSaved) return null
-    const rawIn  = editIn  ? editIn  : null
-    const rawOut = editOut ? editOut : null
-    const modified = {
-      employeeId:   record.employeeId,
-      date:         record.date,
-      dayType:      record.dayType,
-      dayLabel:     record.dayLabel,
-      clockIn:      rawIn,
-      clockOut:     rawOut,
-      erpOtApplied: record.erpOtApplied,
-    }
-    return processRecord(modified, policy)
-  }, [isEditing, editSaved, editIn, editOut, record, policy])
+export function DailyDetailModal({ employee, record, policy, initialEditHistory, initialApproved, initialErpLeaveType, showExactTime = false, onClose, onSave }: Props) {
+  // ── Audit / approval state ────────────────────────────────────────────
+  const [editHistory, setEditHistory] = useState<EditHistoryEntry[]>(initialEditHistory ?? [])
+  const isApproved = initialApproved ?? false
 
-  const display = editedRecord ?? record
+  // ── CAPS granular edit ────────────────────────────────────────────────
+  const [isEditingCaps, setIsEditingCaps] = useState(false)
+  const [capsIn,        setCapsIn]        = useState(record.clockIn?.replace(/^\+/, '')  ?? '')
+  const [capsOut,       setCapsOut]       = useState(record.clockOut?.replace(/^\+/, '') ?? '')
 
-  const slackMessages = useMemo(
-    () => getSlackMessages(employee, record.date, record.flag),
-    [employee, record.date, record.flag],
+  // ── ERP granular edit ─────────────────────────────────────────────────
+  const [isEditingErp, setIsEditingErp] = useState(false)
+  const [erpOtEdit,    setErpOtEdit]    = useState<string>(
+    record.erpOtApplied ? '신청됨' : record.overtimeHours > 0 ? '미신청' : '해당없음',
   )
+  const [erpLeaveEdit, setErpLeaveEdit] = useState(initialErpLeaveType ?? '없음')
+
+  // ── Final decision ────────────────────────────────────────────────────
+  const [adminDecision, setAdminDecision] = useState<string>(() =>
+    initialApproved ? '소명완료' : record.finalStatus,
+  )
+  const [finalReason, setFinalReason] = useState('')
+
+  const { exceptions: slackExceptions } = useSlack()
+  const slackException = slackExceptions.find(
+    e => e.empId === employee.id && e.date === record.date,
+  ) ?? null
+
+  // verificationNote entries written by applySlack (e.g. "✅ 슬랙 확인: 지각 면제 (외근·행사)")
+  const slackVNotes = record.verificationNote?.filter(n => n.startsWith('✅ 슬랙 확인')) ?? []
 
   const orgPath = [employee.division, employee.team, employee.part].filter(Boolean).join(' / ')
 
-  // Standard shift end = flexEnd + standardHours + lunch break
   const stdEndMins = parseTimeToMins(policy.flexEnd)
     + policy.standardHours * 60
     + (parseTimeToMins(policy.lunchEnd) - parseTimeToMins(policy.lunchStart))
   const stdEnd = minsToHHMM(stdEndMins)
 
-  // Net time display: clockIn ~ clockOut
-  const clockRange = display.clockIn && display.clockOut
-    ? `${display.clockIn} ~ ${display.clockOut}`
-    : display.clockIn
-    ? `${display.clockIn} ~ 미태깅`
+  const clockRange = record.clockIn && record.clockOut
+    ? `${record.clockIn} ~ ${record.clockOut}`
+    : record.clockIn
+    ? `${record.clockIn} ~ 미태깅`
     : '미태깅'
 
-  const capsStatus: 'ok' | 'warn' =
-    !display.clockIn || !display.clockOut ? 'warn' : 'ok'
+  const capsStatus: 'ok' | 'warn' = !record.clockIn || !record.clockOut ? 'warn' : 'ok'
+  const erpStatus:  'ok' | 'warn' = record.overtimeHours > 0 && !record.erpOtApplied ? 'warn' : 'ok'
 
-  const erpStatus: 'ok' | 'warn' =
-    display.overtimeHours > 0 && !record.erpOtApplied ? 'warn' : 'ok'
+  const hasSaved = editHistory.length > 0
+
+  // ── Handlers ──────────────────────────────────────────────────────────
 
   function handleSave() {
-    setEditSaved(true)
-    setIsEditing(false)
-  }
+    if (!finalReason.trim()) return
 
-  function handleCancelEdit() {
-    setIsEditing(false)
-    setEditIn(record.clockIn?.startsWith('+') ? record.clockIn.slice(1) : (record.clockIn ?? ''))
-    setEditOut(record.clockOut?.startsWith('+') ? record.clockOut.slice(1) : (record.clockOut ?? ''))
-    setEditSaved(false)
-  }
+    const origIn     = record.clockIn?.replace(/^\+/, '')  ?? ''
+    const origOut    = record.clockOut?.replace(/^\+/, '') ?? ''
+    const origErpOt  = record.erpOtApplied ? '신청됨' : record.overtimeHours > 0 ? '미신청' : '해당없음'
+    const origStatus = initialApproved ? '소명완료' : record.finalStatus
 
-  function handleApprove() {
-    setIsApproved(true)
-    onApprove()
+    const actionLog: string[] = []
+
+    if (isEditingCaps) {
+      if (capsIn  !== origIn)  actionLog.push(`[CAPS] 입실 ${origIn  || '미태깅'} → ${capsIn  || '미태깅'}`)
+      if (capsOut !== origOut) actionLog.push(`[CAPS] 퇴실 ${origOut || '미태깅'} → ${capsOut || '미태깅'}`)
+    }
+
+    if (isEditingErp) {
+      if (erpOtEdit   !== origErpOt) actionLog.push(`[ERP] 연장근무 ${origErpOt} → ${erpOtEdit}`)
+      if (erpLeaveEdit !== '없음')   actionLog.push(`[ERP] 연차/반차 없음 → ${erpLeaveEdit}`)
+    }
+
+    if (adminDecision !== origStatus) actionLog.push(`[상태] ${origStatus} → ${adminDecision}`)
+
+    const newClockIn      = isEditingCaps ? (capsIn  || null) : record.clockIn
+    const newClockOut     = isEditingCaps ? (capsOut || null) : record.clockOut
+    const newErpOtApplied = isEditingErp  ? erpOtEdit === '신청됨' : null
+    const newErpLeaveType = isEditingErp  ? erpLeaveEdit : null
+
+    const auditEntry: EditHistoryEntry = {
+      timestamp: new Date().toISOString(),
+      adminName: 'HR Admin',
+      oldValue:  { clockIn: record.clockIn,  clockOut: record.clockOut  },
+      newValue:  { clockIn: newClockIn,       clockOut: newClockOut      },
+      action:    actionLog.length > 0 ? actionLog.join(' / ') : undefined,
+      reason:    finalReason.trim(),
+    }
+
+    // Optimistically update local history so the list refreshes immediately
+    setEditHistory(prev => [...prev, auditEntry])
+
+    onSave({ newClockIn, newClockOut, newErpOtApplied, newErpLeaveType, finalStatus: adminDecision, finalReason: finalReason.trim(), auditEntry })
   }
 
   return (
@@ -236,10 +269,10 @@ export function DailyDetailModal({ employee, record, policy, onClose, onApprove 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2.5 flex-wrap">
               <h2 className="text-base font-bold text-gray-900">{employee.name}</h2>
-              <span className="text-xs text-gray-400 font-mono">{employee.id}</span>
-              {display.flag && !isApproved && (
-                <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${FLAG_BADGE[display.flag]}`}>
-                  ⚠ {FLAG_LABEL[display.flag]}
+              <span className="text-xs text-gray-400 font-mono">{employee.rawId ?? employee.id}</span>
+              {record.flag && !isApproved && (
+                <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${FLAG_BADGE[record.flag]}`}>
+                  ⚠ {FLAG_LABEL[record.flag]}
                 </span>
               )}
               {isApproved && (
@@ -247,9 +280,9 @@ export function DailyDetailModal({ employee, record, policy, onClose, onApprove 
                   ✓ 승인완료
                 </span>
               )}
-              {editSaved && !isEditing && (
-                <span className="text-xs px-2 py-0.5 rounded-full border bg-blue-50 text-blue-600 border-blue-200 font-medium">
-                  수정 반영됨
+              {hasSaved && (
+                <span className="text-xs px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-600 border-emerald-200 font-medium">
+                  ✓ 수정 반영됨
                 </span>
               )}
             </div>
@@ -274,6 +307,34 @@ export function DailyDetailModal({ employee, record, policy, onClose, onApprove 
         {/* ── Body (scrollable) ── */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
 
+          {/* T.A.G. 최종 근태 상태 */}
+          <section>
+            {(() => {
+              const cat = FINAL_STATUS_CATEGORY[record.finalStatus]
+              const styles = {
+                NORMAL:       { bg: 'bg-emerald-50', text: 'text-emerald-700', badge: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+                ANOMALY:      { bg: 'bg-red-50',     text: 'text-red-700',     badge: 'bg-red-100 text-red-700 border-red-200' },
+                HOLIDAY_WORK: { bg: 'bg-violet-50',  text: 'text-violet-700',  badge: 'bg-violet-100 text-violet-700 border-violet-200' },
+                NON_WORKING:  { bg: 'bg-gray-50',    text: 'text-gray-500',    badge: 'bg-gray-100 text-gray-500 border-gray-200' },
+              }
+              const catLabels = { NORMAL: '정상 근무', ANOMALY: '근태 이상', HOLIDAY_WORK: '휴일근무', NON_WORKING: '비근무일' }
+              const s = styles[cat]
+              return (
+                <div className={`rounded-xl p-4 flex items-center gap-4 ${s.bg}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-[10px] font-semibold uppercase tracking-wider mb-0.5 opacity-60 ${s.text}`}>
+                      T.A.G. 판정 · {catLabels[cat]}
+                    </p>
+                    <p className={`text-xl font-bold leading-tight ${s.text}`}>{record.finalStatus}</p>
+                  </div>
+                  <span className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full border font-semibold ${s.badge}`}>
+                    {cat}
+                  </span>
+                </div>
+              )
+            })()}
+          </section>
+
           {/* 근무 요약 */}
           <section>
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">근무 요약</p>
@@ -287,24 +348,44 @@ export function DailyDetailModal({ employee, record, policy, onClose, onApprove 
                 label="기록 시간"
                 value={clockRange}
                 sub={
-                  display.effectiveClockIn && display.effectiveClockIn !== display.clockIn
-                    ? `유연시작 → ${display.effectiveClockIn}`
+                  record.effectiveClockIn && record.effectiveClockIn !== record.clockIn
+                    ? `유연시작 → ${record.effectiveClockIn}`
                     : undefined
                 }
-                tone={!display.clockIn || !display.clockOut ? 'warn' : 'neutral'}
+                tone={!record.clockIn || !record.clockOut ? 'warn' : 'neutral'}
               />
-              <SummaryCard
-                label="실 근로시간"
-                value={fmt(display.regularHours + display.overtimeHours)}
-                sub={`기본 ${fmt(display.regularHours)}`}
-                tone="neutral"
-              />
-              <SummaryCard
-                label="연장 / 야간"
-                value={fmt(display.overtimeHours)}
-                sub={`야간 ${fmt(display.nightHours)}`}
-                tone={display.overtimeHours > 0 ? 'amber' : 'neutral'}
-              />
+              {(() => {
+                const rawOtH  = (record.rawOvertimeMinutes ?? 0) / 60
+                const dispOtH = showExactTime ? rawOtH : record.overtimeHours
+                const hasDiff = record.rawOvertimeMinutes !== undefined &&
+                  record.rawOvertimeMinutes !== record.overtimeHours * 60
+                return (
+                  <>
+                    <SummaryCard
+                      label={showExactTime ? '실 근로 (실제)' : '실 근로 (인정)'}
+                      value={fmt(record.regularHours + dispOtH)}
+                      sub={hasDiff && !showExactTime
+                        ? `실제 ${fmt(record.regularHours + rawOtH)}`
+                        : hasDiff && showExactTime
+                        ? `인정 ${fmt(record.regularHours + record.overtimeHours)}`
+                        : `기본 ${fmt(record.regularHours)}`
+                      }
+                      tone="neutral"
+                    />
+                    <SummaryCard
+                      label={showExactTime ? '연장 (실제) / 야간' : '연장 (인정) / 야간'}
+                      value={fmt(dispOtH)}
+                      sub={hasDiff && !showExactTime
+                        ? `실제 ${fmt(rawOtH)} · 야간 ${fmt(record.nightHours)}`
+                        : hasDiff && showExactTime
+                        ? `인정 ${fmt(record.overtimeHours)} · 야간 ${fmt(record.nightHours)}`
+                        : `야간 ${fmt(record.nightHours)}`
+                      }
+                      tone={dispOtH > 0 ? 'amber' : 'neutral'}
+                    />
+                  </>
+                )
+              })()}
             </div>
           </section>
 
@@ -313,49 +394,132 @@ export function DailyDetailModal({ employee, record, policy, onClose, onApprove 
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">다중소스 검증</p>
             <div className="space-y-2.5">
 
-              {/* CAPS */}
-              <SourceBlock icon="🏢" label="CAPS (출입태그)" statusDot={capsStatus}>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <span>
-                    입실{' '}
-                    {display.clockIn
-                      ? <strong className="text-gray-800">{display.clockIn}</strong>
-                      : <span className="text-red-500 font-medium">미태깅</span>}
-                  </span>
-                  <span className="text-gray-300">/</span>
-                  <span>
-                    퇴실{' '}
-                    {display.clockOut
-                      ? <strong className="text-gray-800">{display.clockOut}</strong>
-                      : <span className="text-red-500 font-medium">미태깅</span>}
-                  </span>
-                </div>
-                {display.effectiveClockIn && display.effectiveClockIn !== display.clockIn && (
-                  <p className="text-xs text-blue-500 mt-1">
-                    유연시작 정책 적용 → 실질 시작 {display.effectiveClockIn}
-                  </p>
-                )}
-                {capsStatus === 'warn' && (
-                  <p className="text-xs text-red-500 mt-1 font-medium">
-                    태그 누락 — 보안팀 출입 로그 교차 확인 권장
-                  </p>
+              <SourceBlock
+                icon="🏢"
+                label="CAPS (출입태그)"
+                statusDot={capsStatus}
+                editButton={
+                  <button
+                    onClick={() => {
+                      if (isEditingCaps) {
+                        setCapsIn(record.clockIn?.replace(/^\+/, '')  ?? '')
+                        setCapsOut(record.clockOut?.replace(/^\+/, '') ?? '')
+                      }
+                      setIsEditingCaps(p => !p)
+                    }}
+                    className="text-[11px] font-medium text-blue-500 hover:text-blue-700 transition-colors"
+                  >
+                    ✏️ {isEditingCaps ? '취소' : '수정'}
+                  </button>
+                }
+              >
+                {isEditingCaps ? (
+                  <div className="flex items-center gap-4 flex-wrap mt-0.5">
+                    <label className="flex items-center gap-1.5">
+                      <span className="text-xs text-gray-500 w-6 shrink-0">입실</span>
+                      <input
+                        type="time"
+                        value={capsIn}
+                        onChange={e => setCapsIn(e.target.value)}
+                        className="text-sm border border-blue-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                    </label>
+                    <label className="flex items-center gap-1.5">
+                      <span className="text-xs text-gray-500 w-6 shrink-0">퇴실</span>
+                      <input
+                        type="time"
+                        value={capsOut}
+                        onChange={e => setCapsOut(e.target.value)}
+                        className="text-sm border border-blue-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span>
+                        입실{' '}
+                        {record.clockIn
+                          ? <strong className="text-gray-800">{record.clockIn}</strong>
+                          : <span className="text-red-500 font-medium">미태깅</span>}
+                      </span>
+                      <span className="text-gray-300">/</span>
+                      <span>
+                        퇴실{' '}
+                        {record.clockOut
+                          ? <strong className="text-gray-800">{record.clockOut}</strong>
+                          : <span className="text-red-500 font-medium">미태깅</span>}
+                      </span>
+                    </div>
+                    {record.effectiveClockIn && record.effectiveClockIn !== record.clockIn && (
+                      <p className="text-xs text-blue-500 mt-1">
+                        유연시작 정책 적용 → 실질 시작 {record.effectiveClockIn}
+                      </p>
+                    )}
+                    {capsStatus === 'warn' && (
+                      <p className="text-xs text-red-500 mt-1 font-medium">
+                        태그 누락 — 보안팀 출입 로그 교차 확인 권장
+                      </p>
+                    )}
+                  </>
                 )}
               </SourceBlock>
 
-              {/* ERP */}
-              <SourceBlock icon="📋" label="ERP (인사시스템)" statusDot={erpStatus}>
-                <div className="space-y-1">
+              <SourceBlock
+                icon="📋"
+                label="ERP (인사시스템)"
+                statusDot={erpStatus}
+                editButton={
+                  <button
+                    onClick={() => {
+                      if (isEditingErp) {
+                        setErpOtEdit(record.erpOtApplied ? '신청됨' : record.overtimeHours > 0 ? '미신청' : '해당없음')
+                        setErpLeaveEdit('없음')
+                      }
+                      setIsEditingErp(p => !p)
+                    }}
+                    className="text-[11px] font-medium text-blue-500 hover:text-blue-700 transition-colors"
+                  >
+                    ✏️ {isEditingErp ? '취소' : '수정'}
+                  </button>
+                }
+              >
+                <div className="space-y-1.5">
                   <div className="flex items-center gap-2">
                     <span className="text-gray-500 w-20 shrink-0">연장근무 신청</span>
-                    {record.erpOtApplied
-                      ? <span className="text-emerald-600 font-semibold">✓ 신청됨</span>
-                      : display.overtimeHours > 0
-                      ? <span className="text-red-500 font-semibold">✗ 미신청</span>
-                      : <span className="text-gray-400">해당없음</span>}
+                    {isEditingErp ? (
+                      <select
+                        value={erpOtEdit}
+                        onChange={e => setErpOtEdit(e.target.value)}
+                        className="text-xs border border-blue-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      >
+                        <option value="신청됨">✓ 신청됨</option>
+                        <option value="미신청">✗ 미신청</option>
+                        <option value="해당없음">해당없음</option>
+                      </select>
+                    ) : (
+                      record.erpOtApplied
+                        ? <span className="text-emerald-600 font-semibold">✓ 신청됨</span>
+                        : record.overtimeHours > 0
+                        ? <span className="text-red-500 font-semibold">✗ 미신청</span>
+                        : <span className="text-gray-400">해당없음</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-gray-500 w-20 shrink-0">연차 / 반차</span>
-                    <span className="text-gray-400">없음</span>
+                    {isEditingErp ? (
+                      <select
+                        value={erpLeaveEdit}
+                        onChange={e => setErpLeaveEdit(e.target.value)}
+                        className="text-xs border border-blue-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      >
+                        <option value="없음">없음</option>
+                        <option value="연차">연차</option>
+                        <option value="반차">반차</option>
+                      </select>
+                    ) : (
+                      <span className="text-gray-400">없음</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-gray-500 w-20 shrink-0">표준 퇴근</span>
@@ -367,148 +531,193 @@ export function DailyDetailModal({ employee, record, policy, onClose, onApprove 
                 </div>
               </SourceBlock>
 
-              {/* Slack */}
               <SourceBlock
                 icon="💬"
                 label="Slack (메신저)"
-                statusDot={slackMessages.length > 0 ? 'info' : 'info'}
+                statusDot={slackException ? 'ok' : 'info'}
               >
-                {slackMessages.length > 0 ? (
-                  <div className="space-y-1.5">
-                    {slackMessages.map((msg, i) => (
-                      <div key={i} className="flex items-start gap-2.5">
-                        <span className="text-[10px] text-gray-400 font-mono shrink-0 mt-0.5 w-10">{msg.time}</span>
-                        <span className="text-xs text-blue-500 font-medium shrink-0">{msg.channel}</span>
-                        <span className="text-gray-600 text-xs">{msg.text}</span>
-                      </div>
-                    ))}
+                {slackException ? (
+                  <div className="space-y-2">
+                    {/* Raw message bubble */}
+                    <div className="bg-white rounded-lg border border-gray-100 px-3 py-2.5">
+                      <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap break-words">
+                        {slackException.rawText}
+                      </p>
+                    </div>
+                    {/* Classification + effect row */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] text-gray-400">분류</span>
+                      <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold
+                        bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        {slackException.note}
+                      </span>
+                      {slackVNotes.map((n, i) => (
+                        <span key={i} className="text-[10px] font-semibold text-emerald-600">
+                          {n}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 ) : (
-                  <span className="text-gray-400 text-xs">해당일 관련 메시지 없음</span>
+                  <span className="text-gray-400 text-xs">연동된 슬랙 메시지가 없습니다.</span>
                 )}
               </SourceBlock>
             </div>
           </section>
 
-          {/* 공제 내역 */}
+          {/* 최종 근태 판정 */}
+          <section>
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">최종 근태 판정</p>
+            <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">최종 상태값</label>
+                <select
+                  value={adminDecision}
+                  onChange={e => setAdminDecision(e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-700"
+                >
+                  <optgroup label="정상 근무">
+                    <option value="정상">정상</option>
+                    <option value="연장근로">연장근로</option>
+                    <option value="연차">연차</option>
+                    <option value="오전반차">오전반차</option>
+                    <option value="오후반차">오후반차</option>
+                    <option value="출장">출장</option>
+                    <option value="재택근무">재택근무</option>
+                  </optgroup>
+                  <optgroup label="근태 이상">
+                    <option value="지각">지각</option>
+                    <option value="조기퇴근">조기퇴근</option>
+                    <option value="출퇴근누락">출퇴근누락</option>
+                    <option value="OT미신청">OT미신청</option>
+                  </optgroup>
+                  <optgroup label="휴일">
+                    <option value="휴일근무">휴일근무</option>
+                  </optgroup>
+                  <optgroup label="관리자 처리">
+                    <option value="소명완료">소명완료</option>
+                  </optgroup>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                  수정 사유 <span className="text-red-400">*</span>
+                </label>
+                <textarea
+                  value={finalReason}
+                  onChange={e => setFinalReason(e.target.value)}
+                  placeholder="예) 사옥 정전으로 인한 캡스 미태깅"
+                  rows={2}
+                  className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white placeholder-gray-300 resize-none"
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* 휴게 공제 내역 */}
           <section>
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">휴게 공제 내역</p>
             <div className="bg-gray-50 rounded-xl px-4 py-2">
               <BreakRow
                 label="점심 휴게"
                 window={`${policy.lunchStart} ~ ${policy.lunchEnd} (60분)`}
-                applied={display.lunchDeducted}
+                applied={record.lunchDeducted}
                 note="점심 구간 외 근무 또는 조기퇴근"
               />
               <BreakRow
                 label="저녁 유예"
                 window={`표준 퇴근 후 ${policy.dinnerGraceMinutes}분 무급`}
-                applied={display.dinnerDeducted}
+                applied={record.dinnerDeducted}
                 note="표준 퇴근 이전 퇴근"
               />
             </div>
           </section>
 
-          {/* 로그 수정 (expandable) */}
-          {isEditing && (
-            <section>
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">로그 수정</p>
-              <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-4">
-                <p className="text-xs text-blue-600">
-                  시간 수정 시 실시간으로 근태 계산이 갱신됩니다. 저장은 관리자 검토 후 최종 반영됩니다.
-                </p>
+          {/* ── 수정 이력 (Audit Trail) ── */}
+          <section>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                수정 이력 (Audit Trail)
+              </p>
+              {hasSaved && (
+                <span className="text-[10px] font-semibold text-blue-500 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">
+                  {editHistory.length}건
+                </span>
+              )}
+            </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 block mb-1.5">출근 시각</label>
-                    <input
-                      type="time"
-                      value={editIn}
-                      onChange={e => setEditIn(e.target.value)}
-                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 block mb-1.5">퇴근 시각</label>
-                    <input
-                      type="time"
-                      value={editOut}
-                      onChange={e => setEditOut(e.target.value)}
-                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                    />
-                  </div>
-                </div>
-
-                {/* Live recalculation preview */}
-                {editedRecord && (
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-blue-700 bg-blue-100/60 rounded-lg px-3 py-2">
-                    <span className="text-gray-500">재산정 →</span>
-                    <span>실근로 {fmt(editedRecord.regularHours + editedRecord.overtimeHours)}</span>
-                    <span className="text-gray-300">|</span>
-                    <span>연장 {fmt(editedRecord.overtimeHours)}</span>
-                    <span className="text-gray-300">|</span>
-                    <span>야간 {fmt(editedRecord.nightHours)}</span>
-                    {editedRecord.flag
-                      ? <><span className="text-gray-300">|</span><span className="text-orange-600">{FLAG_LABEL[editedRecord.flag]}</span></>
-                      : <><span className="text-gray-300">|</span><span className="text-emerald-600">이상없음</span></>}
-                  </div>
-                )}
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleSave}
-                    className="px-4 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 active:scale-95 transition-all"
-                  >
-                    저장
-                  </button>
-                  <button
-                    onClick={handleCancelEdit}
-                    className="px-4 py-1.5 bg-white text-gray-500 text-xs font-medium rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
-                  >
-                    취소
-                  </button>
-                </div>
+            {!hasSaved ? (
+              <div className="flex items-center justify-center gap-2 bg-gray-50 rounded-xl px-4 py-4 text-xs text-gray-400">
+                <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                수정 내역 없음
               </div>
-            </section>
-          )}
+            ) : (
+              <ul className="rounded-xl border border-gray-100 bg-gray-50/50 px-4 py-3 space-y-2.5">
+                {editHistory.map((entry, i) => {
+                  // Prefer pre-computed smart log; fall back to deriving from old/new times
+                  let displayAction: string
+                  if (entry.action) {
+                    displayAction = entry.action
+                  } else {
+                    const changes: string[] = []
+                    if (entry.oldValue.clockIn  !== entry.newValue.clockIn)
+                      changes.push(`입실 ${fmtTime(entry.oldValue.clockIn)} → ${fmtTime(entry.newValue.clockIn)}`)
+                    if (entry.oldValue.clockOut !== entry.newValue.clockOut)
+                      changes.push(`퇴실 ${fmtTime(entry.oldValue.clockOut)} → ${fmtTime(entry.newValue.clockOut)}`)
+                    displayAction = changes.join(', ')
+                  }
+                  return (
+                    <li key={i} className="flex items-start gap-2 text-xs">
+                      <span className="text-gray-300 shrink-0 mt-px">•</span>
+                      <span className="text-gray-600 leading-relaxed">
+                        <span className="font-mono text-gray-400">[{formatTimestamp(entry.timestamp)}]</span>
+                        {' '}
+                        <span className="font-semibold text-gray-700">{entry.adminName}</span>
+                        {displayAction && (
+                          <>
+                            {' — '}
+                            <span className="font-mono text-blue-600">{displayAction}</span>
+                          </>
+                        )}
+                        {entry.reason && (
+                          <span className="text-gray-400"> · {entry.reason}</span>
+                        )}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </section>
+
         </div>
 
         {/* ── Footer ── */}
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3 bg-gray-50/40 shrink-0">
           <p className="text-xs text-gray-400">
-            {editSaved && !isEditing && (
-              <span className="text-blue-600 font-medium">수정 내역 반영됨 — 관리자 확인 대기</span>
+            {hasSaved && (
+              <span className="text-emerald-600 font-medium">모든 수정 사항이 실시간으로 반영되었습니다</span>
             )}
-            {!editSaved && !isEditing && record.flag && !isApproved && (
-              <span>이상치 감지됨 — 아래 버튼으로 조치하세요</span>
+            {!hasSaved && !finalReason.trim() && (
+              <span>수정 사유를 입력하고 저장하세요</span>
             )}
           </p>
           <div className="flex items-center gap-2 shrink-0">
-            {!isEditing && (
-              <button
-                onClick={() => { setIsEditing(true); setEditSaved(false) }}
-                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 active:scale-95 transition-all"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-                로그 수정
-              </button>
-            )}
             <button
-              onClick={isApproved ? undefined : handleApprove}
-              disabled={isApproved || !record.flag}
-              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
-                isApproved
-                  ? 'bg-emerald-100 text-emerald-700 border border-emerald-200 cursor-default'
-                  : !record.flag
-                  ? 'bg-gray-100 text-gray-400 border border-gray-200 cursor-default'
-                  : 'bg-emerald-600 text-white hover:bg-emerald-700 active:scale-95'
-              }`}
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 active:scale-95 transition-all"
             >
-              {isApproved
-                ? <><span>✓</span><span>승인됨</span></>
-                : <><span>이상치 승인</span></>}
+              닫기
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!finalReason.trim()}
+              className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm shadow-blue-200"
+            >
+              저장 및 처리완료
             </button>
           </div>
         </div>

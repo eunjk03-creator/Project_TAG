@@ -2,15 +2,15 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import type { DateRange } from '@/types/tag'
 
-const DEFAULT_RANGE: DateRange = { from: '2026-04-01', to: '2026-04-29' }
+export const DEFAULT_RANGE: DateRange = { from: '2026-04-01', to: '2026-04-29' }
 
 interface DateRangeState {
-  dateRange: DateRange
+  dateRange:    DateRange
   setDateRange: (r: DateRange) => void
 }
 
 const DateRangeContext = createContext<DateRangeState>({
-  dateRange: DEFAULT_RANGE,
+  dateRange:    DEFAULT_RANGE,
   setDateRange: () => {},
 })
 
