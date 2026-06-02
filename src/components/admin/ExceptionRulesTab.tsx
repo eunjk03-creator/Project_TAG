@@ -51,10 +51,20 @@ const RULE_BADGE: Record<RuleType, { label: string; cls: string; desc: string }>
     desc:  'Pregnant Reduced Hours',
     cls:   'bg-fuchsia-100 text-fuchsia-700',
   },
+  easy_logis: {
+    label: '이지로지스',
+    desc:  'Easy Logis — suppress all anomalies',
+    cls:   'bg-indigo-100 text-indigo-700',
+  },
   global_exclusion: {
     label: '전체제외',
     desc:  'Global Exclusion',
     cls:   'bg-gray-200 text-gray-600',
+  },
+  resigned: {
+    label: '퇴사자',
+    desc:  'Resigned Employee',
+    cls:   'bg-red-100 text-red-700',
   },
 }
 
@@ -329,7 +339,7 @@ function AddModal({
             <div className="bg-gray-50 rounded-xl px-4 py-3 flex items-center justify-between">
               <div>
                 <p className="text-xs font-semibold text-gray-700">OT 미산입</p>
-                <p className="text-[10px] text-gray-400 mt-0.5">연장근로 집계에서 제외, 지각 면제</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">연장근로 집계에서 제외</p>
               </div>
               <div className="flex items-center gap-2">
                 <Toggle on={draft.excludeFromOt} onChange={v => patch({ excludeFromOt: v })} />
@@ -395,13 +405,39 @@ function AddModal({
             </div>
           )}
           {draft.ruleType === 'pregnant_reduced' && (
-            <div className="bg-fuchsia-50 rounded-xl px-4 py-3">
-              <p className="text-xs font-semibold text-fuchsia-700">임산부 단축근로 적용 내용</p>
-              <ul className="text-[10px] text-fuchsia-600 mt-1.5 space-y-0.5 list-disc list-inside">
-                <li>실근무 + 휴가환산 합산 ≥ 360분 기준 검사</li>
-                <li>반차 사용 시 4시간(240분) 휴가로 환산 합산</li>
-                <li>기준 미달 시 근태이상 처리</li>
-              </ul>
+            <div className="space-y-2.5">
+              <div className="bg-fuchsia-50 rounded-xl px-4 py-3">
+                <p className="text-xs font-semibold text-fuchsia-700">임산부 단축근로 적용 내용</p>
+                <ul className="text-[10px] text-fuchsia-600 mt-1.5 space-y-0.5 list-disc list-inside">
+                  <li>실근무 + 휴가환산 합산 ≥ 360분 기준 검사</li>
+                  <li>반차 사용 시 4시간(240분) 휴가로 환산 합산</li>
+                  <li>기준 미달 시 근태이상 처리</li>
+                </ul>
+              </div>
+              <div className="bg-fuchsia-50 rounded-xl px-4 py-3">
+                <p className="text-xs font-semibold text-fuchsia-700 mb-2">적용 기간 <span className="text-fuchsia-400 font-normal">(선택, 비워두면 항상 적용)</span></p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={draft.validFrom}
+                    onChange={e => patch({ validFrom: e.target.value })}
+                    className="flex-1 px-2 py-1.5 text-xs border border-fuchsia-200 rounded-lg
+                      focus:outline-none focus:ring-2 focus:ring-fuchsia-400 bg-white"
+                  />
+                  <span className="text-fuchsia-400 text-xs shrink-0">~</span>
+                  <input
+                    type="date"
+                    value={draft.validTo}
+                    min={draft.validFrom}
+                    onChange={e => patch({ validTo: e.target.value })}
+                    className="flex-1 px-2 py-1.5 text-xs border border-fuchsia-200 rounded-lg
+                      focus:outline-none focus:ring-2 focus:ring-fuchsia-400 bg-white"
+                  />
+                </div>
+                {draft.validFrom && draft.validTo && draft.validFrom > draft.validTo && (
+                  <p className="text-[10px] text-red-500 mt-1">종료일이 시작일보다 빠릅니다</p>
+                )}
+              </div>
             </div>
           )}
           {draft.ruleType === 'global_exclusion' && (
@@ -488,11 +524,17 @@ function AddModal({
 
 export function ExceptionRulesTab() {
   const { exceptionRules: rules, addRule, patchRule, deleteRule, deleteRules } = useEmployeeExceptions()
-  const { employees } = useAttendanceSource()
+  const { employees, isLiveData } = useAttendanceSource()
   const [showModal, setShowModal] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   const existingIds = useMemo(() => new Set(rules.map(r => r.employeeId)), [rules])
+
+  const liveEmployeeIds = useMemo(() => new Set(employees.map(e => e.id)), [employees])
+  const orphanedRules = useMemo(
+    () => rules.filter(r => !liveEmployeeIds.has(r.employeeId)),
+    [rules, liveEmployeeIds],
+  )
 
   const managerCount = rules.filter(r => r.ruleType === 'manager_exemption').length
   const shortenCount = rules.filter(r => r.ruleType === 'shortened_hours').length
@@ -526,6 +568,29 @@ export function ExceptionRulesTab() {
 
   return (
     <>
+      {/* ── Orphaned-rule warning ── */}
+      {orphanedRules.length > 0 && (
+        <div className="mb-4 flex items-start gap-2.5 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50">
+          <svg className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+          <div>
+            <p className="text-xs font-semibold text-amber-800">
+              {orphanedRules.length}개 규칙이 현재 직원 데이터와 연결되지 않았습니다
+            </p>
+            <p className="text-[10px] text-amber-600 mt-0.5">
+              {isLiveData
+                ? `근태 데이터를 재업로드하기 전에 추가된 규칙입니다. 해당 규칙은 이름 기반으로 자동 매핑됩니다 — 이름이 정확히 일치하지 않으면 적용되지 않을 수 있습니다.`
+                : `근태 데이터를 먼저 업로드해야 규칙이 올바르게 적용됩니다.`}
+            </p>
+            <p className="text-[10px] text-amber-500 mt-1 font-medium">
+              미연결 직원: {orphanedRules.map(r => r.employeeName).join(', ')}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── Header row ── */}
       <div className="flex items-start justify-between mb-5 gap-4">
         <div>
@@ -603,7 +668,7 @@ export function ExceptionRulesTab() {
             </thead>
             <tbody>
               {rules.map((r, i) => {
-                const badge = RULE_BADGE[r.ruleType]
+                const badge = RULE_BADGE[r.ruleType] ?? { label: r.ruleType || '예외', cls: 'bg-gray-100 text-gray-700', desc: '' }
                 const isChecked = selectedIds.has(r.id)
                 return (
                   <tr
@@ -626,7 +691,7 @@ export function ExceptionRulesTab() {
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-2.5">
                         <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${avatarCls(r.employeeName)}`}>
-                          {r.employeeName[0]}
+                          {(r.employeeName || '?')[0]}
                         </div>
                         <div>
                           <p className="font-semibold text-gray-800 text-[12px]">{r.employeeName}</p>

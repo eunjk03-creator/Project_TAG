@@ -1,3 +1,8 @@
+export interface CompanyHoliday {
+  date:  string   // 'YYYY-MM-DD'
+  label: string   // e.g. '5월 전사휴무'
+}
+
 export interface PolicySettings {
   flexStart: string
   flexEnd: string
@@ -12,6 +17,7 @@ export interface PolicySettings {
   nightRate: number
   holidayRate: number
   holidayExcessRate: number
+  companyHolidays: CompanyHoliday[]
 }
 
 export const DEFAULT_POLICY: PolicySettings = {
@@ -28,13 +34,14 @@ export const DEFAULT_POLICY: PolicySettings = {
   nightRate: 0.5,
   holidayRate: 1.5,
   holidayExcessRate: 2.0,
+  companyHolidays: [],
 }
 
 export type DayType = 'WEEKDAY' | 'WEEKEND' | 'HOLIDAY'
 export type SieveFlag =
   | 'LATE'
-  | 'NO_CLOCK_OUT'
-  | 'UNAPPROVED_OT'
+  | 'NO_CLOCK_IN'               // weekday, no leave, no clock-in record → 근태이상
+  | 'NO_CLOCK_OUT'              // weekday, clock-in exists, no clock-out record → 근태이상
   | 'EARLY_DEPARTURE'           // mild: 0–30 min before standard end → 조기퇴근
   | 'ATTENDANCE_ANOMALY'        // severe: >30 min before standard end → 근태이상
   | 'LATE_AND_EARLY_DEPARTURE'  // combined: late + mild early
@@ -57,13 +64,13 @@ export type FinalStatus =
   | '오후반차'   // PM half-day
   | '출장'       // business trip
   | '재택근무'   // remote work
+  | '외근'       // off-site work — anomaly cleared by Slack confirmation
   // ── Category 2: Anomaly ─────────────────────────────────────────────────
   | '지각'          // clock-in exceeds flexEnd
   | '조기퇴근'      // 0–30 min before standard end
   | '근태이상'      // >30 min before standard end, or combined late+severe early
   | '지각+조기퇴근' // combined: late + mild early departure
   | '출퇴근누락'    // missing clock-in or clock-out (no ERP leave to justify)
-  | 'OT미신청'      // overtime worked but no ERP application
   // ── Category 3: Holiday Work ────────────────────────────────────────────
   | '휴일근무'    // worked on weekend or public holiday
   // ── Non-working states ───────────────────────────────────────────────────
@@ -74,9 +81,9 @@ export type FinalStatusCategory = 'NORMAL' | 'ANOMALY' | 'HOLIDAY_WORK' | 'NON_W
 
 export const FINAL_STATUS_CATEGORY: Readonly<Record<FinalStatus, FinalStatusCategory>> = {
   '정상':     'NORMAL',  '연장근로': 'NORMAL',  '연차':     'NORMAL',
-  '오전반차': 'NORMAL',  '오후반차': 'NORMAL',  '출장':     'NORMAL', '재택근무': 'NORMAL',
+  '오전반차': 'NORMAL',  '오후반차': 'NORMAL',  '출장':     'NORMAL', '재택근무': 'NORMAL', '외근': 'NORMAL',
   '지각':     'ANOMALY', '조기퇴근': 'ANOMALY', '근태이상': 'ANOMALY',
-  '지각+조기퇴근': 'ANOMALY', '출퇴근누락': 'ANOMALY', 'OT미신청': 'ANOMALY',
+  '지각+조기퇴근': 'ANOMALY', '출퇴근누락': 'ANOMALY',
   '휴일근무': 'HOLIDAY_WORK',
   '주말':     'NON_WORKING', '공휴일': 'NON_WORKING',
 }
@@ -85,7 +92,14 @@ export const FINAL_STATUS_CATEGORY: Readonly<Record<FinalStatus, FinalStatusCate
  * Leave / absence types recognised by the ERP 신청구분 column.
  * Superset of the legacy inline union — all existing values remain valid.
  */
-export type ErpLeaveType = '연차' | '오전반차' | '오후반차' | '출장' | '재택근무'
+export type ErpLeaveType =
+  | '연차'
+  | '오전반차'   // morning half-day (0.5)
+  | '오후반차'   // afternoon half-day (0.5)
+  | '오전반반차' // morning quarter-day (0.25)
+  | '오후반반차' // afternoon quarter-day (0.25)
+  | '출장'
+  | '재택근무'
 
 export interface Employee {
   /** Composite primary key: "${maskedEmpId}_${normalizeName(name)}" — unique even when masked IDs collide */
@@ -118,6 +132,11 @@ export interface RawRecord {
   isLeader?: boolean
   /** Cross-check flags: '출퇴근 누락' | '휴가 중 출근' | '연장 미신청' */
   verificationNote?: string[]
+  /** Fractional leave days as provided directly by ERP '일수' column.
+   *  Bypasses the hardcoded LEAVE_AMOUNT table — use this for all exports. */
+  erpLeaveAmount?: number
+  /** True when the ERP leave code contains '무급' — contributes 0h instead of 8h in 근무B. */
+  isUnpaidLeave?: boolean
 }
 
 export interface ProcessedRecord extends RawRecord {
@@ -208,7 +227,7 @@ export const EXEC_THRESHOLDS: RiskThresholds = {
 // toggling a flag in the drawer triggers an immediate re-computation.
 
 export interface EmployeeAttributeOverrides {
-  /** 직책자: exempt from LATE flag + UNAPPROVED_OT */
+  /** 직책자: exempt from LATE flag */
   isLeader?:            boolean
   /** 육아휴직자: exempt from ALL anomaly checks — always shows 정상/연차 */
   isParentalLeave?:     boolean
@@ -228,8 +247,14 @@ export interface EmployeeAttributeOverrides {
   isFixedScheduleB?:  boolean
   /** 임산부: (actual + leave-equiv) ≥ 360 min required; otherwise ATTENDANCE_ANOMALY */
   isPregnantReduced?: boolean
+  /** 임신기 단축근로 적용 시작일 (YYYY-MM-DD, 없으면 항상 적용) */
+  pregnantReducedFrom?: string
+  /** 임신기 단축근로 적용 종료일 (YYYY-MM-DD, 없으면 항상 적용) */
+  pregnantReducedTo?: string
   /** 전체 제외: record is silently skipped from all aggregation and flagging */
   isGlobalExclusion?: boolean
+  /** 퇴사자: same as global exclusion — completely filtered from all output */
+  isResigned?: boolean
 }
 
 export type RecordOverride = {
@@ -288,6 +313,25 @@ export interface ErpOtRow {
 }
 
 /**
+ * Unified ERP row — single APPLY.xlsx export that contains BOTH leave and overtime rows.
+ * Parser categorises each row by 근태코드:
+ *   • OT_CODE_SET (연장근로, 휴일근로, …) → OT map
+ *   • ERP_LEAVE_TYPE_MAP keys            → leave map
+ * 종료일 is optional (absent for OT rows), 인정시간 optional (absent for leave rows).
+ */
+export interface ErpUnifiedRow {
+  사원번호:  string
+  성명:      string
+  근태코드:  string
+  승인상태:  string
+  시작일:    string
+  종료일?:   string
+  인정시간?: string
+  일수?:     string   // fractional leave days as provided by ERP (e.g. "0.5", "1", "2")
+  근태구분?: string   // '일' (day-based) | '시간' (time-based) — time-based rows skip leave pipeline
+}
+
+/**
  * ERP 신청구분 values that represent approved overtime when 승인상태 === '승인'.
  * Maps to RawRecord.erpOtApplied = true.
  */
@@ -295,34 +339,70 @@ export const ERP_OT_TYPES = ['연장근무', '시간외근무', '연장근로'] 
 export type ErpOtType = (typeof ERP_OT_TYPES)[number]
 
 /**
- * ERP 승인상태 values that count as approved.
+ * ERP 승인상태 values that count as accepted (approved or pending).
+ * '상신' = submitted/forwarded; '신청' = applied.
+ * Rejection criteria: any value containing '취소' or '반려'.
  */
-export const ERP_APPROVED_STATUSES = ['승인'] as const
+export const ERP_APPROVED_STATUSES = ['승인', '신청', '상신'] as const
 
 /**
  * ERP 신청구분 values that map to ErpLeaveType (absence records).
  * Values must be present in ErpLeaveType.
  */
+/**
+ * Canonical mapping from ERP 근태코드 → ErpLeaveType.
+ *
+ * DAY-BASED LEAVE (reads '일수' column for the exact fractional amount):
+ *   All codes listed below are whitelisted leave codes.  Codes NOT listed here
+ *   that are also not in OT_CODE_SET are silently skipped by the parser.
+ *
+ * TIME-BASED / BLOCKED codes handled elsewhere:
+ *   • OT_CODE_SET (dataParser.ts): 연장근로, 시간외근무, 연장근무, 휴일근로 — routed to OT map
+ *   • 복직신청: not in this map and not OT → silently discarded by the parser
+ *   • 출장 / 재택근무: kept here so records get a leaveType for status display,
+ *     but LEAVE_AMOUNT has no entry for them so erpLeaveAmount stays 0.
+ */
 export const ERP_LEAVE_TYPE_MAP: Record<string, ErpLeaveType> = {
-  // Standard types
+  // ── Standard ──────────────────────────────────────────────────────────────
   연차:         '연차',
   오전반차:     '오전반차',
   오후반차:     '오후반차',
+  반일연차:     '오후반차',     // PM half-day alias
   출장:         '출장',
   재택근무:     '재택근무',
-  // Quarter-day variants — treated as the nearest half-day
-  오전반반차:   '오전반차',
-  오후반반차:   '오후반차',
-  // Special leave types — treated as 연차 for attendance purposes
-  공가:              '연차',
-  경조휴가:          '연차',
-  생일반차휴가:      '오전반차',
-  예비군훈련:        '연차',
-  건강검진휴가:      '연차',
+  오전반반차:   '오전반반차',
+  오후반반차:   '오후반반차',
+  // ── 대체휴가 ─────────────────────────────────────────────────────────────
+  대체휴가:            '연차',
+  '대체휴가(4시간)':   '오전반차',
+  '대체휴가(2시간)':   '오전반반차',
+  // ── 특별휴가 / 포상 ──────────────────────────────────────────────────────
+  기타휴가:            '연차',
+  포상휴가:            '연차',
+  '포상휴가 (반반차)': '오전반반차',
+  경조휴가:            '연차',
+  생일반차:            '오전반차',
+  생일반차휴가:        '오전반차',
   '리프레쉬휴가(3년)': '연차',
-  태아검진휴가:      '연차',
-  '병가(무급)':      '연차',
-  병가:              '연차',
+  '리프레쉬휴가(5년)': '연차',
+  '리프레쉬휴가(7년)': '연차',
+  '리프레쉬휴가(9년)': '연차',
+  // ── 군 / 공공 의무 ────────────────────────────────────────────────────────
+  예비군훈련:            '연차',
+  '예비군훈련 (반반차)': '오전반반차',
+  공가:                  '연차',
+  // ── 의료 / 출산 / 육아 ───────────────────────────────────────────────────
+  난임휴가:        '연차',
+  '난임휴가(무급)': '연차',
+  임신기단축근로:  '연차',
+  출산휴가:        '연차',
+  육아휴직:        '연차',
+  배우자출산휴가:  '연차',
+  태아검진휴가:    '연차',
+  건강검진휴가:    '연차',
+  // ── 상병 ─────────────────────────────────────────────────────────────────
+  병가:         '연차',
+  '병가(무급)': '연차',
 }
 
 /** Tailwind bg + text classes for each FinalStatus — used in dashboard table cells */
@@ -334,12 +414,12 @@ export const STATUS_COLORS: Record<FinalStatus, string> = {
   '오후반차':       'bg-blue-100   text-blue-800',
   '출장':           'bg-blue-100   text-blue-800',
   '재택근무':       'bg-blue-100   text-blue-800',
+  '외근':           'bg-blue-100   text-blue-800',
   '지각':           'bg-yellow-100 text-yellow-800',
   '조기퇴근':       'bg-orange-100 text-orange-800',
   '지각+조기퇴근':  'bg-amber-700  text-white',
   '근태이상':       'bg-red-100    text-red-800',
   '출퇴근누락':     'bg-red-100    text-red-800',
-  'OT미신청':       'bg-red-100    text-red-800',
   '휴일근무':       'bg-purple-100 text-purple-800',
   '주말':           'bg-gray-100   text-gray-500',
   '공휴일':         'bg-gray-100   text-gray-500',

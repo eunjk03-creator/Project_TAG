@@ -9,7 +9,7 @@ export interface SlackMessage {
   subtype?: string  // 'bot_message' | 'channel_join' | etc.
 }
 
-export type SlackExcType = 'half_day' | 'quarter_day' | 'outside' | 'confirmed'
+export type SlackExcType = 'half_day' | 'quarter_day' | 'outside' | 'confirmed' | 'holiday_work' | 'annual_leave'
 
 export interface SlackException {
   empId:    string
@@ -22,44 +22,147 @@ export interface SlackException {
 
 // ── Keyword patterns ───────────────────────────────────────────────────────
 
-const AM_HALF_RE    = /오전\s*반\s*차/
-const PM_HALF_RE    = /오후\s*반\s*차/
-const HALF_RE       = /반\s*차/                              // generic half-day
-const QUARTER_RE    = /반\s*반\s*차|빈\s*반\s*차|반\s*휴/   // quarter-day + typos
-const OUTSIDE_RE    = /미팅|행사\s*참석|직출|외근/
+const AM_HALF_RE        = /오전\s*반\s*차/
+const PM_HALF_RE        = /오후\s*반\s*차/
+const HALF_RE           = /반\s*차/                              // generic half-day
+const QUARTER_RE        = /반\s*반\s*차|빈\s*반\s*차|반\s*휴/   // quarter-day + typos
+const HOLIDAY_WORK_RE   = /휴일\s*근무/
+const ANNUAL_LEAVE_RE   = /연차|공가|리프레시|경조|병가|육아|예비군|민방위|포상휴가|대체휴가|기타휴가|휴가/
+const TRIP_RE           = /출장/
+const OUTSIDE_RE        = /외근|외부교육|교육|직출|직퇴|감리|공장|미팅|방문|외부|생산|참관|현장|정기|audit|행사|참석|세미나|컨퍼런스|포럼|견학|출입|인터뷰/i
 
 function classifyMessage(text: string): { type: SlackExcType; note: string } | null {
-  if (QUARTER_RE.test(text))  return { type: 'quarter_day', note: '반반차'   }
-  if (AM_HALF_RE.test(text))  return { type: 'half_day',    note: '오전반차' }
-  if (PM_HALF_RE.test(text))  return { type: 'half_day',    note: '오후반차' }
-  if (HALF_RE.test(text))     return { type: 'half_day',    note: '반차'     }
-  if (OUTSIDE_RE.test(text))  return { type: 'outside',     note: '외근·행사' }
+  if (HOLIDAY_WORK_RE.test(text)) return { type: 'holiday_work', note: '휴일근무'  }
+  if (QUARTER_RE.test(text))      return { type: 'quarter_day',  note: '반반차'    }
+  if (AM_HALF_RE.test(text))      return { type: 'half_day',     note: '오전반차'  }
+  if (PM_HALF_RE.test(text))      return { type: 'half_day',     note: '오후반차'  }
+  if (HALF_RE.test(text))         return { type: 'half_day',     note: '반차'      }
+  if (ANNUAL_LEAVE_RE.test(text)) return { type: 'annual_leave', note: '연차'      }
+  if (TRIP_RE.test(text))         return { type: 'outside',      note: '출장'      }
+  if (OUTSIDE_RE.test(text))      return { type: 'outside',      note: '외근·행사' }
+  return null
+}
+
+// ── Department keyword → division disambiguation map ──────────────────────
+//
+// Keys are shorthand codes / aliases that appear in Slack messages.
+// Values are substrings of Employee.division — matched with .includes() so
+// "SCM본부", "GTM팀", etc. all resolve correctly.
+
+const DEPT_KEYWORD_MAP: { keywords: string[]; division: string }[] = [
+  { keywords: ['HM', 'HMR', 'HMR사업부문'],           division: 'HMR사업부문'      },
+  { keywords: ['HC', '헬스케어', '헬스케어사업부문'],  division: '헬스케어사업부문'  },
+  { keywords: ['RF', '음료', '음료사업부문'],          division: '음료사업부문'      },
+  { keywords: ['신사업', '신사업본부'],                division: '신사업본부'        },
+  { keywords: ['BT', '뷰티', '뷰티사업부문'],         division: '뷰티사업부문'      },
+  { keywords: ['HQ'],                                  division: 'HQ'               },
+  { keywords: ['PE', '피플', '피플본부'],              division: '피플본부'          },
+  { keywords: ['PL', '경영기획', '경영기획본부'],      division: '경영기획본부'      },
+  { keywords: ['GTM'],                                 division: 'GTM'              },
+  { keywords: ['SCM'],                                 division: 'SCM'              },
+]
+
+/**
+ * Given a message text, returns the division substring that any dept keyword
+ * in the message resolves to, or null if no keyword matches.
+ * Longer/more-specific keywords are checked first within each entry so that
+ * e.g. "HMR" is preferred over the shorter "HM" alias.
+ */
+function detectDivisionFromText(text: string): string | null {
+  for (const { keywords, division } of DEPT_KEYWORD_MAP) {
+    // Sort descending by length so longer aliases match before shorter ones
+    const sorted = [...keywords].sort((a, b) => b.length - a.length)
+    if (sorted.some(kw => text.includes(kw))) return division
+  }
   return null
 }
 
 // ── Name fuzzy matching ────────────────────────────────────────────────────
 
 /**
- * Converts a masked employee name to a RegExp.
- * Each '*' represents exactly one masked character.
- *   "기*미"  → /기.미/
- *   "김**룡" → /김..룡/
+ * Converts a masked employee name to a RegExp with strict Korean word boundaries.
+ * Each '*' is replaced by [가-힣] (exactly one Korean syllable — not any char).
+ * The whole pattern is wrapped in negative lookbehind/lookahead so it only
+ * matches a standalone name, never a substring inside a longer Korean word.
+ *
+ *   "이*로"  → /(?<![가-힣])이[가-힣]로(?![가-힣])/   — "이지로지스" → NO MATCH
+ *   "이*"    → /(?<![가-힣])이[가-힣](?![가-힣])/      — "이현지"     → NO MATCH
+ *   "김**룡" → /(?<![가-힣])김[가-힣][가-힣]룡(?![가-힣])/
  */
 function maskedNameToRegex(name: string): RegExp {
-  const pattern = name
+  // Strip internal spaces so "구 권모" in CAPS still matches "구권모" in Slack
+  const normalized = name.replace(/\s+/g, '')
+  const pattern = normalized
     .split('*')
     .map(segment => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('.')
-  return new RegExp(pattern)
+    .join('[가-힣]')
+  return new RegExp(`(?<![가-힣])${pattern}(?![가-힣])`)
 }
 
 // ── Date extraction ────────────────────────────────────────────────────────
 
-function extractDate(text: string, year: number): string | null {
-  // Match "M/D" or "MM/DD" (possibly followed by "(화)" day-of-week)
-  const m = text.match(/(\d{1,2})\/(\d{1,2})/)
-  if (!m) return null
-  return `${year}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+function ymd(year: number, month: string, day: string): string {
+  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+}
+
+/**
+ * Extract a date range from a Slack message.
+ *
+ * Recognises three formats (all with optional Korean day-of-week in parens):
+ *   1. Explicit range  "MM/DD[-~]MM/DD"          e.g. "5/11-5/12", "5/11~5/12"
+ *   2. Same-month range "MM/DD(요일)[-~]DD(요일)"  e.g. "5/11(월)-12(화)", "5/11-12"
+ *   3. Single date     "MM/DD"                    e.g. "5/11", "05/11(수)"
+ *
+ * Returns { start, end } in YYYY-MM-DD format, or null when no date is found.
+ * start and end are identical for single-date messages.
+ */
+function extractDateRange(text: string, year: number): { start: string; end: string } | null {
+  // Priority 1: explicit range  "MM/DD[-~]MM/DD"
+  const explicit = text.match(/(\d{1,2})\/(\d{1,2})\s*[-~]\s*(\d{1,2})\/(\d{1,2})/)
+  if (explicit) {
+    const start = ymd(year, explicit[1], explicit[2])
+    const end   = ymd(year, explicit[3], explicit[4])
+    if (start <= end) return { start, end }
+  }
+
+  // Priority 2: same-month range  "MM/DD(요일)[-~]DD(요일)"
+  // The negative lookahead (?![/\d]) prevents matching "5" in "5/11-5/12"
+  // (which would be caught by Priority 1 above).
+  const sameMonth = text.match(
+    /(\d{1,2})\/(\d{1,2})(?:\([가-힣]\))?\s*[-~]\s*(\d{1,2})(?![/\d])(?:\([가-힣]\))?/,
+  )
+  if (sameMonth) {
+    const start = ymd(year, sameMonth[1], sameMonth[2])
+    const end   = ymd(year, sameMonth[1], sameMonth[3])
+    if (start <= end) return { start, end }
+  }
+
+  // Fallback: single date
+  const single = text.match(/(\d{1,2})\/(\d{1,2})/)
+  if (single) {
+    const date = ymd(year, single[1], single[2])
+    return { start: date, end: date }
+  }
+
+  return null
+}
+
+/**
+ * Expand a { start, end } range into an array of YYYY-MM-DD strings.
+ * Capped at 30 days to guard against pathological inputs.
+ */
+function expandDateRange(start: string, end: string): string[] {
+  const dates: string[] = []
+  const cur  = new Date(start + 'T12:00:00Z')
+  const last = new Date(end   + 'T12:00:00Z')
+  if (isNaN(cur.getTime()) || isNaN(last.getTime()) || cur > last) return [start]
+  let guard = 0
+  while (cur <= last && guard < 30) {
+    dates.push(cur.toISOString().slice(0, 10))
+    cur.setUTCDate(cur.getUTCDate() + 1)
+    guard++
+  }
+  return dates
 }
 
 // ── Slack API fetch (calls our own /api/slack/history proxy) ───────────────
@@ -117,6 +220,21 @@ export async function fetchSlackMessages(
  *         c. Otherwise → skip (log warning). Never guess.
  *     - If 0 matches → skip silently.
  */
+// ── Classification priority (higher = preferred in dedup) ─────────────────
+// Leave-specific entries win over generic 'outside' when both cover the same
+// employee+date (e.g. the author writes a separate half-day message AND is
+// mentioned by name in a generic group-event message).
+const CLS_PRIORITY: Record<SlackExcType, number> = {
+  holiday_work: 6,
+  annual_leave: 5,
+  half_day:     4,
+  quarter_day:  3,
+  outside:      2,
+  confirmed:    1,
+}
+
+const DEFAULT_OOO_CLS: { type: SlackExcType; note: string } = { type: 'outside', note: '외근·행사' }
+
 export function parseSlackExceptions(
   messages:  SlackMessage[],
   employees: Employee[],
@@ -140,57 +258,130 @@ export function parseSlackExceptions(
     const text = msg.text
     if (!text?.trim()) continue
 
-    const date = extractDate(text, year)
-    if (!date) { noDateCount++; continue }
+    // 메시지 타임스탬프로 실제 연도 결정 (endDate 고정 연도 대신)
+    // → 2025년 메시지가 2026년 날짜로 잘못 매핑되는 문제 방지
+    const msgYear = msg.ts ? new Date(parseFloat(msg.ts) * 1000).getFullYear() : year
 
+    const range = extractDateRange(text, msgYear)
+    if (!range) { noDateCount++; continue }
+    const dates = expandDateRange(range.start, range.end)
+
+    // Keyword classification: 키워드 없으면 기본 외근·행사로 분류
+    // (OOO 채널에서 날짜+이름이 있고 연차/반차가 아니면 외근)
     const cls = classifyMessage(text)
-    if (!cls) { noKeywordCount++; continue }
+    if (!cls) noKeywordCount++
+    const effectiveCls = cls ?? DEFAULT_OOO_CLS
 
     // ── Step 1: collect all name-regex matches ─────────────────────────
-    const nameMatches = employeePatterns.filter(({ regex }) => regex.test(text))
+    const regexMatches = employeePatterns.filter(({ regex }) => regex.test(text))
+
+    // Supplement regex matching with token-based extraction for comma/slash separators
+    const tokenMatches: typeof regexMatches = []
+    const tokens = text.split(/[,/\s]+/).map(t => t.trim()).filter(t => /^[가-힣]{2,4}$/.test(t))
+    for (const token of tokens) {
+      for (const pat of employeePatterns) {
+        if (!regexMatches.some(m => m.emp.id === pat.emp.id) &&
+            !tokenMatches.some(m => m.emp.id === pat.emp.id) &&
+            pat.regex.test(token)) {
+          tokenMatches.push(pat)
+        }
+      }
+    }
+    const nameMatches = [...regexMatches, ...tokenMatches]
 
     if (nameMatches.length === 0) {
       noMatchCount++
-      // Debug: show messages that had a date + keyword but no name match
       if (process.env.NODE_ENV !== 'production') {
-        console.debug(`[TAG Slack] 이름 미매칭 (${date} / ${cls.note}): "${text.slice(0, 80)}"`)
+        const rangeStr = range.start === range.end ? range.start : `${range.start}~${range.end}`
+        console.debug(`[TAG Slack] 이름 미매칭 (${rangeStr} / ${effectiveCls.note}): "${text.slice(0, 80)}"`)
       }
       continue
     }
 
     if (nameMatches.length === 1) {
       const { emp } = nameMatches[0]
-      results.push({ empId: emp.id, empName: emp.name, date, type: cls.type, note: cls.note, rawText: text })
+      for (const date of dates) {
+        results.push({ empId: emp.id, empName: emp.name, date, type: effectiveCls.type, note: effectiveCls.note, rawText: text })
+      }
       continue
     }
 
-    // ── Step 2: ambiguous — require department context ─────────────────
-    const deptMatches = nameMatches.filter(({ emp }) =>
-      text.includes(emp.division) || text.includes(emp.team),
-    )
+    // ── Step 2: multi-name vs. 동명이인 disambiguation ─────────────────────────
+    //
+    // Group matches by employee name:
+    //   • Different names → all were intentionally mentioned in one message
+    //     (e.g. "김다슬, 이재아, 최도담 행사 참석") → record every distinct person.
+    //   • Same name, multiple employees (동명이인) → attempt dept disambiguation;
+    //     skip the group if still unresolvable.
 
-    if (deptMatches.length === 1) {
-      const { emp } = deptMatches[0]
-      results.push({ empId: emp.id, empName: emp.name, date, type: cls.type, note: cls.note, rawText: text })
-      continue
+    const byName = new Map<string, typeof nameMatches>()
+    for (const m of nameMatches) {
+      if (!byName.has(m.emp.name)) byName.set(m.emp.name, [])
+      byName.get(m.emp.name)!.push(m)
     }
 
-    // ── Step 3: still ambiguous — skip to protect data integrity ───────
-    ambiguousCount++
-    const candidateInfo = nameMatches.map(m => `${m.emp.name}(${m.emp.division})`).join(', ')
-    console.warn(
-      `[TAG Slack] ⚠ 이름 매칭 충돌 — ${nameMatches.length}명 후보 (${date}): ${candidateInfo}\n` +
-      `  부서 컨텍스트로도 구분 불가 (deptMatches=${deptMatches.length}). 행 스킵.\n` +
-      `  메시지: "${text.slice(0, 100)}"`,
-    )
+    if (process.env.NODE_ENV !== 'production') {
+      const rangeStr = range.start === range.end ? range.start : `${range.start}~${range.end}`
+      const namesSummary = [...byName.entries()]
+        .map(([n, g]) => g.length === 1 ? `${n}✓` : `${n}×${g.length}(동명이인)`)
+        .join(', ')
+      console.log(`[TAG Slack] 다중이름 매칭 (${rangeStr} / ${effectiveCls.note}): ${namesSummary}`)
+      console.log(`  메시지: "${text.slice(0, 100)}"`)
+    }
+
+    for (const [, group] of byName) {
+      if (group.length === 1) {
+        // Unique name among matches — record directly, no disambiguation needed
+        const { emp } = group[0]
+        for (const date of dates) {
+          results.push({ empId: emp.id, empName: emp.name, date, type: effectiveCls.type, note: effectiveCls.note, rawText: text })
+        }
+      } else {
+        // 동명이인: two-tier dept disambiguation
+        let deptMatches = group
+        const detectedDivision = detectDivisionFromText(text)
+        if (detectedDivision) {
+          deptMatches = group.filter(({ emp }) => emp.division.includes(detectedDivision))
+        }
+        if (deptMatches.length === 0) {
+          deptMatches = group.filter(({ emp }) => text.includes(emp.division) || text.includes(emp.team))
+        }
+        if (deptMatches.length === 1) {
+          const { emp } = deptMatches[0]
+          for (const date of dates) {
+            results.push({ empId: emp.id, empName: emp.name, date, type: effectiveCls.type, note: effectiveCls.note, rawText: text })
+          }
+        } else {
+          ambiguousCount++
+          const rangeStr = range.start === range.end ? range.start : `${range.start}~${range.end}`
+          const candidateInfo = group.map(m => `${m.emp.name}(${m.emp.division})`).join(', ')
+          console.warn(
+            `[TAG Slack] ⚠ 동명이인 충돌 — ${group.length}명 (${rangeStr}): ${candidateInfo}\n` +
+            `  부서 컨텍스트로도 구분 불가 (deptMatches=${deptMatches.length}). 스킵.\n` +
+            `  메시지: "${text.slice(0, 100)}"`,
+          )
+        }
+      }
+    }
   }
 
-  // Deduplicate: same empId+date → keep last
-  const deduped = new Map<string, SlackException>()
+  // 같은 empId+date에 여러 항목이 있을 수 있음 (반차+외근 등).
+  // 완전히 동일한 (empId, date, type, note) 중복만 제거하고 나머지는 모두 보존.
+  // 우선순위 내림차순으로 정렬 (휴일근무 > 연차 > 반차 > 외근 순).
+  const seen = new Set<string>()
+  const deduped: SlackException[] = []
   for (const ex of results) {
-    deduped.set(`${ex.empId}_${ex.date}`, ex)
+    const sig = `${ex.empId}|${ex.date}|${ex.type}|${ex.note}`
+    if (!seen.has(sig)) {
+      seen.add(sig)
+      deduped.push(ex)
+    }
   }
-  const final = [...deduped.values()]
+  // 동일 직원+날짜 내에서 우선순위 높은 순으로 정렬
+  const final = deduped.sort((a, b) => {
+    if (a.empId !== b.empId || a.date !== b.date) return 0
+    return (CLS_PRIORITY[b.type] ?? 0) - (CLS_PRIORITY[a.type] ?? 0)
+  })
 
   console.log(
     `[TAG Slack] ✅ 파싱 완료 — 매칭 ${final.length}건` +

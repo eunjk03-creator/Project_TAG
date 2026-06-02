@@ -1,13 +1,12 @@
 'use client'
-import { useState, useEffect, useMemo, type ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { useAttendanceLogic } from '@/hooks/useAttendanceLogic'
 import { usePolicy } from '@/context/PolicyContext'
 import { useDateRange } from '@/context/DateRangeContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import {
   useEmployeeExceptions,
-  DEFAULT_EXCEPTION,
-  type EmployeeException,
+  ATTR_RULE_MAP,
   type EmployeeAttributeOverrides,
 } from '@/context/EmployeeExceptionsContext'
 import { FINAL_STATUS_CATEGORY } from '@/types/tag'
@@ -124,9 +123,8 @@ function AttrToggleRow({
 export function EmployeeDrawer() {
   const {
     selectedId, closeDrawer,
-    getException, saveException,
-    getEmployeeAttr, setEmployeeAttr,
-    employeeAttrMap,
+    getEmployeeAttr, employeeAttrMap,
+    exceptionRules, addRule, deleteRule, patchRule,
   } = useEmployeeExceptions()
 
   const { policy }     = usePolicy()
@@ -138,30 +136,42 @@ export function EmployeeDrawer() {
     [selectedId, employees],
   )
 
-  // ── Draft state: memo & attrs ───────────────────────────────────────────
-  const [memoDraft, setMemoDraft] = useState<EmployeeException>(DEFAULT_EXCEPTION)
-  const [memoDraftSaved, setMemoDraftSaved] = useState(false)
-
   // Attrs are read live from context (no local draft — instant save on toggle)
   const attrs: EmployeeAttributeOverrides = selectedId ? getEmployeeAttr(selectedId) : {}
 
-  function patchAttr(patch: Partial<EmployeeAttributeOverrides>) {
-    if (!selectedId) return
-    setEmployeeAttr(selectedId, patch)
+  async function toggleAttr(field: keyof EmployeeAttributeOverrides, value: boolean) {
+    if (!selectedId || !emp) return
+    const ruleType = ATTR_RULE_MAP[field]
+    if (!ruleType) return
+    const existing = exceptionRules.find(r => r.employeeId === selectedId && r.ruleType === ruleType)
+    if (value && !existing) {
+      await addRule({
+        employeeId:     selectedId,
+        employeeName:   emp.name,
+        jobTitle:       emp.jobTitle ?? '',
+        division:       emp.division ?? '',
+        team:           emp.team ?? '',
+        ruleType,
+        excludeFromOt:  field === 'isLeader',
+        shortenedHours: attrs.shortenedHoursValue ?? 6,
+        validFrom:      '',
+        validTo:        '',
+      })
+    } else if (!value && existing) {
+      await deleteRule(existing.id)
+    }
   }
 
-  // Sync memo draft when drawer opens for a new employee
-  useEffect(() => {
-    if (selectedId) {
-      setMemoDraft(getException(selectedId))
-      setMemoDraftSaved(false)
-    }
-  }, [selectedId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  function saveMemo() {
+  async function updatePregnantDates(from: string, to: string) {
     if (!selectedId) return
-    saveException(selectedId, memoDraft)
-    setMemoDraftSaved(true)
+    const existing = exceptionRules.find(r => r.employeeId === selectedId && r.ruleType === 'pregnant_reduced')
+    if (existing) await patchRule(existing.id, { validFrom: from, validTo: to })
+  }
+
+  async function updateShortenedHours(hours: number) {
+    if (!selectedId) return
+    const existing = exceptionRules.find(r => r.employeeId === selectedId && r.ruleType === 'shortened_hours')
+    if (existing) await patchRule(existing.id, { shortenedHours: hours })
   }
 
   // ── Reactive stats (re-computes when attrs change) ──────────────────────
@@ -182,8 +192,8 @@ export function EmployeeDrawer() {
 
   const orgPath = emp ? [emp.division, emp.team, emp.part].filter(Boolean).join(' / ') : ''
 
-  const hasAttrOverrides = !!(attrs.isLeader || attrs.isParentalLeave || attrs.isShortenedHours || attrs.isEasyLogis)
-  const hasExceptions = hasAttrOverrides || memoDraft.bypassOtLimits || memoDraft.flexibleCoreTime
+  const hasAttrOverrides = !!(attrs.isLeader || attrs.isParentalLeave || attrs.isShortenedHours || attrs.isEasyLogis || attrs.isResigned)
+  const hasExceptions = hasAttrOverrides
 
   return (
     <>
@@ -287,9 +297,9 @@ export function EmployeeDrawer() {
                   label="직책자"
                   badge="isLeader"
                   badgeCls="bg-violet-100 text-violet-600"
-                  desc="지각·조기퇴근 이상치 면제. OT 미신청 감지에서 제외됩니다."
+                  desc="OT 미산입, 연장근로 집계에서 제외."
                   value={!!attrs.isLeader}
-                  onChange={v => patchAttr({ isLeader: v })}
+                  onChange={v => { void toggleAttr('isLeader', v) }}
                 />
 
                 <AttrToggleRow
@@ -298,7 +308,7 @@ export function EmployeeDrawer() {
                   badgeCls="bg-pink-100 text-pink-600"
                   desc="출퇴근 미기록 이상치 및 조기퇴근 판정을 면제합니다."
                   value={!!attrs.isParentalLeave}
-                  onChange={v => patchAttr({ isParentalLeave: v })}
+                  onChange={v => { void toggleAttr('isParentalLeave', v) }}
                 />
 
                 <AttrToggleRow
@@ -307,7 +317,7 @@ export function EmployeeDrawer() {
                   badgeCls="bg-amber-100 text-amber-600"
                   desc="일 표준근로시간을 단축 적용합니다. OT 기준 및 조기퇴근 판정이 함께 조정됩니다."
                   value={!!attrs.isShortenedHours}
-                  onChange={v => patchAttr({ isShortenedHours: v })}
+                  onChange={v => { void toggleAttr('isShortenedHours', v) }}
                 >
                   <div className="flex items-center gap-2 bg-amber-50 rounded-lg px-3 py-2">
                     <span className="text-xs text-amber-700 font-medium shrink-0">일 근무시간</span>
@@ -315,7 +325,7 @@ export function EmployeeDrawer() {
                       type="number"
                       min={1} max={7} step={0.5}
                       value={attrs.shortenedHoursValue ?? 6}
-                      onChange={e => patchAttr({ shortenedHoursValue: Number(e.target.value) })}
+                      onChange={e => { void updateShortenedHours(Number(e.target.value)) }}
                       className="w-16 px-2 py-1 text-sm border border-amber-200 rounded-lg
                         focus:outline-none focus:ring-2 focus:ring-amber-400 text-right bg-white"
                     />
@@ -324,12 +334,46 @@ export function EmployeeDrawer() {
                 </AttrToggleRow>
 
                 <AttrToggleRow
+                  label="임신기 단축근로"
+                  badge="isPregnantReduced"
+                  badgeCls="bg-rose-100 text-rose-600"
+                  desc="임신기 근로자 보호. 1일 최소 6시간 근무 기준 적용, 미달 시 이상치 감지."
+                  value={!!attrs.isPregnantReduced}
+                  onChange={v => { void toggleAttr('isPregnantReduced', v) }}
+                >
+                  {attrs.isPregnantReduced && (() => {
+                    const rule = exceptionRules.find(r => r.employeeId === selectedId && r.ruleType === 'pregnant_reduced')
+                    return (
+                      <div className="bg-rose-50 rounded-lg px-3 py-2 space-y-1.5">
+                        <p className="text-[10px] font-semibold text-rose-500 uppercase tracking-wide">적용 기간</p>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="date"
+                            value={rule?.validFrom ?? ''}
+                            onChange={e => void updatePregnantDates(e.target.value, rule?.validTo ?? '')}
+                            className="flex-1 px-2 py-1 text-xs border border-rose-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-rose-400 bg-white"
+                          />
+                          <span className="text-xs text-rose-400 shrink-0">~</span>
+                          <input
+                            type="date"
+                            value={rule?.validTo ?? ''}
+                            onChange={e => void updatePregnantDates(rule?.validFrom ?? '', e.target.value)}
+                            className="flex-1 px-2 py-1 text-xs border border-rose-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-rose-400 bg-white"
+                          />
+                        </div>
+                        <p className="text-[10px] text-rose-400">비워두면 기간 제한 없이 적용됩니다.</p>
+                      </div>
+                    )
+                  })()}
+                </AttrToggleRow>
+
+                <AttrToggleRow
                   label="10시 출근자"
                   badge="isTenAMStarter"
                   badgeCls="bg-sky-100 text-sky-600"
                   desc="출근 기준을 10:00으로 설정. 지각 판정 · OT 시작 기준(20:00+)이 함께 이동합니다."
                   value={!!attrs.isTenAMStarter}
-                  onChange={v => patchAttr({ isTenAMStarter: v })}
+                  onChange={v => { void toggleAttr('isTenAMStarter', v) }}
                 />
 
                 <AttrToggleRow
@@ -338,7 +382,7 @@ export function EmployeeDrawer() {
                   badgeCls="bg-teal-100 text-teal-600"
                   desc="CAPS 태깅 미기록(출퇴근 누락) 이상치 감지를 면제합니다."
                   value={!!attrs.isDispatchedWorker}
-                  onChange={v => patchAttr({ isDispatchedWorker: v })}
+                  onChange={v => { void toggleAttr('isDispatchedWorker', v) }}
                 />
 
                 <AttrToggleRow
@@ -347,68 +391,17 @@ export function EmployeeDrawer() {
                   badgeCls="bg-indigo-100 text-indigo-600"
                   desc="이지로지스 계열사 특별 규칙 적용. 모든 이상치 플래그를 억제합니다."
                   value={!!attrs.isEasyLogis}
-                  onChange={v => patchAttr({ isEasyLogis: v })}
+                  onChange={v => { void toggleAttr('isEasyLogis', v) }}
                 />
-              </div>
 
-              {/* ── Legacy drawer toggles ── */}
-              <div className="px-5 py-4">
-                <SectionLabel>기타 예외 설정</SectionLabel>
-
-                <div className="flex items-start justify-between gap-4 py-3.5 border-b border-gray-50">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800">매니저 역할 (OT 한도 제외)</p>
-                    <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
-                      연장근로 한도 초과 및 OT 미신청 이상치 감지에서 제외됩니다.
-                    </p>
-                  </div>
-                  <button
-                    role="switch"
-                    aria-checked={memoDraft.bypassOtLimits}
-                    onClick={() => { setMemoDraft(p => ({ ...p, bypassOtLimits: !p.bypassOtLimits })); setMemoDraftSaved(false) }}
-                    className={`relative shrink-0 inline-flex items-center h-6 w-11 rounded-full transition-colors duration-200 ${
-                      memoDraft.bypassOtLimits ? 'bg-blue-600' : 'bg-gray-200'
-                    }`}
-                  >
-                    <span className={`inline-block w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${
-                      memoDraft.bypassOtLimits ? 'translate-x-5' : 'translate-x-0.5'
-                    }`} />
-                  </button>
-                </div>
-
-                <div className="flex items-start justify-between gap-4 py-3.5 border-b border-gray-50">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800">유연 코어타임 (예외 출근 허용)</p>
-                    <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
-                      지각 기준이 적용되지 않으며 LATE 이상치가 발생하지 않습니다.
-                    </p>
-                  </div>
-                  <button
-                    role="switch"
-                    aria-checked={memoDraft.flexibleCoreTime}
-                    onClick={() => { setMemoDraft(p => ({ ...p, flexibleCoreTime: !p.flexibleCoreTime })); setMemoDraftSaved(false) }}
-                    className={`relative shrink-0 inline-flex items-center h-6 w-11 rounded-full transition-colors duration-200 ${
-                      memoDraft.flexibleCoreTime ? 'bg-blue-600' : 'bg-gray-200'
-                    }`}
-                  >
-                    <span className={`inline-block w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${
-                      memoDraft.flexibleCoreTime ? 'translate-x-5' : 'translate-x-0.5'
-                    }`} />
-                  </button>
-                </div>
-
-                <div className="mt-4">
-                  <label className="text-xs font-medium text-gray-500 block mb-1.5">관리자 메모</label>
-                  <textarea
-                    rows={3}
-                    value={memoDraft.note}
-                    onChange={e => { setMemoDraft(p => ({ ...p, note: e.target.value })); setMemoDraftSaved(false) }}
-                    placeholder="예외 적용 사유, 계약 조건 등 메모 입력..."
-                    className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2
-                      focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none
-                      placeholder-gray-300 text-gray-700"
-                  />
-                </div>
+                <AttrToggleRow
+                  label="퇴사자"
+                  badge="isResigned"
+                  badgeCls="bg-red-100 text-red-600"
+                  desc="퇴사 처리된 직원. 모든 근태 집계 및 이상치 감지에서 완전히 제외됩니다."
+                  value={!!attrs.isResigned}
+                  onChange={v => { void toggleAttr('isResigned', v) }}
+                />
               </div>
             </>
           ) : (
@@ -418,21 +411,6 @@ export function EmployeeDrawer() {
           )}
         </div>
 
-        {/* Footer — save memo */}
-        {emp && (
-          <div className="px-5 py-4 border-t border-gray-100 shrink-0 space-y-2">
-            {memoDraftSaved && (
-              <p className="text-xs text-green-600 font-medium text-center">✓ 메모가 저장됐습니다</p>
-            )}
-            <button
-              onClick={saveMemo}
-              className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-lg
-                hover:bg-blue-700 active:scale-95 transition-all"
-            >
-              메모 저장
-            </button>
-          </div>
-        )}
       </div>
     </>
   )

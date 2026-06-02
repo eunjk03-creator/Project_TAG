@@ -5,7 +5,7 @@ import { useOrgFilter } from '@/context/OrgFilterContext'
 import { useDateRange } from '@/context/DateRangeContext'
 import { DateRangePicker } from '@/components/admin/DateRangePicker'
 
-const divisions = DIVISIONS.filter(d => d !== '기타' && DIVISION_TEAMS[d].length > 0)
+const divisions = [...DIVISIONS]
 const divisionTeams: Record<string, readonly string[]> = DIVISION_TEAMS
 
 export function OrgFilterBar() {

@@ -2,9 +2,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import type { DateRange } from '@/types/tag'
 
-const DATA_START  = '2026-01-01'
-const DATA_END    = '2026-04-29'
-const DATA_MONTHS = [1, 2, 3, 4]
 const MO_KR  = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
 const DOW_KR = ['일','월','화','수','목','금','토']
 
@@ -29,11 +26,12 @@ function weekOfMonth(monday: string): number {
 }
 
 interface WeekInfo { monday: string; sunday: string; month: number; wom: number }
-function buildWeeks(): WeekInfo[] {
+
+function buildWeeks(dataStart: string, dataEnd: string): WeekInfo[] {
   const list: WeekInfo[] = []
-  let mon = weekMonday(DATA_START)
-  if (mon < DATA_START) mon = addDays(mon, 7)
-  const cap = weekMonday(DATA_END)
+  let mon = weekMonday(dataStart)
+  if (mon < dataStart) mon = addDays(mon, 7)
+  const cap = weekMonday(dataEnd)
   while (mon <= cap) {
     list.push({
       monday: mon,
@@ -45,22 +43,39 @@ function buildWeeks(): WeekInfo[] {
   }
   return list
 }
-const ALL_WEEKS = buildWeeks()
 
 export function DateRangePicker({
   value,
   onChange,
+  minDate = '2026-01-01',
+  maxDate = '2026-12-31',
 }: {
-  value:    DateRange
-  onChange: (r: DateRange) => void
+  value:     DateRange
+  onChange:  (r: DateRange) => void
+  minDate?:  string
+  maxDate?:  string
 }) {
   const [open,   setOpen]   = useState(false)
-  const [anchor, setAnchor] = useState<string | null>(null) // first-clicked date
+  const [anchor, setAnchor] = useState<string | null>(null)
   const [hover,  setHover]  = useState<string | null>(null)
-  const [cal,    setCal]    = useState({ year: 2026, month: 4 })
+  const [cal,    setCal]    = useState(() => {
+    const d = new Date(minDate + 'T12:00:00')
+    return { year: d.getFullYear(), month: d.getMonth() + 1 }
+  })
 
   const trigRef = useRef<HTMLButtonElement>(null)
   const popRef  = useRef<HTMLDivElement>(null)
+
+  // Derive available months and weeks from the actual data range
+  const DATA_MONTHS = useMemo(() => {
+    const startM = parseInt(minDate.slice(5, 7), 10)
+    const endM   = parseInt(maxDate.slice(5, 7), 10)
+    const months: number[] = []
+    for (let m = startM; m <= endM; m++) months.push(m)
+    return months
+  }, [minDate, maxDate])
+
+  const ALL_WEEKS = useMemo(() => buildWeeks(minDate, maxDate), [minDate, maxDate])
 
   // Each time popup opens: reset selection state, jump calendar to value.from month
   useEffect(() => {
@@ -129,9 +144,10 @@ export function DateRangePicker({
   }
 
   function presetMonth(m: number) {
-    const from = `2026-${String(m).padStart(2, '0')}-01`
-    const raw  = toDS(new Date(2026, m, 0))
-    onChange({ from, to: raw > DATA_END ? DATA_END : raw })
+    const year = parseInt(minDate.slice(0, 4), 10)
+    const from = `${year}-${String(m).padStart(2, '0')}-01`
+    const raw  = toDS(new Date(year, m, 0))
+    onChange({ from, to: raw > maxDate ? maxDate : raw })
     setOpen(false)
   }
 
@@ -168,7 +184,7 @@ export function DateRangePicker({
 
           {cells.map((ds, idx) => {
             if (!ds) return <div key={`_${idx}`} className="h-8" />
-            const dis    = ds < DATA_START || ds > DATA_END
+            const dis    = ds < minDate || ds > maxDate
             const isS    = ds === hiFrom
             const isE    = ds === hiTo
             const inR    = !sameDay && ds > hiFrom && ds < hiTo
@@ -178,7 +194,6 @@ export function DateRangePicker({
 
             return (
               <div key={ds} className="relative h-8 flex items-center justify-center">
-                {/* Continuous range band — left/right half on endpoints, full width in between */}
                 {hasBand && (
                   <div
                     className="absolute inset-y-1 bg-blue-100 pointer-events-none"
@@ -256,9 +271,9 @@ export function DateRangePicker({
               <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">
                 월별
               </p>
-              <div className="flex gap-1.5">
+              <div className="flex gap-1.5 flex-wrap max-w-[200px]">
                 {DATA_MONTHS.map(m => {
-                  const from   = `2026-${String(m).padStart(2, '0')}-01`
+                  const from   = `${minDate.slice(0, 4)}-${String(m).padStart(2, '0')}-01`
                   const active = value.from === from
                   return (
                     <button

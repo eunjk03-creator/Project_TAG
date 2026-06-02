@@ -1,16 +1,21 @@
 'use client'
 import { useMemo } from 'react'
-import type { ProcessedRecord, Employee } from '@/types/tag'
+import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
 import { HOLIDAYS } from '@/data/mockData'
+import {
+  computeWorkA, computeWorkB, computeBreakH, computeFinalWork, computeStatusN,
+} from '@/utils/attendanceCalc'
+
+const ANOMALY_STATUSES = new Set(['지각', '조기퇴근', '지각+조기퇴근', '미태깅', '이상치'])
 
 // ── Public types ───────────────────────────────────────────────────────────
 
 export interface DivisionMetrics {
   division: string
   headcount: number
-  /** regularHours + overtimeHours across the date range */
+  /** computeFinalWork hours across the date range (weekday only; holiday work excluded) */
   totalHours: number
-  /** overtimeHours total */
+  /** total extra hours: weekday OT + nightHours + holidayHours */
   otHours: number
   /** nightHours total (22:00–06:00 overlay) */
   nightHours: number
@@ -27,14 +32,24 @@ export interface DivisionMetrics {
 }
 
 export interface ManagementMetricsResult {
-  /** Per-division rows, sorted by weeklyOver45 DESC then avgOtPerPerson DESC */
+  /** Per-division rows, sorted by weeklyOver45 DESC then avgOtPerPerson DESC (all employees — backward compat) */
   metrics: DivisionMetrics[]
   /** Count of working days in the selected range (weekdays excl. holidays) */
   bizDays: number
-  /** Grand-total row */
+  /** Grand-total row (all employees — backward compat) */
   total: Omit<DivisionMetrics, 'division'>
   /** Weekly hours (Mon of toDate's week → toDate) keyed by employeeId */
   weeklyHoursMap: Record<string, number>
+
+  // ── Dual-grid split ───────────────────────────────────────────────────────
+  /** Per-division rows for 사원 (non-leader employees) */
+  employeeMetrics: DivisionMetrics[]
+  /** Grand-total for 사원 */
+  employeeTotal: Omit<DivisionMetrics, 'division'>
+  /** Per-division rows for 직책자 (leader employees) */
+  leaderMetrics: DivisionMetrics[]
+  /** Grand-total for 직책자 */
+  leaderTotal: Omit<DivisionMetrics, 'division'>
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -68,6 +83,20 @@ function getWeekMonday(dateStr: string): string {
   )
 }
 
+/** Returns { totalH, otH } for a single record using the 14-column formula.
+ *  Uses effectiveClockIn (clamped to flex-start, e.g. 08:00) so early arrivals
+ *  don't inflate the duration — same clamp applied by processRecord.
+ *  OT = max(0, finalWorkH − 8.0); non-weekday records contribute 0 to both. */
+function recordHours(r: ProcessedRecord): { totalH: number; otH: number } {
+  if (r.dayType !== 'WEEKDAY') return { totalH: 0, otH: 0 }
+  const leaveAmt   = r.erpLeaveAmount ?? 0
+  const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
+  const workB      = computeWorkB(workA, leaveAmt, r.isUnpaidLeave ?? false)
+  const breakH_    = computeBreakH(workB)
+  const finalWorkH = computeFinalWork(workB, breakH_)
+  return { totalH: finalWorkH, otH: Math.max(0, finalWorkH - 8.0) }
+}
+
 function buildMetrics(
   division: string,
   empIds: Set<string>,
@@ -76,16 +105,41 @@ function buildMetrics(
   approvedKeys: Set<string>,
   bizDays: number,
   weeklyHoursMap: Record<string, number>,
+  empRawIdMap: Map<string, string>,
 ): DivisionMetrics {
   const recs = records.filter(r => empIds.has(r.employeeId))
 
-  const totalHours        = recs.reduce((s, r) => s + r.regularHours + r.overtimeHours, 0)
-  const otHours           = recs.reduce((s, r) => s + r.overtimeHours, 0)
-  const nightHours        = recs.reduce((s, r) => s + r.nightHours, 0)
-  const anomalies         = recs.filter(
-    r => r.flag !== null && !approvedKeys.has(`${r.employeeId}_${r.date}`),
-  ).length
-  const weeklyOver45      = [...empIds].filter(id => (weeklyHoursMap[id] ?? 0) > 45).length
+  let totalHours = 0
+  let weekdayOtH = 0
+  for (const r of recs) {
+    const { totalH, otH } = recordHours(r)
+    totalHours += totalH
+    weekdayOtH += otH
+  }
+  const nightHours    = recs.reduce((s, r) => s + r.nightHours, 0)
+  const holidayHoursS = recs.reduce((s, r) => s + (r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0), 0)
+  const otHours       = weekdayOtH + nightHours + holidayHoursS
+  const weeklyOver45 = [...empIds].filter(id => (weeklyHoursMap[id] ?? 0) > 45).length
+
+  let anomalies = 0
+  for (const r of recs) {
+    if (approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
+    const rawId      = empRawIdMap.get(r.employeeId) ?? r.employeeId.split('_')[0]
+    const leaveAmt   = r.erpLeaveAmount ?? 0
+    const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
+    const workB      = computeWorkB(workA, leaveAmt, r.isUnpaidLeave ?? false)
+    const breakH_    = computeBreakH(workB)
+    const finalWorkH = computeFinalWork(workB, breakH_)
+    const ds: string | null =
+      r.finalStatus === '외근'     ? '외근'     :
+      r.finalStatus === '휴일근무' ? '휴일근무' :
+      computeStatusN({
+        dayType: r.dayType, clockIn: r.clockIn, clockOut: r.clockOut,
+        leaveType: r.leaveType ?? null, erpLeaveAmount: r.erpLeaveAmount,
+        finalWorkH, rawId,
+      })
+    if (ds !== null && ANOMALY_STATUSES.has(ds)) anomalies++
+  }
 
   const capacity          = bizDays * headcount * 8
   const avgOtPerPerson    = headcount > 0 ? otHours   / headcount : 0
@@ -108,6 +162,7 @@ export function useManagementMetrics(
   approvedKeys: Set<string>,
   fromDate: string,
   toDate: string,
+  employeeAttrMap: Map<string, EmployeeAttributeOverrides> = new Map(),
 ): ManagementMetricsResult {
   return useMemo(() => {
     const bizDays = countBizDays(fromDate, toDate)
@@ -116,31 +171,75 @@ export function useManagementMetrics(
     const weekMonday = getWeekMonday(toDate)
     const weeklyHoursMap: Record<string, number> = {}
     for (const r of processedRecords) {
-      if (r.date >= weekMonday && r.date <= toDate) {
-        weeklyHoursMap[r.employeeId] =
-          (weeklyHoursMap[r.employeeId] ?? 0) +
-          r.regularHours + r.overtimeHours + (r.holidayHours ?? 0)
-      }
+      if (r.date < weekMonday || r.date > toDate) continue
+      const { totalH } = recordHours(r)
+      weeklyHoursMap[r.employeeId] =
+        (weeklyHoursMap[r.employeeId] ?? 0) + totalH + (r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0)
     }
 
+    const empRawIdMap = new Map(employees.map(e => [e.id, e.rawId ?? e.id.split('_')[0]]))
+
+    // ── Leader ID set: union of exception-rule/drawer isLeader + CSV-parsed isLeader ──
+    const leaderIdSet = new Set<string>(
+      employees
+        .filter(e => (employeeAttrMap.get(e.id)?.isLeader === true) || (e.isLeader === true))
+        .map(e => e.id),
+    )
+
+    // ── Backward-compat: all-employee metrics (used by existing dashboard) ─────
     const divisions = [...new Set(employees.map(e => e.division))]
     const metrics: DivisionMetrics[] = divisions.map(div => {
       const divEmps = employees.filter(e => e.division === div)
       const empIds  = new Set(divEmps.map(e => e.id))
-      return buildMetrics(div, empIds, divEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap)
+      return buildMetrics(div, empIds, divEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
     })
-
-    // Sort: 52h risk count desc → avgOT desc
     metrics.sort((a, b) =>
       b.weeklyOver45 !== a.weeklyOver45
         ? b.weeklyOver45 - a.weeklyOver45
         : b.avgOtPerPerson - a.avgOtPerPerson,
     )
-
-    const allIds = new Set(employees.map(e => e.id))
-    const gt     = buildMetrics('전체', allIds, employees.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap)
+    const allIds           = new Set(employees.map(e => e.id))
+    const gt               = buildMetrics('전체', allIds, employees.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
     const { division: _d, ...total } = gt
 
-    return { metrics, bizDays, total, weeklyHoursMap }
-  }, [processedRecords, employees, approvedKeys, fromDate, toDate])
+    // ── 사원 (non-leader) split ───────────────────────────────────────────────
+    const employeeEmps = employees.filter(e => !leaderIdSet.has(e.id))
+    const empDivisions = [...new Set(employeeEmps.map(e => e.division))]
+    const employeeMetrics: DivisionMetrics[] = empDivisions.map(div => {
+      const divEmps = employeeEmps.filter(e => e.division === div)
+      const empIds  = new Set(divEmps.map(e => e.id))
+      return buildMetrics(div, empIds, divEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
+    })
+    employeeMetrics.sort((a, b) =>
+      b.weeklyOver45 !== a.weeklyOver45
+        ? b.weeklyOver45 - a.weeklyOver45
+        : b.avgOtPerPerson - a.avgOtPerPerson,
+    )
+    const empAllIds        = new Set(employeeEmps.map(e => e.id))
+    const empGt            = buildMetrics('전체', empAllIds, employeeEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
+    const { division: _d2, ...employeeTotal } = empGt
+
+    // ── 직책자 (leader) split ─────────────────────────────────────────────────
+    const leaderEmps   = employees.filter(e => leaderIdSet.has(e.id))
+    const ldDivisions  = [...new Set(leaderEmps.map(e => e.division))]
+    const leaderMetrics: DivisionMetrics[] = ldDivisions.map(div => {
+      const divEmps = leaderEmps.filter(e => e.division === div)
+      const empIds  = new Set(divEmps.map(e => e.id))
+      return buildMetrics(div, empIds, divEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
+    })
+    leaderMetrics.sort((a, b) =>
+      b.weeklyOver45 !== a.weeklyOver45
+        ? b.weeklyOver45 - a.weeklyOver45
+        : b.avgOtPerPerson - a.avgOtPerPerson,
+    )
+    const ldAllIds         = new Set(leaderEmps.map(e => e.id))
+    const ldGt             = buildMetrics('전체', ldAllIds, leaderEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
+    const { division: _d3, ...leaderTotal } = ldGt
+
+    return {
+      metrics, bizDays, total, weeklyHoursMap,
+      employeeMetrics, employeeTotal,
+      leaderMetrics,   leaderTotal,
+    }
+  }, [processedRecords, employees, approvedKeys, fromDate, toDate, employeeAttrMap])
 }

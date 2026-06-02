@@ -1,6 +1,8 @@
 import type { Employee } from '@/types/tag'
 
-// ── Canonical 12-division taxonomy ────────────────────────────────────────
+// ── Canonical division taxonomy ────────────────────────────────────────────
+// 사업부문/신사업본부: CAPS exports only the division name (no sub-team column).
+// 본부/HQ: CAPS exports "본부명 팀명" or just the team name — teams listed below.
 
 export const DIVISIONS = [
   '임원',
@@ -13,30 +15,42 @@ export const DIVISIONS = [
   '음료사업부문',
   '뷰티사업부문',
   '헬스케어사업부문',
-  '신사업부문',
-  '기타',
+  '신사업본부',
 ] as const
 
 export type DivisionName = (typeof DIVISIONS)[number]
 
-// Known teams per division. Used for Strategy 3 (exact team lookup) and for
-// filter dropdowns. Extend as new teams appear in production CAPS exports.
+// Known teams per division. Used for Strategy 4 (team-only lookup) and filter dropdowns.
+// 사업부문 / 신사업본부: no sub-team in CAPS — employees resolve directly to the division.
+// 본부장 etc. who appear with only the 본부 name also fall through to team = division name.
 export const DIVISION_TEAMS: Record<DivisionName, readonly string[]> = {
-  '임원':           ['CEO', 'CSO', 'CFO'],
-  '경영기획본부':   ['경영관리팀', '재무회계팀', '리스크매니지먼트팀', '전략팀'],
-  '피플본부':       ['인사기획팀', '조직문화팀', '채용팀'],
-  'GTM본부':        ['영업기획팀', 'GTM팀', 'GTM1팀', 'GTM2팀'],
-  'HQ':             ['전략기획팀', '총무팀', 'CX팀', '촬영팀', '인프라개발팀', '품질관리팀', '수출팀'],
-  'SCM본부':        ['S&OP팀', '물류운영팀', '물류기획팀', 'SCM팀'],
-  'HMR사업부문':    ['상품기획팀', '디자인팀', '브랜드팀', '마케팅팀', 'HMR마케팅팀'],
-  '음료사업부문':   ['마케팅1팀', '마케팅2팀', '프로덕트팀', '음료마케팅팀'],
-  '뷰티사업부문':   ['브레이마케팅팀', '브랜드팀', '뷰티마케팅팀'],
-  '헬스케어사업부문': ['브랜드1팀', '브랜드2팀', '온라인MD팀', '헬스케어마케팅팀'],
-  '신사업부문':     ['신사업팀', '신사업기획팀'],
-  '기타':           [],
+  '임원':             ['CEO', 'CSO', 'CFO'],
+  '경영기획본부':     ['경영관리팀', '리스크매니지먼트팀', '재무회계팀', '연결회계팀'],
+  '피플본부':         ['인사기획팀', '조직문화팀'],
+  'GTM본부':          ['GTM팀', '영업기획팀'],
+  'HQ':               ['총무팀', 'CX팀', '촬영팀', '인프라개발팀', '품질관리팀', '수출팀', '기타'],
+  'SCM본부':          ['S&OP팀', '물류운영팀', '물류기획팀'],
+  'HMR사업부문':      [],
+  '음료사업부문':     [],
+  '뷰티사업부문':     [],
+  '헬스케어사업부문': [],
+  '신사업본부':       [],
 }
 
 // ── Parser helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Aliases for 본부/부문 suffix inconsistency in CAPS exports.
+ * CAPS sometimes exports "헬스케어사업본부" while the canonical name is "헬스케어사업부문".
+ * Checked as a prefix so "헬스케어사업본부 브랜드1팀" also resolves correctly.
+ */
+const DIVISION_ALIASES: Record<string, DivisionName> = {
+  '헬스케어사업본부': '헬스케어사업부문',
+  '음료사업본부':     '음료사업부문',
+  'HMR사업본부':      'HMR사업부문',
+  '뷰티사업본부':     '뷰티사업부문',
+  '신사업부문':       '신사업본부',   // 구 CAPS export 대응
+}
 
 // Divisions sorted longest-first so "HMR사업부문" is tried before "사업부문"
 // (the old grouping key that no longer appears, but guards against partial hits).
@@ -68,7 +82,7 @@ function isDivision(s: string): s is DivisionName {
  */
 export function getOrganization(deptName: string): { division: string; team: string } {
   const name = deptName.trim()
-  if (!name) return { division: '기타', team: name }
+  if (!name) return { division: '신사업본부', team: name }
 
   // Strategy 1: slash separator
   const slashIdx = name.indexOf('/')
@@ -80,6 +94,14 @@ export function getOrganization(deptName: string): { division: string; team: str
     // Fallback: prefix-check the left side
     const divFromLeft = DIVISIONS_BY_LENGTH.find(d => left.startsWith(d))
     return { division: divFromLeft ?? left, team: right || left }
+  }
+
+  // Strategy 1.5 — alias: resolves 본부↔부문 suffix inconsistency in CAPS exports
+  for (const [alias, canonical] of Object.entries(DIVISION_ALIASES)) {
+    if (name.startsWith(alias)) {
+      const rest = name.slice(alias.length).trim()
+      return { division: canonical, team: rest || canonical }
+    }
   }
 
   // Strategy 2: division name as prefix (longest match first)
@@ -100,8 +122,8 @@ export function getOrganization(deptName: string): { division: string; team: str
     }
   }
 
-  // Strategy 5: 기타 fallback — preserve raw string as team for display
-  return { division: '기타', team: name }
+  // Strategy 5: unrecognised dept — use raw string as division to prevent silent mis-classification
+  return { division: name, team: name }
 }
 
 // ── Mock employees (dev / demo only) ──────────────────────────────────────
@@ -126,8 +148,8 @@ export const EMPLOYEES: Employee[] = [
   { id: 'E7777772', name: '황온라인', division: '헬스케어사업부문', team: '온라인MD팀',                              jobTitle: '매니저' },
   { id: 'E8888881', name: '김그로스', division: '뷰티사업부문',   team: '브레이마케팅팀', part: '그로스파트',        jobTitle: '책임'   },
   { id: 'E8888882', name: '안콘텐츠', division: '뷰티사업부문',   team: '브레이마케팅팀', part: '콘텐츠파트',        jobTitle: '선임'   },
-  { id: 'E9999991', name: '백신사업', division: '신사업부문',     team: '신사업팀',      part: '마케팅파트',         jobTitle: '책임'   },
-  { id: 'E9999992', name: '하해외',   division: '신사업부문',     team: '신사업팀',      part: '해외파트',           jobTitle: '매니저' },
+  { id: 'E9999991', name: '백신사업', division: '신사업본부',     team: '신사업본부',    part: '마케팅파트',         jobTitle: '책임'   },
+  { id: 'E9999992', name: '하해외',   division: '신사업본부',     team: '신사업본부',    part: '해외파트',           jobTitle: '매니저' },
   { id: 'E0000001', name: '전전략',   division: 'HQ',             team: '전략기획팀',                                jobTitle: '팀장'   },
   { id: 'E0000002', name: '송큐에이', division: 'HQ',             team: '품질관리팀',    part: 'QA파트',             jobTitle: '선임'   },
 ]

@@ -55,7 +55,7 @@ export function AttendanceCalendar({
         isWeekend: dow >= 5,
         empCount: dayRecs.length,
         anomalyCount: dayRecs.filter(r => r.flag !== null).length,
-        otCount: dayRecs.filter(r => r.overtimeHours > 0 && r.flag !== 'UNAPPROVED_OT').length,
+        otCount: dayRecs.filter(r => r.overtimeHours > 0).length,
       })
     }
 

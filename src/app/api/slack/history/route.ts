@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
       channel:   channelId,
       oldest:    String(oldest),
       latest:    String(latest),
-      limit:     '200',
+      limit:     '400',
       inclusive: '1',
     })
     if (cursor) params.set('cursor', cursor)

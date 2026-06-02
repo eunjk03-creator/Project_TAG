@@ -2,13 +2,11 @@
 import { useState } from 'react'
 import { useSlack, type SlackConfig } from '@/context/SlackContext'
 
-const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
-
 export function SlackIntegrationTab() {
   const {
     config, setConfig,
     exceptions,
-    isLoading, lastSynced, error,
+    isLoading, lastSynced, syncedRange, error,
     fetchAndParse, clearExceptions,
   } = useSlack()
 
@@ -25,6 +23,9 @@ export function SlackIntegrationTab() {
     fetchAndParse()
   }
 
+  const dateRangeValid = !!draft.startDate && !!draft.endDate && draft.startDate <= draft.endDate
+  const canSync = !!draft.token && !!draft.channelId && dateRangeValid
+
   return (
     <div className="space-y-6 max-w-2xl">
 
@@ -32,6 +33,7 @@ export function SlackIntegrationTab() {
         <h2 className="text-base font-semibold text-gray-800">슬랙 연동</h2>
         <p className="text-xs text-gray-400 mt-1">
           슬랙 OOO 채널에서 외근·반차 메시지를 가져와 근태 이상을 자동 해소합니다.
+          기간 내 메시지를 모두 조회하여 날짜·이름 기반으로 파싱합니다.
         </p>
       </div>
 
@@ -77,41 +79,52 @@ export function SlackIntegrationTab() {
           />
         </div>
 
-        {/* Year / Month */}
-        <div className="px-5 py-4 flex items-center justify-between gap-6">
-          <div className="flex-1 min-w-0">
+        {/* Date range */}
+        <div className="px-5 py-4 flex items-start justify-between gap-6">
+          <div className="flex-1 min-w-0 pt-0.5">
             <span className="text-sm font-medium text-gray-800">조회 기간</span>
-            <p className="text-xs text-gray-400 mt-1">메시지를 가져올 연도와 월</p>
+            <p className="text-xs text-gray-400 mt-1">
+              메시지를 가져올 기간입니다. 이전 달 초 ~ 오늘로 기본 설정됩니다.
+              <br />
+              4월 말 공유된 5월 근태 메시지도 이 범위 안에 포함됩니다.
+            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <input
-              type="number"
-              min={2020} max={2099}
-              value={draft.year}
-              onChange={e => patch({ year: Number(e.target.value) })}
-              className="w-20 px-2 py-1.5 text-sm border border-gray-200 rounded-lg
-                focus:outline-none focus:ring-2 focus:ring-blue-500 text-right"
-            />
-            <select
-              value={draft.month}
-              onChange={e => patch({ month: Number(e.target.value) })}
-              className="w-20 px-2 py-1.5 text-sm border border-gray-200 rounded-lg
+              type="date"
+              value={draft.startDate}
+              onChange={e => patch({ startDate: e.target.value })}
+              className="w-36 px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg
                 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {MONTHS.map((m, i) => (
-                <option key={i + 1} value={i + 1}>{m}</option>
-              ))}
-            </select>
+            />
+            <span className="text-gray-400 text-sm">~</span>
+            <input
+              type="date"
+              value={draft.endDate}
+              onChange={e => patch({ endDate: e.target.value })}
+              className="w-36 px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg
+                focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
         </div>
+        {!dateRangeValid && draft.startDate && draft.endDate && (
+          <p className="px-5 pb-3 text-xs text-red-500">시작일이 종료일보다 늦습니다</p>
+        )}
 
         {/* Status + Actions row */}
         <div className="px-5 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex flex-col gap-0.5">
+            {syncedRange && (
+              <span className="text-[11px] text-gray-500">
+                조회 범위:{' '}
+                <span className="font-medium text-gray-700">
+                  {syncedRange.start} ~ {syncedRange.end}
+                </span>
+              </span>
+            )}
             {lastSynced && (
               <span className="text-[11px] text-gray-400">
-                마지막 동기화:{' '}
-                <span className="font-medium text-gray-600">{lastSynced}</span>
+                동기화 시각: <span className="font-medium text-gray-600">{lastSynced}</span>
               </span>
             )}
             {exceptions.length > 0 && (
@@ -142,7 +155,7 @@ export function SlackIntegrationTab() {
             )}
             <button
               onClick={handleSync}
-              disabled={isLoading || !draft.token || !draft.channelId}
+              disabled={isLoading || !canSync}
               className="flex items-center gap-2 px-4 py-1.5 text-sm font-medium text-white
                 bg-blue-600 rounded-lg hover:bg-blue-700
                 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
@@ -150,12 +163,18 @@ export function SlackIntegrationTab() {
               {isLoading ? (
                 <>
                   <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  동기화 중…
+                  조회 중…
                 </>
               ) : '슬랙 동기화'}
             </button>
           </div>
         </div>
+
+        {isLoading && (
+          <p className="px-5 pb-4 text-xs text-blue-500">
+            메시지를 페이지 단위로 가져오는 중입니다. 기간이 길수록 더 오래 걸릴 수 있습니다.
+          </p>
+        )}
       </div>
 
       {/* ── Error banner ── */}
@@ -170,7 +189,7 @@ export function SlackIntegrationTab() {
       <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-3">
         <p className="text-xs font-semibold text-amber-700 mb-1">인식 패턴 안내</p>
         <ul className="text-[11px] text-amber-700 space-y-0.5 list-disc list-inside">
-          <li>날짜: <code className="bg-amber-100 px-1 rounded">M/D(요일)</code> 형식 (예: 5/6(화))</li>
+          <li>날짜: <code className="bg-amber-100 px-1 rounded">M/D(요일)</code> 형식 (예: 5/6(화)) — 메시지 발송일과 무관하게 이 날짜로 처리</li>
           <li>반차: <strong>반차</strong>, <strong>오전반차</strong>, <strong>오후반차</strong></li>
           <li>반반차: <strong>반반차</strong>, <strong>빈반차</strong>, <strong>반휴</strong></li>
           <li>외근·행사: <strong>미팅</strong>, <strong>외근</strong>, <strong>직출</strong>, <strong>행사 참석</strong></li>

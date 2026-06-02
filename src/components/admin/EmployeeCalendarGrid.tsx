@@ -2,6 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
+import { computeWorkA, computeDisplayBreakMins, parseTimeToMins } from '@/utils/attendanceCalc'
 
 // ── Internal status ────────────────────────────────────────────────────────
 type Status = 'N' | 'OT' | 'L' | 'A' | 'H' | 'APPROVED' | 'WEEKEND' | 'ABSENT'
@@ -33,13 +34,15 @@ const STICKY_SEP = '3px 0 6px -2px rgba(0,0,0,0.10)'
 
 // ── Outline info-tags ──────────────────────────────────────────────────────
 const TAG = {
-  amLeave:  'border border-blue-200   bg-blue-50    text-blue-600',
-  pmLeave:  'border border-blue-200   bg-blue-50    text-blue-600',
-  dayLeave: 'border border-green-200  bg-green-50   text-green-700',
-  holiday:  'border border-violet-200 bg-violet-50  text-violet-700',
-  anomaly:  'border border-red-200    bg-red-50     text-red-600',
-  bizTrip:  'border border-teal-200   bg-teal-50    text-teal-700',
-  remote:   'border border-indigo-200 bg-indigo-50  text-indigo-700',
+  amLeave:   'border border-blue-200   bg-blue-50    text-blue-600',
+  pmLeave:   'border border-blue-200   bg-blue-50    text-blue-600',
+  dayLeave:  'border border-green-200  bg-green-50   text-green-700',
+  holiday:   'border border-violet-200 bg-violet-50  text-violet-700',
+  anomaly:   'border border-red-200    bg-red-50     text-red-600',
+  bizTrip:   'border border-teal-200   bg-teal-50    text-teal-700',
+  remote:    'border border-indigo-200 bg-indigo-50  text-indigo-700',
+  late:      'border border-amber-200  bg-amber-50   text-amber-600',
+  earlyExit: 'border border-orange-200 bg-orange-50  text-orange-600',
 }
 
 const DOW_KR = ['일', '월', '화', '수', '목', '금', '토']
@@ -49,10 +52,13 @@ function getStatus(
   rec: ProcessedRecord | undefined,
   date: string,
   isApproved: boolean,
+  companyHolSet: ReadonlySet<string> = new Set(),
 ): Status {
   if (!rec) {
     const dow = new Date(date + 'T12:00').getDay()
-    return dow === 0 || dow === 6 ? 'WEEKEND' : 'ABSENT'
+    if (dow === 0 || dow === 6) return 'WEEKEND'
+    if (companyHolSet.has(date)) return 'WEEKEND'
+    return 'ABSENT'
   }
   const cat = FINAL_STATUS_CATEGORY[rec.finalStatus]
   if (cat === 'NON_WORKING')  return 'WEEKEND'
@@ -64,17 +70,18 @@ function getStatus(
   return 'N'
 }
 
+/** Exact display — floors to the nearest minute (no rounding). */
 function fmt(h: number): string {
   if (h === 0) return '—'
-  const m = Math.round(h * 60)
-  const hh = Math.floor(m / 60)
-  const mm = m % 60
+  const totalMins = Math.floor(h * 60)
+  const hh = Math.floor(totalMins / 60)
+  const mm = totalMins % 60
   return mm > 0 ? `${hh}h ${mm}m` : `${hh}h`
 }
 
-function fmtH(h: number): string {
-  if (h === 0) return '—'
-  return `${Math.round(h)}h`
+/** Floor a decimal-hour value down to the nearest 30-minute boundary. */
+function floorTo30(h: number): number {
+  return Math.floor(h * 2) / 2
 }
 
 // ── Statutory limit helpers ────────────────────────────────────────────────
@@ -118,19 +125,21 @@ function FilterIcon({ active, danger }: { active: boolean; danger?: boolean }) {
 
 // ── Props ──────────────────────────────────────────────────────────────────
 type Props = {
-  employees:       Employee[]
-  records:         ProcessedRecord[]
-  dates:           string[]
-  onNameClick:     (id: string) => void
-  onCellClick:     (employeeId: string, date: string) => void
-  approvedKeys:    Set<string>
+  employees:        Employee[]
+  records:          ProcessedRecord[]
+  dates:            string[]
+  onNameClick:      (id: string) => void
+  onCellClick:      (employeeId: string, date: string) => void
+  approvedKeys:     Set<string>
   /** IDs of the top-3 risk employees — rendered with a red left border + badge */
-  topRiskIds?:     ReadonlySet<string>
+  topRiskIds?:      ReadonlySet<string>
   /** When true: slice to 10 by default and show 더 보기 button */
-  riskMode?:       boolean
-  riskThresholds?: RiskThresholds
+  riskMode?:        boolean
+  riskThresholds?:  RiskThresholds
   /** When true: show raw (pre-truncation) hours; default = recognized (payroll) hours */
-  showExactTime?:  boolean
+  showExactTime?:   boolean
+  /** Company-wide holiday dates — shown with teal header; no-record cells treated as non-working */
+  companyHolidays?: { date: string; label: string }[]
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -145,15 +154,19 @@ export function EmployeeCalendarGrid({
   riskMode,
   riskThresholds = HR_THRESHOLDS,
   showExactTime = false,
+  companyHolidays = [],
 }: Props) {
+  const companyHolSet   = useMemo(() => new Set(companyHolidays.map(h => h.date)), [companyHolidays])
+  const companyHolLabel = useMemo(() => new Map(companyHolidays.map(h => [h.date, h.label])), [companyHolidays])
+
   // ── Inline sort / filter state ─────────────────────────────────────────
   const [sortDir,      setSortDir]      = useState<SortDir>('none')
   const [filterDiv,    setFilterDiv]    = useState<string | null>(null)
   const [filterTeam,   setFilterTeam]   = useState<string | null>(null)
-  const [openDropdown, setOpenDropdown] = useState<'org' | null>(null)
+  const [openDropdown, setOpenDropdown] = useState<'org' | 'total' | null>(null)
   const [dropdownRect, setDropdownRect] = useState<DOMRect | null>(null)
-  const [showAll,           setShowAll]           = useState(false)
-  const [showOnlyOverLimit, setShowOnlyOverLimit] = useState(false)
+  const [showAll,      setShowAll]      = useState(false)
+  const [hoursFilter,  setHoursFilter]  = useState<'all' | 'over52' | 'over209'>('all')
 
   // Precompute the statutory ceiling once — used for filtering and bar rendering
   const maxLimit = getStatutoryLimit(dates.length)
@@ -207,23 +220,65 @@ export function EmployeeCalendarGrid({
 
 const empStats = useMemo(() => {
   const stats: Record<string, {
-    total: number; ot: number; rawOt: number; rawTotal: number
-    night: number; holiday: number; anomalies: number
+    total: number; rawTotal: number
+    ot: number; rawOt: number
+    night: number; rawNight: number
+    holiday: number; rawHoliday: number
+    anomalies: number
   }> = {}
   for (const emp of employees) {
     const recs = records.filter(r => r.employeeId === emp.id)
-    const ot      = recs.reduce((s, r) => s + (r.overtimeHours || 0), 0)
-    const rawOt   = recs.reduce((s, r) => s + (r.rawOvertimeMinutes ?? 0) / 60, 0)
-    const reg     = recs.reduce((s, r) => s + (r.regularHours  || 0), 0)
-    const night   = recs.reduce((s, r) => s + (r.nightHours    || 0), 0)
-    const holiday = recs.reduce((s, r) => s + (r.holidayHours  || 0), 0)
+    // exactXxx  = sum of actual values (실제값, shown when showExactTime=true)
+    // roundedXxx = sum of per-day values floored to 30-min (공인시간, shown when showExactTime=false)
+    let exactOt = 0, roundedOt = 0, exactTotal = 0, roundedTotal = 0
+    for (const r of recs) {
+      // Full-day leave with no physical punch → skip; don't add dummy 8 h to total.
+      // Half-leaves and days with actual clock-in/out are processed normally.
+      const isFullDayLeave   = (r.erpLeaveAmount ?? 0) >= 1.0 || r.finalStatus === '연차'
+      const hasPhysicalPunch = !!(r.clockIn || r.clockOut)
+      if (isFullDayLeave && !hasPhysicalPunch) continue
+
+      const leaveAmt    = r.erpLeaveAmount ?? 0
+      const effectiveIn = r.effectiveClockIn ?? r.clockIn
+      const wAMins      = Math.round(computeWorkA(effectiveIn, r.clockOut) * 60)
+      const ciMins      = effectiveIn ? parseTimeToMins(effectiveIn) : null
+      const coMins      = r.clockOut ? parseTimeToMins(r.clockOut) : null
+      const brkMins     = computeDisplayBreakMins(wAMins, ciMins, coMins, r.leaveType)
+      const credit      = r.isUnpaidLeave ? 0 : leaveAmt * 8
+      const finalWorkH  = Math.max(0, (wAMins - brkMins) / 60 + credit)
+      const flooredWork = floorTo30(finalWorkH)
+
+      if (r.dayType === 'WEEKDAY') {
+        exactOt      += Math.max(0, finalWorkH - 8.0)
+        roundedOt    += Math.max(0, flooredWork - 8.0)
+        exactTotal   += finalWorkH
+        roundedTotal += flooredWork
+      } else if (r.finalStatus === '휴일근무') {
+        exactOt      += finalWorkH
+        roundedOt    += flooredWork
+        exactTotal   += finalWorkH
+        roundedTotal += flooredWork
+      } else {
+        const holH    = r.holidayHours ?? 0
+        exactTotal   += holH
+        roundedTotal += floorTo30(holH)
+      }
+    }
+    // Night is a PREMIUM OVERLAY — displayed separately, not added to 연장 OT.
+    const rawNight   = recs.reduce((s, r) => s + (r.nightHours || 0), 0)
+    const night      = recs.reduce((s, r) => s + floorTo30(r.nightHours || 0), 0)
+    const rawHoliday = recs.reduce((s, r) => s + (r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0), 0)
+    const holiday    = recs.reduce((s, r) => s + floorTo30(r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0), 0)
+
     stats[emp.id] = {
-      total:    reg + ot   + holiday,
-      rawTotal: reg + rawOt + holiday,
-      ot,
-      rawOt,
+      total:      roundedTotal,
+      rawTotal:   exactTotal,
+      ot:         roundedOt,
+      rawOt:      exactOt,
       night,
+      rawNight,
       holiday,
+      rawHoliday,
       anomalies: recs.filter(
         r => FINAL_STATUS_CATEGORY[r.finalStatus] === 'ANOMALY' &&
              !approvedKeys.has(`${r.employeeId}_${r.date}`),
@@ -233,14 +288,15 @@ const empStats = useMemo(() => {
   return stats
 }, [employees, records, approvedKeys])
 
-  // Over-limit filter: only employees whose range total exceeds the statutory max
+  // Hours compliance filter — thresholds are explicit (52 / 209), not auto from date range
   const filteredEmployees = useMemo(() => {
-    if (!showOnlyOverLimit) return displayEmployees
+    if (hoursFilter === 'all') return displayEmployees
+    const threshold = hoursFilter === 'over52' ? 52 : 209
     return displayEmployees.filter(e => {
       const s = empStats[e.id]
-      return (showExactTime ? (s?.rawTotal ?? 0) : (s?.total ?? 0)) > maxLimit
+      return (showExactTime ? (s?.rawTotal ?? 0) : (s?.total ?? 0)) >= threshold
     })
-  }, [displayEmployees, showOnlyOverLimit, empStats, maxLimit, showExactTime])
+  }, [displayEmployees, hoursFilter, empStats, showExactTime])
 
   // Slice to 10 when risk mode is active and the user hasn't expanded yet
   const visibleEmployees = riskMode && !showAll
@@ -253,11 +309,17 @@ const empStats = useMemo(() => {
 
   const orgFilterActive = filterDiv !== null || filterTeam !== null
 
-  // ── Dropdown handler ───────────────────────────────────────────────────
+  // ── Dropdown handlers ─────────────────────────────────────────────────
   function handleOrgBtnClick(e: React.MouseEvent<HTMLButtonElement>) {
     const rect = e.currentTarget.getBoundingClientRect()
     setDropdownRect(rect)
     setOpenDropdown(prev => prev === 'org' ? null : 'org')
+  }
+
+  function handleTotalBtnClick(e: React.MouseEvent<HTMLButtonElement>) {
+    const rect = e.currentTarget.getBoundingClientRect()
+    setDropdownRect(rect)
+    setOpenDropdown(prev => prev === 'total' ? null : 'total')
   }
 
   if (employees.length === 0) {
@@ -271,6 +333,39 @@ const empStats = useMemo(() => {
   return (
     <>
       {/* ── Fixed-position dropdown overlay ─────────────────────────────── */}
+      {/* ── Hours compliance filter dropdown ────────────────────────────── */}
+      {openDropdown === 'total' && dropdownRect !== null && (
+        <>
+          <div className="fixed inset-0 z-[45]" onClick={() => setOpenDropdown(null)} />
+          <div
+            className="fixed z-[50] bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden py-1.5 w-40 text-[11px]"
+            style={{ top: dropdownRect.bottom + 4, left: dropdownRect.left }}
+          >
+            <p className="px-3 pt-0.5 pb-1 text-[9px] text-gray-400 font-semibold tracking-wider uppercase">근로시간 필터</p>
+            <div className="h-px bg-gray-100 mx-2 mb-1" />
+            {([
+              { key: 'all',     label: '전체',      sub: '필터 없음' },
+              { key: 'over52',  label: '52h 초과',  sub: '주 52h 법정 한도' },
+              { key: 'over209', label: '209h 초과', sub: '월 209h 법정 한도' },
+            ] as const).map(({ key, label, sub }) => (
+              <button
+                key={key}
+                className={`w-full text-left px-3 py-1.5 flex items-center justify-between hover:bg-gray-50 transition-colors ${
+                  hoursFilter === key ? 'text-red-600 font-semibold bg-red-50/60' : 'text-gray-600'
+                }`}
+                onClick={() => { setHoursFilter(key); setOpenDropdown(null) }}
+              >
+                <span className="flex flex-col gap-px">
+                  <span>{label}</span>
+                  <span className="text-[9px] text-gray-400 font-normal">{sub}</span>
+                </span>
+                {hoursFilter === key && <span className="text-red-400 text-[9px] shrink-0">✓</span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
       {openDropdown === 'org' && dropdownRect !== null && (
         <>
           {/* Transparent backdrop — click-outside to close */}
@@ -327,15 +422,17 @@ const empStats = useMemo(() => {
 
       <div className="bg-white rounded-xl border border-gray-200 flex flex-col min-w-0 h-[calc(100vh-250px)]">
 
-        {/* ── Over-limit active filter banner ─────────────────────────────── */}
-        {showOnlyOverLimit && (
+        {/* ── Active compliance filter banner ──────────────────────────────── */}
+        {hoursFilter !== 'all' && (
           <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border-b border-red-100 shrink-0">
-            <span className="text-[11px] font-semibold text-red-700">🚨 법정 한도 초과자만 표시 중</span>
+            <span className="text-[11px] font-semibold text-red-700">
+              🚨 {hoursFilter === 'over52' ? '52h' : '209h'} 초과자만 표시 중
+            </span>
             <span className="text-[11px] text-red-400 tabular-nums">
-              ({filteredEmployees.length}명 / {maxLimit}h 초과)
+              ({filteredEmployees.length}명)
             </span>
             <button
-              onClick={() => setShowOnlyOverLimit(false)}
+              onClick={() => setHoursFilter('all')}
               className="ml-auto text-[11px] text-red-400 hover:text-red-600 font-medium transition-colors"
             >
               필터 해제 ✕
@@ -387,12 +484,12 @@ const empStats = useMemo(() => {
                 <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
                   style={{ top: 0, left: L3, width: W_TOTAL, minWidth: W_TOTAL }}>
                   <button
-                    onClick={() => setShowOnlyOverLimit(v => !v)}
+                    onClick={handleTotalBtnClick}
                     className="flex items-center justify-center gap-1 w-full hover:text-gray-700 transition-colors"
-                    title={showOnlyOverLimit ? '법정 한도 초과자 필터 해제' : `법정 한도(${maxLimit}h) 초과자만 보기`}
+                    title="총 근로시간 기준 필터"
                   >
-                    <span className={showOnlyOverLimit ? 'text-red-600' : ''}>총 근로</span>
-                    <FilterIcon active={showOnlyOverLimit} danger />
+                    <span className={hoursFilter !== 'all' ? 'text-red-600' : ''}>총 근로</span>
+                    <FilterIcon active={hoursFilter !== 'all'} danger />
                   </button>
                 </th>
 
@@ -424,19 +521,27 @@ const empStats = useMemo(() => {
                 {dates.map(date => {
                   const d = new Date(date + 'T12:00')
                   const dow = d.getDay()
-                  const isWknd = dow === 0 || dow === 6
+                  const isWknd    = dow === 0 || dow === 6
+                  const isCmpHol  = companyHolSet.has(date)
+                  const holLabel  = companyHolLabel.get(date)
+                  const bgCls     = isCmpHol ? 'bg-teal-50' : isWknd ? 'bg-slate-50' : 'bg-gray-50'
+                  const numCls    = isCmpHol ? 'text-teal-600' : isWknd ? 'text-slate-400' : 'text-gray-600'
+                  const dowCls    = isCmpHol ? 'text-teal-400' : isWknd ? 'text-slate-300' : 'text-gray-300'
                   return (
                     <th key={date}
-                      className={`sticky z-40 pt-2 pb-1.5 text-center border-l border-gray-100 whitespace-nowrap ${
-                        isWknd ? 'bg-slate-50' : 'bg-gray-50'
-                      }`}
+                      className={`sticky z-40 pt-2 pb-1.5 text-center border-l border-gray-100 whitespace-nowrap ${bgCls}`}
                       style={{ top: 0, width: W_DATE, minWidth: W_DATE }}>
-                      <div className={`text-[11px] font-bold leading-none ${isWknd ? 'text-slate-400' : 'text-gray-600'}`}>
+                      <div className={`text-[11px] font-bold leading-none ${numCls}`}>
                         {isMultiMonth ? `${d.getMonth() + 1}/${d.getDate()}` : d.getDate()}
                       </div>
-                      <div className={`text-[9px] mt-0.5 leading-none font-medium ${isWknd ? 'text-slate-300' : 'text-gray-300'}`}>
+                      <div className={`text-[9px] mt-0.5 leading-none font-medium ${dowCls}`}>
                         {DOW_KR[dow]}
                       </div>
+                      {isCmpHol && holLabel && (
+                        <div className="text-[8px] mt-0.5 leading-none font-semibold text-teal-500 truncate px-0.5">
+                          {holLabel}
+                        </div>
+                      )}
                     </th>
                   )
                 })}
@@ -464,10 +569,10 @@ const empStats = useMemo(() => {
 
                   {/* ── Row 1: 출근 ──────────────────────────────────────── */}
                   <tr>
-                    {/* 이름 — rowSpan 3 */}
+                    {/* 이름 — rowSpan 4 */}
                     <td className={`${spanTd} pl-2 pr-2 py-3 ${isTopRisk ? 'border-l-4 border-l-red-400' : ''}`}
                       style={{ left: L1, width: W_NAME, minWidth: W_NAME }}
-                      rowSpan={3}>
+                      rowSpan={4}>
                       <button onClick={() => onNameClick(emp.id)} className="text-left block w-full">
                         <p className="text-[11px] font-semibold text-gray-800 hover:text-blue-600 transition-colors leading-tight truncate"
                           style={{ maxWidth: W_NAME - 20 }}>
@@ -487,10 +592,10 @@ const empStats = useMemo(() => {
                       </button>
                     </td>
 
-                    {/* 소속 (본부 + 팀/부서 stacked) — rowSpan 3 */}
+                    {/* 소속 (본부 + 팀/부서 stacked) — rowSpan 4 */}
                     <td className={`${spanTd} border-l pl-3 pr-2 py-3`}
                       style={{ left: L2, width: W_ORG, minWidth: W_ORG }}
-                      rowSpan={3}>
+                      rowSpan={4}>
                       <p className="text-[10px] font-medium text-gray-700 leading-tight truncate"
                         style={{ maxWidth: W_ORG - 16 }}>
                         {emp.division}
@@ -507,16 +612,16 @@ const empStats = useMemo(() => {
                       )}
                     </td>
 
-                    {/* 총 근로 — rowSpan 3 */}
+                    {/* 총 근로 — rowSpan 4 */}
                     <td className={`${spanTd} border-l px-1.5 py-2 text-center`}
                       style={{ left: L3, width: W_TOTAL, minWidth: W_TOTAL }}
-                      rowSpan={3}>
+                      rowSpan={4}>
                       {(() => {
                         const display = showExactTime ? s.rawTotal : s.total
                         return (
                           <>
                             <span className="text-[12px] font-bold text-gray-800 tabular-nums block leading-tight">
-                              {fmtH(display)}
+                              {fmt(display)}
                             </span>
                             <div className="w-full mt-1 h-1 rounded-full bg-gray-100 overflow-hidden">
                               <div
@@ -533,7 +638,7 @@ const empStats = useMemo(() => {
                               : display > riskThresholds.totalAmberH ? 'text-amber-600 font-semibold'
                               : 'text-emerald-600'
                             }`}>
-                              {display.toFixed(0)}h / {maxLimit}h{
+                              {fmt(display)} / {maxLimit}h{
                                 display > maxLimit              ? ' 🚨'
                                 : display > riskThresholds.totalAmberH ? ' ⚠️'
                                 : ''
@@ -544,10 +649,10 @@ const empStats = useMemo(() => {
                       })()}
                     </td>
 
-                    {/* 연장 — rowSpan 3 */}
+                    {/* 연장 — rowSpan 4 */}
                     <td className={`${spanTd} border-l px-1 py-3 text-center`}
                       style={{ left: L_OT, width: W_OT, minWidth: W_OT }}
-                      rowSpan={3}>
+                      rowSpan={4}>
                       {(() => {
                         const displayOt = showExactTime ? s.rawOt : s.ot
                         return (
@@ -557,34 +662,44 @@ const empStats = useMemo(() => {
                             : displayOt > 0                       ? 'text-amber-300'
                             : 'text-gray-300'
                           }`}>
-                            {fmtH(displayOt)}
+                            {fmt(displayOt)}
                           </span>
                         )
                       })()}
                     </td>
 
-                    {/* 야간 — rowSpan 3 */}
+                    {/* 야간 — rowSpan 4 */}
                     <td className={`${spanTd} border-l px-1 py-3 text-center`}
                       style={{ left: L_NIGHT, width: W_NIGHT, minWidth: W_NIGHT }}
-                      rowSpan={3}>
-                      <span className={`text-[12px] font-bold tabular-nums ${s.night > 0 ? 'text-blue-500' : 'text-gray-300'}`}>
-                        {fmtH(s.night)}
-                      </span>
+                      rowSpan={4}>
+                      {(() => {
+                        const displayNight = showExactTime ? s.rawNight : s.night
+                        return (
+                          <span className={`text-[12px] font-bold tabular-nums ${displayNight > 0 ? 'text-blue-500' : 'text-gray-300'}`}>
+                            {fmt(displayNight)}
+                          </span>
+                        )
+                      })()}
                     </td>
 
-                    {/* 휴일 — rowSpan 3 */}
+                    {/* 휴일 — rowSpan 4 */}
                     <td className={`${spanTd} border-l px-1 py-3 text-center`}
                       style={{ left: L_HOLIDAY, width: W_HOLIDAY, minWidth: W_HOLIDAY }}
-                      rowSpan={3}>
-                      <span className={`text-[12px] font-bold tabular-nums ${s.holiday > 0 ? 'text-violet-500' : 'text-gray-300'}`}>
-                        {fmtH(s.holiday)}
-                      </span>
+                      rowSpan={4}>
+                      {(() => {
+                        const displayHoliday = showExactTime ? s.rawHoliday : s.holiday
+                        return (
+                          <span className={`text-[12px] font-bold tabular-nums ${displayHoliday > 0 ? 'text-violet-500' : 'text-gray-300'}`}>
+                            {fmt(displayHoliday)}
+                          </span>
+                        )
+                      })()}
                     </td>
 
-                    {/* 이상 — rowSpan 3 */}
+                    {/* 이상 — rowSpan 4 */}
                     <td className={`${spanTd} border-l px-1 py-3 text-center`}
                       style={{ left: L_ANOMALY, width: W_ANOMALY, minWidth: W_ANOMALY }}
-                      rowSpan={3}>
+                      rowSpan={4}>
                       <span className={`text-[12px] font-bold tabular-nums ${s.anomalies > 0 ? 'text-red-500' : 'text-gray-300'}`}>
                         {s.anomalies > 0 ? `${s.anomalies}건` : '0'}
                       </span>
@@ -596,11 +711,11 @@ const empStats = useMemo(() => {
                       출근
                     </td>
 
-                    {/* Date: clock-in + 오전반차 tag only */}
+                    {/* Date: clock-in + any AM leave badge */}
                     {dates.map(date => {
                       const rec = empRecs[date]
                       const isApproved = approvedKeys.has(`${emp.id}_${date}`)
-                      const status = getStatus(rec, date, isApproved)
+                      const status = getStatus(rec, date, isApproved, companyHolSet)
                       const isWknd = status === 'WEEKEND'
                       const showContent = !isWknd && status !== 'ABSENT'
                       const isLeaveDay = rec?.finalStatus === '연차'
@@ -620,12 +735,29 @@ const empStats = useMemo(() => {
                                 onClick={() => onCellClick(emp.id, date)}
                                 className="w-full flex flex-col items-center gap-0.5 py-0.5"
                               >
-                                <span className={`text-[9px] tabular-nums leading-none ${
-                                  rec!.clockIn ? 'text-gray-700' : 'text-red-400'
-                                }`}>
-                                  {rec!.clockIn ?? '미태깅'}
-                                </span>
-                                {rec!.finalStatus === '오전반차' && <InfoTag cls={TAG.amLeave} text="오전반차" />}
+                                {(() => {
+                                  const disp = rec!.effectiveClockIn ?? rec!.clockIn
+                                  const wasClamped = rec!.effectiveClockIn && rec!.clockIn &&
+                                    rec!.effectiveClockIn !== rec!.clockIn
+                                  return (
+                                    <>
+                                      <span className={`text-[9px] tabular-nums leading-none ${
+                                        disp ? 'text-gray-700' : 'text-red-400'
+                                      }`}>
+                                        {disp ?? '미태깅'}
+                                      </span>
+                                      {wasClamped && (
+                                        <span className="text-[8px] text-gray-400 line-through tabular-nums leading-none">
+                                          {rec!.clockIn}
+                                        </span>
+                                      )}
+                                    </>
+                                  )
+                                })()}
+                                {(rec?.flag ?? '').includes('LATE') && <InfoTag cls={TAG.late} text="지각" />}
+                                {rec?.leaveType && !rec.leaveType.includes('오후') && (
+                                  <InfoTag cls={TAG.amLeave} text={rec.leaveType} />
+                                )}
                               </button>
                             )
                           ) : isWknd ? (
@@ -646,11 +778,11 @@ const empStats = useMemo(() => {
                       퇴근
                     </td>
 
-                    {/* Date: clock-out + 오후반차 tag only */}
+                    {/* Date: clock-out + any PM leave badge */}
                     {dates.map(date => {
                       const rec = empRecs[date]
                       const isApproved = approvedKeys.has(`${emp.id}_${date}`)
-                      const status = getStatus(rec, date, isApproved)
+                      const status = getStatus(rec, date, isApproved, companyHolSet)
                       const isWknd = status === 'WEEKEND'
                       const showContent = !isWknd && status !== 'ABSENT'
                       const isLeaveDay = rec?.finalStatus === '연차'
@@ -674,7 +806,11 @@ const empStats = useMemo(() => {
                                 }`}>
                                   {rec!.clockOut ?? '미태깅'}
                                 </span>
-                                {rec!.finalStatus === '오후반차' && <InfoTag cls={TAG.pmLeave} text="오후반차" />}
+                                {(rec?.flag === 'EARLY_DEPARTURE' || rec?.flag === 'LATE_AND_EARLY_DEPARTURE') &&
+                                  <InfoTag cls={TAG.earlyExit} text="조기퇴근" />}
+                                {rec?.leaveType && rec.leaveType.includes('오후') && (
+                                  <InfoTag cls={TAG.pmLeave} text={rec.leaveType} />
+                                )}
                               </button>
                             )
                           ) : isWknd ? (
@@ -687,64 +823,81 @@ const empStats = useMemo(() => {
                     })}
                   </tr>
 
-                  {/* ── Row 3: 초과근로 (last row — thick bottom border) ─── */}
+                  {/* ── Row 3: 초과근로 ──────────────────────────────────── */}
                   <tr>
-                    {/* 구분: 초과근로 */}
-                    <td className={`${catTd} border-b-2 border-gray-200`}
+                    <td className={`${catTd} border-b border-gray-100`}
                       style={{ left: L4, width: W_CAT, minWidth: W_CAT, boxShadow: STICKY_SEP }}>
                       초과근로
                     </td>
-
-                    {/* Date: OT hours + single status badge (연차 / 휴일근무 / 근태이상) */}
                     {dates.map(date => {
-                      const rec = empRecs[date]
-                      const isApproved = approvedKeys.has(`${emp.id}_${date}`)
-                      const status = getStatus(rec, date, isApproved)
+                      const rec    = empRecs[date]
+                      const status = getStatus(rec, date, approvedKeys.has(`${emp.id}_${date}`), companyHolSet)
                       const isWknd = status === 'WEEKEND'
-                      const showContent = !isWknd && status !== 'ABSENT'
 
-                      const fs            = rec?.finalStatus
-                      const isLeaveDay    = fs === '연차'
-                      const isHolidayWork = fs === '휴일근무'
-                      const hasAnomaly    = !isApproved && !!fs && FINAL_STATUS_CATEGORY[fs] === 'ANOMALY'
-                      const recOtH        = rec?.overtimeHours ?? 0
-                      const rawOtH        = (rec?.rawOvertimeMinutes ?? 0) / 60
-                      const overTimeHours = showExactTime ? rawOtH : recOtH
-                      const totalHours    = (rec?.regularHours ?? 0) + (showExactTime ? rawOtH : recOtH) + (rec?.holidayHours ?? 0)
-                      const hasHours      = totalHours > 0
+                      let otH = 0
+                      if (rec && rec.dayType === 'WEEKDAY') {
+                        const effectiveIn = rec.effectiveClockIn ?? rec.clockIn
+                        const wAMins   = Math.round(computeWorkA(effectiveIn, rec.clockOut) * 60)
+                        const ciMins   = effectiveIn ? parseTimeToMins(effectiveIn) : null
+                        const coMins   = rec.clockOut ? parseTimeToMins(rec.clockOut) : null
+                        const brkMins  = computeDisplayBreakMins(wAMins, ciMins, coMins, rec.leaveType)
+                        const wBMins   = Math.max(0, wAMins - brkMins)
+                        const credit   = rec.isUnpaidLeave ? 0 : (rec.erpLeaveAmount ?? 0) * 8
+                        const finalH   = Math.max(0, wBMins / 60 + credit)
+                        otH = Math.max(0, finalH - 8.0)
+                      }
 
                       return (
                         <td key={date}
-                          className={`py-1 px-1 text-center border-l border-b-2 border-gray-200 whitespace-nowrap align-middle ${
-                            isWknd ? 'bg-slate-50/60' : ''
-                          }`}
+                          className={`py-1 px-1 text-center border-l border-b border-gray-100 whitespace-nowrap align-middle ${isWknd ? 'bg-slate-50/60' : ''}`}
                           style={{ width: W_DATE, minWidth: W_DATE }}>
-                          {showContent || hasHours ? (
-                            <button
-                              onClick={() => onCellClick(emp.id, date)}
-                              className="w-full flex flex-row items-center justify-center gap-0.5 py-0.5 flex-wrap"
-                            >
-                              {isLeaveDay ? (
-                                <InfoTag cls={TAG.dayLeave} text="연차" />
-                              ) : hasHours ? (
-                                <>
-                                  {fs === '출장'     && <InfoTag cls={TAG.bizTrip} text="출장" />}
-                                  {fs === '재택근무' && <InfoTag cls={TAG.remote}  text="재택" />}
-                                  {overTimeHours > 0 ? (
-                                    <span className="text-[9px] tabular-nums text-amber-500 font-bold leading-none">
-                                      {fmt(overTimeHours)}
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9px] tabular-nums text-gray-300 font-medium leading-none">
-                                      —
-                                    </span>
-                                  )}
-                                  {isHolidayWork && <InfoTag cls={TAG.holiday} text="휴일근무" />}
-                                  {hasAnomaly    && <InfoTag cls={TAG.anomaly} text="근태이상" />}
-                                </>
-                              ) : (
-                                <span className="text-gray-200 text-[10px] select-none">—</span>
-                              )}
+                          {!isWknd && status !== 'ABSENT' ? (
+                            <button onClick={() => onCellClick(emp.id, date)}
+                              className="w-full flex items-center justify-center py-0.5">
+                              {otH > 0
+                                ? <span className="text-[9px] tabular-nums font-bold text-amber-500 leading-none">{fmt(otH)}</span>
+                                : <span className="text-gray-200 text-[10px] select-none">—</span>}
+                            </button>
+                          ) : isWknd ? (
+                            <span className="text-slate-200 text-[10px] select-none">·</span>
+                          ) : (
+                            <span className="text-gray-200 text-[10px] select-none">—</span>
+                          )}
+                        </td>
+                      )
+                    })}
+                  </tr>
+
+                  {/* ── Row 4: 근태상태 (last row — thick bottom border) ──── */}
+                  <tr>
+                    <td className={`${catTd} border-b-2 border-gray-200`}
+                      style={{ left: L4, width: W_CAT, minWidth: W_CAT, boxShadow: STICKY_SEP }}>
+                      근태상태
+                    </td>
+                    {dates.map(date => {
+                      const rec    = empRecs[date]
+                      const status = getStatus(rec, date, approvedKeys.has(`${emp.id}_${date}`), companyHolSet)
+                      const isWknd = status === 'WEEKEND'
+                      const fs     = rec?.finalStatus
+                      const flag   = rec?.flag
+
+                      const tags: { cls: string; text: string }[] = []
+                      if (fs === '연차')      tags.push({ cls: TAG.dayLeave,  text: '연차'       })
+                      if (fs === '외근')      tags.push({ cls: TAG.bizTrip,   text: '외근'       })
+                      if (fs === '휴일근무')  tags.push({ cls: TAG.holiday,   text: '휴일근로'   })
+                      if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY')
+                                             tags.push({ cls: TAG.anomaly,   text: '근무시간 미달' })
+
+                      return (
+                        <td key={date}
+                          className={`py-1 px-1 text-center border-l border-b-2 border-gray-200 whitespace-nowrap align-middle ${isWknd ? 'bg-slate-50/60' : ''}`}
+                          style={{ width: W_DATE, minWidth: W_DATE }}>
+                          {!isWknd && status !== 'ABSENT' ? (
+                            <button onClick={() => onCellClick(emp.id, date)}
+                              className="w-full flex flex-col items-center gap-0.5 py-0.5">
+                              {tags.length > 0
+                                ? tags.map(t => <InfoTag key={t.text} cls={t.cls} text={t.text} />)
+                                : <span className="text-gray-300 text-[10px] select-none">—</span>}
                             </button>
                           ) : isWknd ? (
                             <span className="text-slate-200 text-[10px] select-none">·</span>

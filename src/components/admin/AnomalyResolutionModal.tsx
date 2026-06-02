@@ -6,15 +6,15 @@ export type { ResolutionData }  // re-export so existing importers don't break
 
 const FLAG_LABEL: Record<string, string> = {
   LATE:            '지각',
-  NO_CLOCK_OUT:    '미태깅',
-  UNAPPROVED_OT:   'OT 미신청',
+  NO_CLOCK_IN:     '출근 미태깅',
+  NO_CLOCK_OUT:    '퇴근 미태깅',
   EARLY_DEPARTURE: '조기퇴근',
 }
 
 const FLAG_BADGE: Record<string, string> = {
   LATE:            'text-amber-700 bg-amber-50 border-amber-300',
+  NO_CLOCK_IN:     'text-red-700 bg-red-50 border-red-300',
   NO_CLOCK_OUT:    'text-red-700 bg-red-50 border-red-300',
-  UNAPPROVED_OT:   'text-orange-700 bg-orange-50 border-orange-300',
   EARLY_DEPARTURE: 'text-sky-700 bg-sky-50 border-sky-300',
 }
 

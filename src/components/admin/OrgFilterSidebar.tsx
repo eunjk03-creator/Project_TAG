@@ -4,7 +4,7 @@ import { DIVISIONS, DIVISION_TEAMS } from '@/data/orgChart'
 import { useOrgFilter } from '@/context/OrgFilterContext'
 
 const divisionTeams: Record<string, readonly string[]> = DIVISION_TEAMS
-const divisions = DIVISIONS.filter(d => d !== '기타' && DIVISION_TEAMS[d].length > 0)
+const divisions = [...DIVISIONS]
 
 export function OrgFilterSidebar() {
   const { division: activeDivision, team: activeTeam, setDivision, setTeam } = useOrgFilter()
@@ -55,9 +55,11 @@ export function OrgFilterSidebar() {
               }`}
             >
               <span className="truncate">{div}</span>
-              <span className={`shrink-0 text-xs transition-transform ${isExpanded ? 'rotate-90' : ''} text-gray-400`}>
-                ▸
-              </span>
+              {teams.length > 0 && (
+                <span className={`shrink-0 text-xs transition-transform ${isExpanded ? 'rotate-90' : ''} text-gray-400`}>
+                  ▸
+                </span>
+              )}
             </button>
 
             {isExpanded && (

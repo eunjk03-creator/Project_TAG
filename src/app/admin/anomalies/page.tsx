@@ -18,20 +18,20 @@ import type { ProcessedRecord, SieveFlag, EditHistoryEntry, Employee, Resolution
 // ── Badge taxonomy — synced with dashboard design system ──────────────────
 const FLAG_LABEL: Record<string, string> = {
   LATE:            '지각',
-  NO_CLOCK_OUT:    '미태깅',
-  UNAPPROVED_OT:   'OT 미신청',
+  NO_CLOCK_IN:     '출근 미태깅',
+  NO_CLOCK_OUT:    '퇴근 미태깅',
   EARLY_DEPARTURE: '조기퇴근',
 }
 
 const FLAG_BADGE: Record<string, string> = {
   LATE:            'text-amber-700 bg-amber-50 border-amber-300',
+  NO_CLOCK_IN:     'text-red-700 bg-red-50 border-red-300',
   NO_CLOCK_OUT:    'text-red-700 bg-red-50 border-red-300',
-  UNAPPROVED_OT:   'text-orange-700 bg-orange-50 border-orange-300',
   EARLY_DEPARTURE: 'text-sky-700 bg-sky-50 border-sky-300',
 }
 
 
-const ALL_FLAGS: SieveFlag[] = ['LATE', 'NO_CLOCK_OUT', 'UNAPPROVED_OT', 'EARLY_DEPARTURE']
+const ALL_FLAGS: SieveFlag[] = ['LATE', 'NO_CLOCK_IN', 'NO_CLOCK_OUT', 'EARLY_DEPARTURE']
 
 type SortField = 'date' | 'name'
 type SortDir   = 'none' | 'asc' | 'desc'
@@ -80,8 +80,10 @@ function RecordedTime({ r }: { r: ProcessedRecord }): ReactNode {
           <span className="text-[10px] text-gray-400">출근</span>
         </div>
       )
+    case 'NO_CLOCK_IN':
+      return <span className="text-xs font-semibold text-red-500">출근 미기록</span>
     case 'NO_CLOCK_OUT':
-      return r.clockIn ? (
+      return (
         <div>
           <div className="flex items-baseline gap-1.5">
             <span className="text-xs font-mono text-gray-600">{r.clockIn}</span>
@@ -89,25 +91,12 @@ function RecordedTime({ r }: { r: ProcessedRecord }): ReactNode {
           </div>
           <p className="text-[10px] font-semibold text-red-500 mt-0.5">퇴근 미기록</p>
         </div>
-      ) : (
-        <span className="text-xs font-semibold text-red-500">출퇴근 미기록</span>
       )
     case 'EARLY_DEPARTURE':
       return (
         <div className="flex items-baseline gap-1.5">
           <span className="text-xs font-mono font-semibold text-sky-600">{r.clockOut}</span>
           <span className="text-[10px] text-gray-400">퇴근</span>
-        </div>
-      )
-    case 'UNAPPROVED_OT':
-      return (
-        <div>
-          <div className="flex items-baseline gap-1 text-xs font-mono text-gray-600">
-            <span>{r.clockIn}</span>
-            <span className="text-gray-300 text-[10px]">~</span>
-            <span>{r.clockOut}</span>
-          </div>
-          <p className="text-[10px] font-semibold text-amber-600 mt-0.5">+{fmt(r.overtimeHours)} 연장</p>
         </div>
       )
     default:

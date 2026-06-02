@@ -202,3 +202,54 @@ model Holiday {
 
   @@map("holidays")
 }
+
+// ─── 관리자 수정 이력 (새로고침 후에도 유지) ──────────────
+model AttendanceOverride {
+  id           String   @id @default(uuid())
+  employeeId   String   @map("employee_id")
+  workDate     String   @map("work_date")
+  reasonLabel  String?  @map("reason_label")
+  memo         String?
+  clockIn      String?  @map("clock_in")
+  clockOut     String?  @map("clock_out")
+  erpOtApplied Boolean? @map("erp_ot_applied")
+  erpLeaveType String?  @map("erp_leave_type")
+  editHistory  Json     @default("[]") @map("edit_history")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([employeeId, workDate])
+  @@map("attendance_overrides")
+}
+
+// ─── 근태 메모 (테이블 메모 칸) ──────────────────────────
+model AttendanceNote {
+  id         String   @id @default(uuid())
+  employeeId String   @map("employee_id")
+  workDate   String   @map("work_date")
+  note       String   @default("")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([employeeId, workDate])
+  @@map("attendance_notes")
+}
+
+// ─── 예외 규칙 (Settings UI → GAS pipeline) ──────────
+model ExceptionRule {
+  id             String   @id @default(uuid())
+  employeeId     String   @map("employee_id")
+  employeeName   String   @map("employee_name")
+  jobTitle       String   @default("") @map("job_title")
+  division       String   @default("")
+  team           String   @default("")
+  ruleType       String   @map("rule_type")
+  excludeFromOt  Boolean  @default(false) @map("exclude_from_ot")
+  shortenedHours Float    @default(0) @map("shortened_hours")
+  validFrom      String   @default("") @map("valid_from")
+  validTo        String   @default("") @map("valid_to")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([employeeId])
+  @@index([ruleType])
+  @@map("exception_rules")
+}

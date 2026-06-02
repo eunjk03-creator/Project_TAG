@@ -1,5 +1,5 @@
 'use client'
-import { createContext, useContext, useState, useMemo, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useMemo, type ReactNode } from 'react'
 import type { EmployeeAttributeOverrides } from '@/types/tag'
 
 // ── Per-employee drawer exception (used by EmployeeDrawer) ────────────────
@@ -24,10 +24,12 @@ export type RuleType =
   | 'ten_am_starter'      // 10시 출근자: snap+late threshold at 10:00
   | 'dispatched_worker'   // 파견자: skip missing-punch flag
   | 'parental_leave'      // 육아휴직자: all anomalies suppressed
+  | 'easy_logis'          // 이지로지스: suppress all anomaly flags
   | 'fixed_schedule_a'
   | 'fixed_schedule_b'
   | 'pregnant_reduced'
   | 'global_exclusion'
+  | 'resigned'
 
 export interface ExceptionRule {
   id:             string
@@ -43,33 +45,38 @@ export interface ExceptionRule {
   validTo:        string
 }
 
-const LS_RULES = 'tag_exception_rules'
-const LS_ATTRS = 'tag_employee_attrs'
+// Prisma row shape → ExceptionRule (Prisma returns camelCase)
+function fromRow(row: Record<string, unknown>): ExceptionRule {
+  return {
+    id:             String(row.id             ?? ''),
+    employeeId:     String(row.employeeId     ?? ''),
+    employeeName:   String(row.employeeName   ?? ''),
+    jobTitle:       String(row.jobTitle       ?? ''),
+    division:       String(row.division       ?? ''),
+    team:           String(row.team           ?? ''),
+    ruleType:       (row.ruleType             ?? '') as RuleType,
+    excludeFromOt:  Boolean(row.excludeFromOt ?? false),
+    shortenedHours: Number(row.shortenedHours ?? 0),
+    validFrom:      String(row.validFrom      ?? ''),
+    validTo:        String(row.validTo        ?? ''),
+  }
+}
 
 export type { EmployeeAttributeOverrides }
 
-function loadRules(): ExceptionRule[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const s = localStorage.getItem(LS_RULES)
-    return s ? (JSON.parse(s) as ExceptionRule[]) : []
-  } catch {
-    return []
-  }
-}
-
-function saveRules(rules: ExceptionRule[]) {
-  try { localStorage.setItem(LS_RULES, JSON.stringify(rules)) } catch {}
-}
-
-function load<T>(key: string): T | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const s = localStorage.getItem(key)
-    return s ? (JSON.parse(s) as T) : null
-  } catch {
-    return null
-  }
+/** Maps every EmployeeAttributeOverrides boolean field → its DB RuleType. */
+export const ATTR_RULE_MAP: Partial<Record<keyof EmployeeAttributeOverrides, RuleType>> = {
+  isLeader:           'manager_exemption',
+  isParentalLeave:    'parental_leave',
+  isShortenedHours:   'shortened_hours',
+  isTenAMStarter:     'ten_am_starter',
+  isDispatchedWorker: 'dispatched_worker',
+  isEasyLogis:        'easy_logis',
+  isResigned:         'resigned',
+  isFixedScheduleA:   'fixed_schedule_a',
+  isFixedScheduleB:   'fixed_schedule_b',
+  isPregnantReduced:  'pregnant_reduced',
+  isGlobalExclusion:  'global_exclusion',
 }
 
 // ── Context interface ─────────────────────────────────────────────────────
@@ -83,19 +90,19 @@ interface EmployeeExceptionsState {
   saveException: (id: string, settings: EmployeeException) => void
   getException:  (id: string) => EmployeeException
 
-  // Exception rules (ExceptionRulesTab ↔ EmployeeCalendarGrid)
+  // Exception rules (ExceptionRulesTab ↔ EmployeeDrawer ↔ EmployeeCalendarGrid)
   exceptionRules:   ExceptionRule[]
-  addRule:          (data: Omit<ExceptionRule, 'id'>) => void
-  patchRule:        (id: string, patch: Partial<ExceptionRule>) => void
-  deleteRule:       (id: string) => void
-  deleteRules:      (ids: string[]) => void
+  rulesLoading:     boolean
+  addRule:          (data: Omit<ExceptionRule, 'id'>) => Promise<void>
+  patchRule:        (id: string, patch: Partial<ExceptionRule>) => Promise<void>
+  deleteRule:       (id: string) => Promise<void>
+  deleteRules:      (ids: string[]) => Promise<void>
   /** Set of employeeIds whose `excludeFromOt` flag is true — used by grid */
   excludeFromOtIds: Set<string>
 
-  // Per-employee processing attribute overrides (EmployeeDrawer ↔ useAttendanceLogic)
-  employeeAttrMap:  Map<string, EmployeeAttributeOverrides>
-  setEmployeeAttr:  (empId: string, patch: Partial<EmployeeAttributeOverrides>) => void
-  getEmployeeAttr:  (empId: string) => EmployeeAttributeOverrides
+  // Per-employee attribute overrides — derived from exceptionRules (single source of truth)
+  employeeAttrMap: Map<string, EmployeeAttributeOverrides>
+  getEmployeeAttr: (empId: string) => EmployeeAttributeOverrides
 }
 
 const EmployeeExceptionsContext = createContext<EmployeeExceptionsState>({
@@ -106,13 +113,13 @@ const EmployeeExceptionsContext = createContext<EmployeeExceptionsState>({
   saveException:    () => {},
   getException:     () => DEFAULT_EXCEPTION,
   exceptionRules:   [],
-  addRule:          () => {},
-  patchRule:        () => {},
-  deleteRule:       () => {},
-  deleteRules:      () => {},
+  rulesLoading:     false,
+  addRule:          async () => {},
+  patchRule:        async () => {},
+  deleteRule:       async () => {},
+  deleteRules:      async () => {},
   excludeFromOtIds: new Set(),
   employeeAttrMap:  new Map(),
-  setEmployeeAttr:  () => {},
   getEmployeeAttr:  () => ({}),
 })
 
@@ -123,16 +130,31 @@ export function EmployeeExceptionsProvider({ children }: { children: ReactNode }
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [exceptions, setExceptions] = useState<Record<string, EmployeeException>>({})
 
-  // Exception rules — persisted to localStorage
-  const [exceptionRules, setExceptionRulesRaw] = useState<ExceptionRule[]>(loadRules)
+  // Exception rules — persisted in Supabase via /api/exception-rules (single source of truth)
+  const [exceptionRules, setExceptionRules] = useState<ExceptionRule[]>([])
+  const [rulesLoading,   setRulesLoading]   = useState(true)
 
-  // Per-employee attribute overrides — persisted to localStorage
-  const [employeeAttrsRaw, setEmployeeAttrsRaw] = useState<Record<string, EmployeeAttributeOverrides>>(
-    () => load<Record<string, EmployeeAttributeOverrides>>(LS_ATTRS) ?? {},
-  )
-  // Two-layer merge:
-  //   Layer 1 — exceptionRules (structured tab rules, lower priority)
-  //   Layer 2 — employeeAttrsRaw (manual drawer toggles, higher priority)
+  // ── Load rules from API on mount ─────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/exception-rules')
+      .then(r => r.json())
+      .then((data: unknown) => {
+        if (cancelled) return
+        if (!Array.isArray(data)) {
+          console.error('[ExceptionRules] unexpected response (table may not exist yet):', data)
+          return
+        }
+        setExceptionRules((data as Record<string, unknown>[]).map(fromRow))
+      })
+      .catch(err => console.error('[ExceptionRules] load error', err))
+      .finally(() => { if (!cancelled) setRulesLoading(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  // Single-source merge: exceptionRules (DB) → EmployeeAttributeOverrides
+  // The drawer writes directly to DB via addRule/deleteRule/patchRule,
+  // so this map always reflects the true DB state with no localStorage shadow.
   const employeeAttrMap = useMemo(() => {
     const merged = new Map<string, EmployeeAttributeOverrides>()
 
@@ -154,6 +176,9 @@ export function EmployeeExceptionsProvider({ children }: { children: ReactNode }
         case 'parental_leave':
           merged.set(rule.employeeId, { ...ex, isParentalLeave: true })
           break
+        case 'easy_logis':
+          merged.set(rule.employeeId, { ...ex, isEasyLogis: true })
+          break
         case 'fixed_schedule_a':
           merged.set(rule.employeeId, { ...ex, isFixedScheduleA: true })
           break
@@ -161,29 +186,24 @@ export function EmployeeExceptionsProvider({ children }: { children: ReactNode }
           merged.set(rule.employeeId, { ...ex, isFixedScheduleB: true })
           break
         case 'pregnant_reduced':
-          merged.set(rule.employeeId, { ...ex, isPregnantReduced: true })
+          merged.set(rule.employeeId, {
+            ...ex,
+            isPregnantReduced:    true,
+            pregnantReducedFrom:  rule.validFrom || undefined,
+            pregnantReducedTo:    rule.validTo   || undefined,
+          })
           break
         case 'global_exclusion':
           merged.set(rule.employeeId, { ...ex, isGlobalExclusion: true })
           break
+        case 'resigned':
+          merged.set(rule.employeeId, { ...ex, isResigned: true })
+          break
       }
     }
 
-    // Manual drawer toggles override rule-based defaults
-    for (const [empId, attrs] of Object.entries(employeeAttrsRaw)) {
-      merged.set(empId, { ...(merged.get(empId) ?? {}), ...attrs })
-    }
-
     return merged
-  }, [employeeAttrsRaw, exceptionRules])
-
-  function setExceptionRules(updater: (prev: ExceptionRule[]) => ExceptionRule[]) {
-    setExceptionRulesRaw(prev => {
-      const next = updater(prev)
-      saveRules(next)
-      return next
-    })
-  }
+  }, [exceptionRules])
 
   // Derived: set of employee IDs with OT exemption ON
   const excludeFromOtIds = useMemo(
@@ -195,16 +215,9 @@ export function EmployeeExceptionsProvider({ children }: { children: ReactNode }
     [exceptionRules],
   )
 
-  // ── Attr handlers ────────────────────────────────────────────────────
-  function setEmployeeAttr(empId: string, patch: Partial<EmployeeAttributeOverrides>) {
-    setEmployeeAttrsRaw(prev => {
-      const next = { ...prev, [empId]: { ...prev[empId], ...patch } }
-      try { localStorage.setItem(LS_ATTRS, JSON.stringify(next)) } catch {}
-      return next
-    })
-  }
+  // ── Attr accessor — reads from DB-sourced employeeAttrMap ────────────
   function getEmployeeAttr(empId: string): EmployeeAttributeOverrides {
-    return employeeAttrsRaw[empId] ?? {}
+    return employeeAttrMap.get(empId) ?? {}
   }
 
   // ── Drawer handlers ───────────────────────────────────────────────────
@@ -217,28 +230,72 @@ export function EmployeeExceptionsProvider({ children }: { children: ReactNode }
     return exceptions[id] ?? DEFAULT_EXCEPTION
   }
 
-  // ── Rule handlers ─────────────────────────────────────────────────────
-  function addRule(data: Omit<ExceptionRule, 'id'>) {
-    setExceptionRules(prev => [...prev, { ...data, id: `ex-${Date.now()}` }])
+  // ── Rule handlers (optimistic + API sync) ─────────────────────────────
+  async function addRule(data: Omit<ExceptionRule, 'id'>) {
+    const tempId = `temp-${Date.now()}-${Math.random()}`
+    const optimistic: ExceptionRule = { ...data, id: tempId }
+    setExceptionRules(prev => [...prev, optimistic])
+    try {
+      const res  = await fetch('/api/exception-rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+      const row = await res.json()
+      if (!res.ok) throw new Error(row.error ?? 'create failed')
+      setExceptionRules(prev => prev.map(r => r.id === tempId ? fromRow(row) : r))
+    } catch (err) {
+      console.error('[ExceptionRules] add error', err)
+      setExceptionRules(prev => prev.filter(r => r.id !== tempId))
+    }
   }
-  function patchRule(id: string, patch: Partial<ExceptionRule>) {
+
+  async function patchRule(id: string, patch: Partial<ExceptionRule>) {
     setExceptionRules(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r))
+    try {
+      const res = await fetch(`/api/exception-rules/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      if (!res.ok) throw new Error((await res.json()).error ?? 'patch failed')
+    } catch (err) {
+      console.error('[ExceptionRules] patch error', err)
+    }
   }
-  function deleteRule(id: string) {
+
+  async function deleteRule(id: string) {
     setExceptionRules(prev => prev.filter(r => r.id !== id))
+    try {
+      const res = await fetch(`/api/exception-rules/${id}`, { method: 'DELETE' })
+      if (!res.ok && res.status !== 204) throw new Error('delete failed')
+    } catch (err) {
+      console.error('[ExceptionRules] delete error', err)
+    }
   }
-  function deleteRules(ids: string[]) {
+
+  async function deleteRules(ids: string[]) {
     const set = new Set(ids)
     setExceptionRules(prev => prev.filter(r => !set.has(r.id)))
+    try {
+      const res = await fetch('/api/exception-rules', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error ?? 'bulk delete failed')
+    } catch (err) {
+      console.error('[ExceptionRules] bulk delete error', err)
+    }
   }
 
   return (
     <EmployeeExceptionsContext.Provider value={{
       selectedId, openDrawer, closeDrawer,
       exceptions, saveException, getException,
-      exceptionRules, addRule, patchRule, deleteRule, deleteRules,
+      exceptionRules, rulesLoading, addRule, patchRule, deleteRule, deleteRules,
       excludeFromOtIds,
-      employeeAttrMap, setEmployeeAttr, getEmployeeAttr,
+      employeeAttrMap, getEmployeeAttr,
     }}>
       {children}
     </EmployeeExceptionsContext.Provider>

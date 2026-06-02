@@ -6,16 +6,16 @@ import { FINAL_STATUS_CATEGORY } from '@/types/tag'
 import { useSlack } from '@/context/SlackContext'
 
 const FLAG_LABEL: Record<string, string> = {
-  LATE: '지각',
-  NO_CLOCK_OUT: '퇴근 미태깅',
-  UNAPPROVED_OT: 'OT 미신청',
+  LATE:            '지각',
+  NO_CLOCK_IN:     '출근 미태깅',
+  NO_CLOCK_OUT:    '퇴근 미태깅',
   EARLY_DEPARTURE: '조기퇴근',
 }
 
 const FLAG_BADGE: Record<string, string> = {
-  LATE: 'bg-orange-50 text-orange-700 border-orange-200',
-  NO_CLOCK_OUT: 'bg-red-50 text-red-700 border-red-200',
-  UNAPPROVED_OT: 'bg-amber-50 text-amber-700 border-amber-200',
+  LATE:            'bg-orange-50 text-orange-700 border-orange-200',
+  NO_CLOCK_IN:     'bg-red-50 text-red-700 border-red-200',
+  NO_CLOCK_OUT:    'bg-red-50 text-red-700 border-red-200',
   EARLY_DEPARTURE: 'bg-blue-50 text-blue-700 border-blue-200',
 }
 
@@ -47,6 +47,22 @@ function minsToHHMM(mins: number): string {
   const h = Math.floor(mins / 60) % 24
   const m = mins % 60
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+const ERP_LEAVE_TYPES = new Set(['연차', '오전반차', '오후반차', '오전반반차', '오후반반차'])
+
+/**
+ * Formats the ERP leave display string based on the numerical erpLeaveAmount.
+ * Korean ERP uses '연차' as a generic code regardless of amount; the actual
+ * granularity (full / half / quarter day) is encoded in the '일수' column.
+ */
+function formatErpLeave(leaveType: string, amount: number | undefined): string {
+  if (ERP_LEAVE_TYPES.has(leaveType) && amount != null && amount > 0) {
+    if (amount <= 0.25) return `반반차 (${amount}일)`
+    if (amount <  1.0)  return `반차 (${amount}일)`
+    return `연차 (${amount}일)`
+  }
+  return leaveType
 }
 
 function formatTimestamp(iso: string): string {
@@ -151,13 +167,14 @@ type Props = {
   policy:               PolicySettings
   initialEditHistory?:  EditHistoryEntry[]
   initialApproved?:     boolean
+  initialDecision?:     string   // 이전 저장된 최종 상태값
   initialErpLeaveType?: string
   showExactTime?:       boolean
   onClose:              () => void
   onSave:               (payload: SavePayload) => void
 }
 
-export function DailyDetailModal({ employee, record, policy, initialEditHistory, initialApproved, initialErpLeaveType, showExactTime = false, onClose, onSave }: Props) {
+export function DailyDetailModal({ employee, record, policy, initialEditHistory, initialApproved, initialDecision, initialErpLeaveType, showExactTime = false, onClose, onSave }: Props) {
   // ── Audit / approval state ────────────────────────────────────────────
   const [editHistory, setEditHistory] = useState<EditHistoryEntry[]>(initialEditHistory ?? [])
   const isApproved = initialApproved ?? false
@@ -174,16 +191,18 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
   )
   const [erpLeaveEdit, setErpLeaveEdit] = useState(initialErpLeaveType ?? '없음')
 
-  // ── Final decision ────────────────────────────────────────────────────
+  // ── Final decision (이전 저장값 → 정상 복원)  ──────────────────────────
   const [adminDecision, setAdminDecision] = useState<string>(() =>
-    initialApproved ? '소명완료' : record.finalStatus,
+    initialDecision ?? (initialApproved ? '소명완료' : record.finalStatus),
   )
   const [finalReason, setFinalReason] = useState('')
 
   const { exceptions: slackExceptions } = useSlack()
-  const slackException = slackExceptions.find(
-    e => e.empId === employee.id && e.date === record.date,
-  ) ?? null
+  // 동일 직원+날짜의 모든 슬랙 항목을 시간순으로 정렬
+  const slackEntriesForDay = slackExceptions
+    .filter(e => e.empId === employee.id && e.date === record.date)
+    .sort((a, b) => a.rawText.localeCompare(b.rawText))
+  const slackException = slackEntriesForDay[0] ?? null  // 레거시 호환
 
   // verificationNote entries written by applySlack (e.g. "✅ 슬랙 확인: 지각 면제 (외근·행사)")
   const slackVNotes = record.verificationNote?.filter(n => n.startsWith('✅ 슬랙 확인')) ?? []
@@ -474,7 +493,7 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                     onClick={() => {
                       if (isEditingErp) {
                         setErpOtEdit(record.erpOtApplied ? '신청됨' : record.overtimeHours > 0 ? '미신청' : '해당없음')
-                        setErpLeaveEdit('없음')
+                        setErpLeaveEdit(initialErpLeaveType ?? '없음')
                       }
                       setIsEditingErp(p => !p)
                     }}
@@ -515,10 +534,17 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                       >
                         <option value="없음">없음</option>
                         <option value="연차">연차</option>
-                        <option value="반차">반차</option>
+                        <option value="오전반차">오전반차</option>
+                        <option value="오후반차">오후반차</option>
+                        <option value="오전반반차">오전반반차</option>
+                        <option value="오후반반차">오후반반차</option>
+                        <option value="출장">출장</option>
+                        <option value="재택근무">재택근무</option>
                       </select>
                     ) : (
-                      <span className="text-gray-400">없음</span>
+                      erpLeaveEdit && erpLeaveEdit !== '없음'
+                        ? <span className="text-blue-700 font-semibold">{formatErpLeave(erpLeaveEdit, record.erpLeaveAmount)}</span>
+                        : <span className="text-gray-400">없음</span>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
@@ -534,29 +560,42 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
               <SourceBlock
                 icon="💬"
                 label="Slack (메신저)"
-                statusDot={slackException ? 'ok' : 'info'}
+                statusDot={slackEntriesForDay.length > 0 ? 'ok' : 'info'}
               >
-                {slackException ? (
-                  <div className="space-y-2">
-                    {/* Raw message bubble */}
-                    <div className="bg-white rounded-lg border border-gray-100 px-3 py-2.5">
-                      <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap break-words">
-                        {slackException.rawText}
-                      </p>
-                    </div>
-                    {/* Classification + effect row */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[10px] text-gray-400">분류</span>
-                      <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold
-                        bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        {slackException.note}
-                      </span>
-                      {slackVNotes.map((n, i) => (
-                        <span key={i} className="text-[10px] font-semibold text-emerald-600">
-                          {n}
-                        </span>
-                      ))}
-                    </div>
+                {slackEntriesForDay.length > 0 ? (
+                  <div className="space-y-3">
+                    {slackEntriesForDay.map((ex, idx) => (
+                      <div key={idx} className="space-y-1.5">
+                        {/* 복수 메시지일 때 순서 표시 */}
+                        {slackEntriesForDay.length > 1 && (
+                          <p className="text-[10px] font-semibold text-gray-400">
+                            메시지 {idx + 1}/{slackEntriesForDay.length}
+                          </p>
+                        )}
+                        {/* Raw message bubble */}
+                        <div className="bg-white rounded-lg border border-gray-100 px-3 py-2.5">
+                          <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap break-words">
+                            {ex.rawText}
+                          </p>
+                        </div>
+                        {/* 분류 뱃지 */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] text-gray-400">분류</span>
+                          <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold
+                            bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            {ex.note}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    {/* 처리 결과 notes */}
+                    {slackVNotes.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {slackVNotes.map((n, i) => (
+                          <span key={i} className="text-[10px] font-semibold text-emerald-600">{n}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <span className="text-gray-400 text-xs">연동된 슬랙 메시지가 없습니다.</span>
@@ -589,7 +628,6 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                     <option value="지각">지각</option>
                     <option value="조기퇴근">조기퇴근</option>
                     <option value="출퇴근누락">출퇴근누락</option>
-                    <option value="OT미신청">OT미신청</option>
                   </optgroup>
                   <optgroup label="휴일">
                     <option value="휴일근무">휴일근무</option>

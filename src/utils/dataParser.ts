@@ -19,8 +19,9 @@
 
 import { getOrganization } from '@/data/orgChart'
 import { HOLIDAYS } from '@/data/mockData'
+import { normalizeLeaveType } from '@/utils/attendanceCalc'
 import type {
-  Employee, RawRecord, CapsRow, ErpRow, ErpOtRow, ErpLeaveType, DayType, PolicySettings,
+  Employee, RawRecord, CapsRow, ErpUnifiedRow, ErpLeaveType, DayType, PolicySettings,
 } from '@/types/tag'
 import { ERP_LEAVE_TYPE_MAP, DEFAULT_POLICY } from '@/types/tag'
 
@@ -38,13 +39,15 @@ function toMinutes(timeStr: string): number {
 }
 
 /**
- * Accepted ERP 승인상태 values — both approved ('승인') and pending ('신청').
- * Explicitly rejected: '승인취소', '반려'.
- * Using substring logic so '신청중' etc. are also covered.
+ * Accepted ERP 승인상태 values:
+ *   '승인'  — fully approved
+ *   '신청'  — applied / pending (e.g. '신청', '신청중')
+ *   '상신'  — submitted/forwarded to approver (e.g. '상신', '상신중')
+ * Explicitly rejected: '취소' (any variant), '반려'.
  */
 function isAcceptedStatus(status: string): boolean {
   if (status.includes('취소') || status.includes('반려')) return false
-  return status.includes('승인') || status.includes('신청')
+  return status.includes('승인') || status.includes('신청') || status.includes('상신')
 }
 
 /** 근태코드 values that represent overtime (not leave). */
@@ -55,6 +58,21 @@ const OT_CODE_SET = new Set(['연장근로', '시간외', '시간외근무', '�
  * Leaders are assumed to manage their own schedules.
  */
 const LEADER_TITLES = ['CEO', 'CSO', 'CFO', '본부장', '팀장', '부문장', '실장', '센터장']
+
+// ── Complete exclusion rules ──────────────────────────────────────────────
+
+/** Departments whose members are excluded from ALL attendance processing. */
+const EXCLUDED_DEPTS = new Set(['임원', '장애인 고용', '임시출입(근태)', '더존'])
+
+/**
+ * Valid employee ID format: 'E' followed by ≥ 8 digits or masking asterisks.
+ * Rejects pure-numeric IDs, very short IDs, and non-E-prefixed entries
+ * (e.g. visitor codes, contractor numbers) that occasionally appear in CAPS.
+ * Masked IDs like "E250**1501" pass because they match E + 8+ [digit|*] chars.
+ */
+function isValidEmpId(rawId: string): boolean {
+  return /^E[\d*]{8,}$/.test(rawId)
+}
 
 // ── ID normalisation ──────────────────────────────────────────────────────
 
@@ -71,7 +89,7 @@ function normalizeId(raw: string | null | undefined): string {
  * "김 철 수" and "김철수" compare equal across systems.
  */
 function normalizeName(raw: string | null | undefined): string {
-  return String(raw ?? '').trim().replace(/\s+/g, '')
+  return String(raw ?? '').normalize('NFC').trim().replace(/\s+/g, '')
 }
 
 // ── Date normalisation ────────────────────────────────────────────────────
@@ -129,6 +147,20 @@ export function normalizeDate(raw: string | null | undefined): string {
   return ''
 }
 
+// ── Dual-affiliation merge helpers ───────────────────────────────────────
+
+function mergeEarliest(a: string | null, b: string | null): string | null {
+  if (!a) return b
+  if (!b) return a
+  return toMinutes(a) <= toMinutes(b) ? a : b
+}
+
+function mergeLatest(a: string | null, b: string | null): string | null {
+  if (!a) return b
+  if (!b) return a
+  return toMinutes(a) >= toMinutes(b) ? a : b
+}
+
 // ── UTC-safe next-day arithmetic ──────────────────────────────────────────
 
 function addOneDayUTC(dateStr: string): string {
@@ -165,7 +197,12 @@ export function normalizeTime(raw: string | null | undefined): string | null {
 
 // ── Day-type helper ───────────────────────────────────────────────────────
 
-function getDayInfo(dateStr: string): { dayType: DayType; dayLabel: string } {
+function getDayInfo(
+  dateStr: string,
+  companyHols: Map<string, string> = new Map(),
+): { dayType: DayType; dayLabel: string } {
+  // Company-wide holidays take precedence so labels are shown correctly
+  if (companyHols.has(dateStr)) return { dayType: 'HOLIDAY', dayLabel: companyHols.get(dateStr)! }
   if (HOLIDAYS.has(dateStr)) {
     const LABELS: Record<string, string> = {
       '2026-01-01': '신정',   '2026-02-16': '설날연휴', '2026-02-17': '설날',
@@ -204,42 +241,110 @@ function key(empId: string, date: string): string {
   return `${empId}_${date}`
 }
 
-// ── Leave map ─────────────────────────────────────────────────────────────
+// ── Leave accumulation constants ──────────────────────────────────────────
+
+/** Fractional day value for each counted leave type. */
+const LEAVE_AMOUNT: Partial<Record<ErpLeaveType, number>> = {
+  '연차':      1.0,
+  '오전반차':  0.5,
+  '오후반차':  0.5,
+  '오전반반차': 0.25,
+  '오후반반차': 0.25,
+  // '출장', '재택근무' are not time-off deductions — no amount
+}
+
+// ── Name-only fallback index ──────────────────────────────────────────────
 
 /**
- * Builds a flat Map<"empId_date", ErpLeaveType> from BOTH ERP files.
+ * Builds a normalizedName → employeeId map for resolving ERP rows whose
+ * 사원번호 format differs from CAPS (e.g., CAPS masks digits as *, ERP uses
+ * the full unmasked ID).  Entries for non-unique names (동명이인) are
+ * deliberately removed so they cannot cause a wrong-employee assignment.
+ */
+function buildNameOnlyFallback(employeeMap: Map<string, Employee>): Map<string, string> {
+  const m = new Map<string, string>()
+  for (const [empId, emp] of employeeMap) {
+    const n = normalizeName(emp.name)
+    if (m.has(n)) m.delete(n)   // duplicate name — never safe to use as a fallback
+    else          m.set(n, empId)
+  }
+  return m
+}
+
+// ── Leave map ─────────────────────────────────────────────────────────────
+
+/** Returns a numeric priority for ERP approval statuses (higher = more authoritative). */
+function leavePriority(status: string): number {
+  if (status.includes('승인')) return 3
+  if (status.includes('신청')) return 2
+  if (status.includes('상신')) return 1
+  return 0
+}
+
+/**
+ * Builds a flat Map<"empId_date", { type: ErpLeaveType; amount: number }> from the unified ERP array.
  *
- * Why both files?  The ERP overtime file sometimes carries leave-type entries
- * (e.g. an employee files 반차 + OT on the same day as two separate rows).
+ * Two-pass design:
  *
- * Leave file (ErpRow) has 종료일  → expand multi-day ranges.
- * OT file (ErpOtRow) has no 종료일 → single-date entry only.
+ * Pass 1 — deduplication:
+ *   Korean ERP files export BOTH a '신청' (applied) and a '승인' (approved) row
+ *   for every approved leave request. Both pass isAcceptedStatus(), so without
+ *   deduplication the same 0.5-day leave accumulates to 1.0.
+ *   This pass groups by (compositeKey, code, startDate, endDate) and retains only
+ *   the row with the highest approval priority (승인 > 신청 > 상신).
  *
- * Rows are only included when:
- *   승인상태 is '승인' or '신청' (not '승인취소'/'반려')  AND  근태코드 is NOT an OT-type code
+ * Pass 2 — accumulation with type inference:
+ *   Processes the deduplicated entries. Per-day amount comes from '일수' ÷ range span.
+ *   When the ERP code is generic '연차' but '일수' reveals a fractional day on a single-day
+ *   request, the effective type is inferred: 0.5 → '오전반차', <0.5 → '오전반반차'.
+ *   Multiple distinct leave rows for the same date (e.g. 연차 + 재택) are still summed;
+ *   the sum is capped at 1.0.
+ *   Codes absent from ERP_LEAVE_TYPE_MAP (e.g. 복직신청) are silently skipped.
+ *   OT-type codes are skipped entirely.
  */
 function buildLeaveMap(
-  leaveRows:   ErpRow[],
-  otRows:      ErpOtRow[],
-  employeeMap: Map<string, Employee>,
-): Map<string, ErpLeaveType> {
-  const map = new Map<string, ErpLeaveType>()
+  rows:           ErpUnifiedRow[],
+  employeeMap:    Map<string, Employee>,
+  companyHolsMap: Map<string, string> = new Map(),
+): Map<string, { type: ErpLeaveType; amount: number; isUnpaid?: boolean; rawCode: string }> {
+  const accumMap = new Map<string, { amount: number; type: ErpLeaveType; isUnpaid?: boolean; rawCode: string }>()
+  const nameOnlyFallback = buildNameOnlyFallback(employeeMap)
 
-  // ── From leave file (with range expansion) ──────────────────────────────
-  for (const row of leaveRows) {
-    const r = row as unknown as Record<string, string>
+  // 이름 → 모든 compositeKey 목록 (마스킹 불일치 대응)
+  // 같은 이름이 다른 사번으로 두 CAPS 파일에 나타날 때 모든 키에 leave 저장
+  const nameToAllKeys = new Map<string, string[]>()
+  for (const [empId, emp] of employeeMap) {
+    const n = normalizeName(emp.name)
+    if (!nameToAllKeys.has(n)) nameToAllKeys.set(n, [])
+    nameToAllKeys.get(n)!.push(empId)
+  }
+
+  // ── Diagnostic: log ERP column keys from first row (dev only) ──────────
+  if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production' && rows.length > 0) {
+    const firstRow = rows[0] as unknown as Record<string, string>
+    console.log('[TAG] ERP leaveMap — column keys:', Object.keys(firstRow))
+  }
+
+  // ── Pass 1: deduplication ─────────────────────────────────────────────
+  type DedupEntry = { compositeKey: string; row: Record<string, string> }
+  const dedupMap = new Map<string, DedupEntry>()
+
+  for (const raw of rows) {
+    const r = raw as unknown as Record<string, string>
 
     const rawId   = normalizeId(r['사원번호'])
     const erpName = normalizeName(r['성명'])
     if (!rawId || !erpName) continue
 
-    // Composite lookup — implicitly enforces ID AND name match in one step.
-    // If the name in ERP doesn't match any CAPS entry for this masked ID,
-    // no composite key will exist → row is skipped, no data corruption.
-    const compositeKey = `${rawId}_${erpName}`
+    let compositeKey = `${rawId}_${erpName}`
     if (!employeeMap.has(compositeKey)) {
-      console.warn(`[TAG] ⚠ ERP 휴가 미매칭: 사원번호="${rawId}" 성명="${erpName}" (키="${compositeKey}") → 직원 목록에 없음. 스킵.`)
-      continue
+      const fallbackId = nameOnlyFallback.get(erpName)
+      if (fallbackId) {
+        compositeKey = fallbackId
+      } else {
+        console.warn(`[TAG] ⚠ ERP 휴가 미매칭: 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음 (동명이인 또는 미등록). 스킵.`)
+        continue
+      }
     }
 
     const status = String(r['승인상태'] ?? '').trim()
@@ -248,53 +353,91 @@ function buildLeaveMap(
     const code = String(r['근태코드'] ?? '').trim()
     if (OT_CODE_SET.has(code)) continue
 
-    const leaveType = ERP_LEAVE_TYPE_MAP[code]
-    if (!leaveType) continue
+    const category = String(r['근태구분'] ?? '').trim()
+    if (category === '시간') continue
 
     const startDate = normalizeDate(r['시작일'])
     if (!startDate) continue
+    const endDate = normalizeDate(r['종료일'] ?? '') || startDate
 
-    const endDate = normalizeDate(r['종료일']) || startDate
+    // 🔍 임시 디버그 — ERP 휴가 매핑 확인
+    if (typeof window !== 'undefined' && (r['성명'] ?? '').includes('배영언')) {
+      console.log(`[DEBUG ERP 배영언] compositeKey="${compositeKey}" code="${code}" start="${startDate}" end="${endDate}"`)
+    }
+
+    const dk       = `${compositeKey}||${code}||${startDate}||${endDate}`
+    const existing = dedupMap.get(dk)
+    if (!existing || leavePriority(status) > leavePriority(String(existing.row['승인상태'] ?? '').trim())) {
+      dedupMap.set(dk, { compositeKey, row: r })
+    }
+  }
+
+  // ── Pass 2: accumulation with type inference ──────────────────────────
+  for (const { compositeKey, row: r } of dedupMap.values()) {
+    const code = String(r['근태코드'] ?? '').trim()
+
+    const leaveType = ERP_LEAVE_TYPE_MAP[code]
+    if (!leaveType) continue  // code not in leave whitelist — silently skip
+
+    const startDate = normalizeDate(r['시작일'])
+    if (!startDate) continue
+    const endDate = normalizeDate(r['종료일'] ?? '') || startDate
+
+    // Directly read the '일수' column — single source of truth for leave amount.
+    // Scan all keys normalised to '일수' (handles invisible chars / wrapped headers).
+    const iljuKey  = Object.keys(r).find(k => k.replace(/\s+/g, '') === '일수') ?? '일수'
+    const iljuStr  = String(r[iljuKey] ?? '').trim()
+    const iljuRaw  = parseFloat(iljuStr)
+
+    const baseType: ErpLeaveType = leaveType
+    const isSingleDay = (startDate === endDate)
+
+    // Single-day sub-type inference: ERP uses '연차' as a catch-all for all leave grades;
+    // the granularity (반차/반반차) lives in '일수'. Only infer on a single-day row.
+    const effectiveType: ErpLeaveType =
+      (baseType === '연차' && isSingleDay && isFinite(iljuRaw) && iljuRaw > 0 && iljuRaw < 1.0)
+        ? (iljuRaw >= 0.5 ? '오전반차' : '오전반반차')
+        : baseType
+
+    // Amount per weekday: always use LEAVE_AMOUNT (exact constant — 1.0, 0.5, or 0.25).
+    // Multi-day requests divide iljuRaw by calendar days → floating-point error; ignore it.
+    // Each WEEKDAY in the range gets the exact semantic amount for this leave type.
+    const perDayAmount = LEAVE_AMOUNT[effectiveType] ?? 0
+
+    const isUnpaid = code.includes('무급')
+
+    // ── Diagnostic: log every processed ERP leave row (dev only) ─────────
+    if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
+      console.log(
+        `[TAG] ERP leave row: 성명="${r['성명'] ?? ''}" 코드="${code}" 시작="${startDate}" 종료="${endDate}"`,
+        `일수key="${iljuKey}" 일수_raw="${iljuStr}" 일수_parsed=${iljuRaw}`,
+        `effectiveType="${effectiveType}" perDayAmount=${perDayAmount} → compositeKey="${compositeKey}"`,
+      )
+    }
+
+    // 마스킹 불일치 대응: 같은 이름의 모든 compositeKey에 저장
+    const rowName2 = normalizeName(String(r['성명'] ?? '').trim())
+    const allKeysForName = nameToAllKeys.get(rowName2) ?? [compositeKey]
 
     let cur = startDate
     while (cur <= endDate) {
-      map.set(key(compositeKey, cur), leaveType)
+      const { dayType: curDayType } = getDayInfo(cur, companyHolsMap)
+      if (curDayType === 'WEEKDAY') {
+        for (const cKey of allKeysForName) {
+          const k          = key(cKey, cur)
+          const existing   = accumMap.get(k)
+          const prevAmount = existing?.amount ?? 0
+          const newAmount  = Math.min(1.0, prevAmount + perDayAmount)
+          const newType: ErpLeaveType = newAmount >= 1.0 ? '연차' : effectiveType
+          accumMap.set(k, { amount: newAmount, type: newType, isUnpaid: (existing?.isUnpaid ?? false) || isUnpaid, rawCode: code })
+        }
+      }
       if (cur === endDate) break
       cur = addOneDayUTC(cur)
     }
   }
 
-  // ── From OT file (single-date, no 종료일) ────────────────────────────────
-  for (const row of otRows) {
-    const r = row as unknown as Record<string, string>
-
-    const rawId   = normalizeId(r['사원번호'])
-    const erpName = normalizeName(r['성명'])
-    if (!rawId || !erpName) continue
-
-    const compositeKey = `${rawId}_${erpName}`
-    if (!employeeMap.has(compositeKey)) {
-      console.warn(`[TAG] ⚠ ERP OT(휴가출처) 미매칭: 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음. 스킵.`)
-      continue
-    }
-
-    const status = String(r['승인상태'] ?? '').trim()
-    if (!isAcceptedStatus(status)) continue
-
-    const code = String(r['근태코드'] ?? '').trim()
-    if (OT_CODE_SET.has(code)) continue
-
-    const leaveType = ERP_LEAVE_TYPE_MAP[code]
-    if (!leaveType) continue
-
-    const startDate = normalizeDate(r['시작일'])
-    if (!startDate) continue
-
-    const k = key(compositeKey, startDate)
-    if (!map.has(k)) map.set(k, leaveType)
-  }
-
-  return map
+  return accumMap
 }
 
 // ── OT map ────────────────────────────────────────────────────────────────
@@ -309,22 +452,29 @@ function buildLeaveMap(
  * application with 인정시간=0 still suppresses the '연장 미신청' flag.
  */
 function buildOtMap(
-  otRows:      ErpOtRow[],
+  rows:        ErpUnifiedRow[],
   employeeMap: Map<string, Employee>,
 ): Map<string, { hours: number; code: string }> {
   const map = new Map<string, { hours: number; code: string }>()
 
-  for (const row of otRows) {
+  const nameOnlyFallback = buildNameOnlyFallback(employeeMap)
+
+  for (const row of rows) {
     const r = row as unknown as Record<string, string>
 
     const rawId   = normalizeId(r['사원번호'])
     const erpName = normalizeName(r['성명'])
     if (!rawId || !erpName) continue
 
-    const compositeKey = `${rawId}_${erpName}`
+    let compositeKey = `${rawId}_${erpName}`
     if (!employeeMap.has(compositeKey)) {
-      console.warn(`[TAG] ⚠ ERP 연장근로 미매칭: 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음. 스킵.`)
-      continue
+      const fallbackId = nameOnlyFallback.get(erpName)
+      if (fallbackId) {
+        compositeKey = fallbackId
+      } else {
+        console.warn(`[TAG] ⚠ ERP 연장근로 미매칭: 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음 (동명이인 또는 미등록). 스킵.`)
+        continue
+      }
     }
 
     const status = String(r['승인상태'] ?? '').trim()
@@ -360,13 +510,16 @@ function extractEmployees(capsData: CapsRow[]): Employee[] {
     const name  = String(r['이름'] ?? r['성명'] ?? '').trim()
     if (!rawId || !name) continue
 
+    // Rule: invalid IDs and excluded departments are silently dropped at parse time
+    const dept = String(r['부서'] ?? '').trim()
+    if (!isValidEmpId(rawId) || EXCLUDED_DEPTS.has(dept)) continue
+
     // Composite primary key: masked IDs are NOT unique on their own.
     // "E250**1501_김희" and "E250**1501_이수" are two distinct people.
     const compositeKey = `${rawId}_${normalizeName(name)}`
 
     if (seen.has(compositeKey)) continue  // same person appearing in multiple rows — skip
 
-    const dept = String(r['부서'] ?? '').trim()
     const { division, team } = getOrganization(dept)
 
     const jobTitle = String(r['직급'] ?? r['직책'] ?? '').trim()
@@ -396,19 +549,34 @@ export interface ParseResult {
 }
 
 export function parseAttendanceData(
-  capsData:     CapsRow[],
-  erpLeaveData: ErpRow[],
-  erpOtData:    ErpOtRow[],
-  policy:       PolicySettings = DEFAULT_POLICY,
+  capsData: CapsRow[],
+  erpData:  ErpUnifiedRow[],   // single unified ERP array — leave + OT rows mixed
+  policy:   PolicySettings = DEFAULT_POLICY,
 ): ParseResult {
   const employees   = extractEmployees(capsData)
   const employeeMap = new Map(employees.map(e => [e.id, e]))
-  // Pass employeeMap so ERP rows are cross-validated against CAPS names (strict AND match)
-  const leaveMap    = buildLeaveMap(erpLeaveData, erpOtData, employeeMap)
-  const otMap       = buildOtMap(erpOtData, employeeMap)
+
+  // 사번 마스킹 불일치 대응: 이름 기반 fallback (동명이인은 제외)
+  const capsFallbackMap = buildNameOnlyFallback(employeeMap)
+
+  // Both maps receive the same unified array; each filters internally by 근태코드
+  const companyHolsMap = new Map((policy.companyHolidays ?? []).map(h => [h.date, h.label]))
+  const leaveMap    = buildLeaveMap(erpData, employeeMap, companyHolsMap)
+  const otMap       = buildOtMap(erpData, employeeMap)
 
   const rawRecords: RawRecord[] = []
   let   skippedCount = 0
+
+  // Rule 3: E26010101 has dual-department affiliation — same person appears twice per day.
+  // Stage their rows here; after the main loop we merge earliest clockIn + latest clockOut.
+  const DUAL_AFFIL_PREFIX = 'E26010101_'
+  const dualAffilStage = new Map<string, RawRecord>() // key = "compositeKey|date"
+
+  // 🔍 임시: leaveMap에서 배영언 키 확인
+  if (typeof window !== 'undefined') {
+    const byKeys = [...leaveMap.keys()].filter(k => k.includes('배영언'))
+    console.log(`[DEBUG leaveMap 배영언] ${byKeys.length}건:`, byKeys)
+  }
 
   // ── Debug: confirm map sizes in browser console ──────────────────────────
   if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
@@ -433,17 +601,25 @@ export function parseAttendanceData(
     const rowName = normalizeName(r['이름'] ?? r['성명'])
     if (!rawId || !rowName) { skippedCount++; continue }
 
-    // Composite key = masked empId + normalized name.
-    // Two people sharing the same masked ID (e.g. "E250**1501") produce
-    // different composite keys and are treated as distinct employees.
-    const compositeKey = `${rawId}_${rowName}`
+    // Silent skip for excluded depts / invalid IDs — these were never added to employeeMap,
+    // so we drop them here without a console warning to keep logs clean.
+    const rowDept = String(r['부서'] ?? '').trim()
+    if (!isValidEmpId(rawId) || EXCLUDED_DEPTS.has(rowDept)) { skippedCount++; continue }
 
-    // If this composite key is not in employeeMap, the row is orphaned
-    // (no CAPS employee entry for this exact ID+name combination).
+    // Composite key = masked empId + normalized name.
+    let compositeKey = `${rawId}_${rowName}`
+
+    // 두 CAPS 파일의 사번 마스킹 불일치 대응:
+    // 직접 매칭 실패 시 이름 기반 fallback (동명이인 제외)
     if (!employeeMap.has(compositeKey)) {
-      console.warn(`[TAG] ⚠ CAPS 미등록 직원: 사원번호="${rawId}" 이름="${rowName}" → 직원 목록에 없음. 스킵.`)
-      skippedCount++
-      continue
+      const fallbackId = capsFallbackMap.get(rowName)
+      if (fallbackId) {
+        compositeKey = fallbackId
+      } else {
+        console.warn(`[TAG] ⚠ CAPS 미등록 직원: 사원번호="${rawId}" 이름="${rowName}" → 직원 목록에 없음. 스킵.`)
+        skippedCount++
+        continue
+      }
     }
 
     // CAPS dates: "2026/05/01" → replace "/" → "2026-05-01"
@@ -451,6 +627,13 @@ export function parseAttendanceData(
     if (!normDate) { skippedCount++; continue }
 
     const lookupKey = key(compositeKey, normDate)
+
+    // 🔍 임시 디버그 — 배영언 lookupKey vs leaveMap
+    if (typeof window !== 'undefined' && rowName.includes('배영언') && normDate === '2026-05-26') {
+      const found = leaveMap.get(lookupKey)
+      console.log(`[DEBUG LOOKUP 배영언] rawId="${rawId}" compositeKey="${compositeKey}" lookupKey="${lookupKey}" → leaveEntry=${found ? JSON.stringify(found) : 'undefined'}`)
+      console.log(`[DEBUG LOOKUP 배영언] leaveMap 전체 키 중 배영언 포함:`, [...leaveMap.keys()].filter(k => k.includes('배영언')))
+    }
 
     // ── Debug: trace a specific employee ─────────────────────────────────
     if (typeof window !== 'undefined' &&
@@ -463,7 +646,7 @@ export function parseAttendanceData(
       )
     }
 
-    const { dayType, dayLabel } = getDayInfo(normDate)
+    const { dayType, dayLabel } = getDayInfo(normDate, companyHolsMap)
     const clockIn     = normalizeTime(r['출근'] || null)
     const rawClockOut = normalizeTime(r['퇴근'] || null)
     // Auto-detect next-day clock-out: CAPS sometimes exports plain "01:30" (no '+').
@@ -475,7 +658,33 @@ export function parseAttendanceData(
         : rawClockOut
 
     // ── Leave lookup ──────────────────────────────────────────────────────
-    const leaveType: ErpLeaveType | null = leaveMap.get(lookupKey) ?? null
+    const leaveEntry = leaveMap.get(lookupKey)
+    let leaveType: ErpLeaveType | null = leaveEntry?.type ?? null
+
+    // 방향 미명시 반차 재추론: rawCode에 '오전'/'오후'가 없으면 출퇴근 시각으로 방향 결정
+    // e.g. '생일반차휴가' → normalizeLeaveType이 퇴근≤14:00이면 '오후반차'로 정정
+    if (
+      (leaveType === '오전반차' || leaveType === '오후반차') &&
+      leaveEntry?.rawCode &&
+      !leaveEntry.rawCode.includes('오전') &&
+      !leaveEntry.rawCode.includes('오후')
+    ) {
+      const inferred = normalizeLeaveType(leaveEntry.rawCode, clockIn, clockOut)
+      if (inferred === '오전반차' || inferred === '오후반차') leaveType = inferred
+    }
+
+    // erpLeaveAmount: exact semantic amount from LEAVE_AMOUNT[type] — 1.0 / 0.5 / 0.25.
+    const erpLeaveAmount: number | undefined = leaveEntry?.amount
+    const isUnpaidLeave: boolean = leaveEntry?.isUnpaid ?? false
+
+    // ── Diagnostic: log leave lookup result for every row (dev only) ─────
+    if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production' && leaveEntry) {
+      console.log(
+        `[TAG] leave hit: empId="${compositeKey}" date="${normDate}"`,
+        `→ type="${leaveEntry.type}" amount=${leaveEntry.amount}`,
+        `(erpLeaveAmount=${erpLeaveAmount})`,
+      )
+    }
 
     // ── OT lookup ─────────────────────────────────────────────────────────
     const otEntry            = otMap.get(lookupKey)
@@ -491,18 +700,21 @@ export function parseAttendanceData(
     // ── Cross-check verification notes ───────────────────────────────────
     const verificationNote: string[] = []
 
-    // 0. ERP OT/holiday approved → add memo so the table column M shows it
+    // 0. ERP OT/holiday confirmed (승인 or 신청/상신) → memo for column M
     if (erpOtApplied && erpOtCode) {
       if (erpOtCode === '휴일근로') {
-        verificationNote.push('ERP 휴일근로 승인')
+        verificationNote.push('ERP 휴일근로 확인')
       } else if (OT_CODE_SET.has(erpOtCode)) {
-        verificationNote.push('ERP 연장근로 승인')
+        verificationNote.push('ERP 연장근로 확인')
       }
     }
 
-    // 1. 출퇴근 누락: weekday CAPS row with no times and no leave
-    if (dayType === 'WEEKDAY' && !clockIn && !clockOut && !leaveType) {
-      verificationNote.push('출퇴근 누락')
+    // 1. Missing clock record: weekday CAPS row with no leave
+    //    No clock-in (whether or not clock-out exists) → 출근기록없음
+    //    Clock-in present but no clock-out            → 퇴근기록없음
+    if (dayType === 'WEEKDAY' && !leaveType) {
+      if (!clockIn) verificationNote.push('출근기록없음')
+      else if (!clockOut) verificationNote.push('퇴근기록없음')
     }
 
     // 2. 휴가 중 출근: approved 연차 but clock-in also exists
@@ -524,7 +736,7 @@ export function parseAttendanceData(
       }
     }
 
-    rawRecords.push({
+    const newRecord: RawRecord = {
       employeeId:   compositeKey,   // canonical composite key — matches Employee.id
       date:         normDate,
       dayType,
@@ -534,11 +746,46 @@ export function parseAttendanceData(
       erpOtApplied,
       ...(erpApprovedOtHours > 0 && { erpApprovedOtHours }),
       leaveType,
+      ...(erpLeaveAmount !== undefined && { erpLeaveAmount }),
+      ...(isUnpaidLeave && { isUnpaidLeave }),
       isHolidayWork,
       ...(employeeMap.get(compositeKey)?.isLeader && { isLeader: true }),
       ...(verificationNote.length > 0 && { verificationNote }),
-    })
+    }
+
+    // Rule 3: E26010101 dual-affiliation — merge per date instead of pushing directly
+    if (compositeKey.startsWith(DUAL_AFFIL_PREFIX)) {
+      const stageKey = `${compositeKey}|${normDate}`
+      const prev = dualAffilStage.get(stageKey)
+      if (!prev) {
+        dualAffilStage.set(stageKey, newRecord)
+      } else {
+        const mergedClockIn  = mergeEarliest(prev.clockIn,  newRecord.clockIn)
+        const mergedClockOut = mergeLatest(prev.clockOut, newRecord.clockOut)
+        // Recompute missing-time notes for the merged result
+        const otherNotes = [...new Set([
+          ...(prev.verificationNote    ?? []),
+          ...(newRecord.verificationNote ?? []),
+        ])].filter(n => n !== '출근기록없음' && n !== '퇴근기록없음')
+        if (dayType === 'WEEKDAY' && !leaveType) {
+          if (!mergedClockIn) otherNotes.push('출근기록없음')
+          else if (!mergedClockOut) otherNotes.push('퇴근기록없음')
+        }
+        dualAffilStage.set(stageKey, {
+          ...prev,
+          clockIn:  mergedClockIn,
+          clockOut: mergedClockOut,
+          erpOtApplied: prev.erpOtApplied || newRecord.erpOtApplied,
+          ...(otherNotes.length && { verificationNote: otherNotes }),
+        })
+      }
+    } else {
+      rawRecords.push(newRecord)
+    }
   }
+
+  // Flush merged dual-affiliation records
+  for (const record of dualAffilStage.values()) rawRecords.push(record)
 
   return { employees, rawRecords, skippedCount }
 }

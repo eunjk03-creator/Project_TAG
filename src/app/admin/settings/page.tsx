@@ -84,24 +84,6 @@ const DEFAULT_GROUPS: GroupTemplate[] = [
     capsException: null,
     members: '개발본부, 경영지원본부, 마케팅본부',
   },
-  {
-    id: 'special', name: 'Special Dept', nameKo: '특수 부서 그룹',
-    desc: '용인 QC팀 등 탄력 출근 시각이 적용되는 부서',
-    badgeCls: 'bg-violet-100 text-violet-700',
-    ringCls:  'border-violet-200',
-    coreStart: '10:00', coreEnd: '10:00', baseHours: 8,
-    capsException: null,
-    members: '용인 QC팀',
-  },
-  {
-    id: 'remote', name: 'Remote Work', nameKo: '재택·외근 그룹',
-    desc: 'CAPS 태깅이 면제되는 원격 근무·외근 전담 직원',
-    badgeCls: 'bg-emerald-100 text-emerald-700',
-    ringCls:  'border-emerald-200',
-    coreStart: '09:00', coreEnd: '10:00', baseHours: 8,
-    capsException: true,
-    members: '글로벌사업팀, 필드 영업팀',
-  },
 ]
 
 // ── Toggle switch ─────────────────────────────────────────────────────────
@@ -315,6 +297,24 @@ export default function SettingsPage() {
   const [editingId,   setEditingId]   = useState<string | null>(null)
   const [groupDraft,  setGroupDraft]  = useState<GroupTemplate | null>(null)
 
+  // ── Company holidays ──
+  const [holDate,  setHolDate]  = useState('')
+  const [holLabel, setHolLabel] = useState('')
+
+  function addCompanyHoliday() {
+    if (!holDate) return
+    const label = holLabel.trim() || '전사휴무'
+    const existing = policy.companyHolidays ?? []
+    if (existing.some(h => h.date === holDate)) return   // no duplicates
+    const sorted = [...existing, { date: holDate, label }].sort((a, b) => a.date.localeCompare(b.date))
+    setPolicy({ ...policy, companyHolidays: sorted })
+    setHolDate(''); setHolLabel('')
+  }
+
+  function removeCompanyHoliday(date: string) {
+    setPolicy({ ...policy, companyHolidays: (policy.companyHolidays ?? []).filter(h => h.date !== date) })
+  }
+
   const isDirty      = JSON.stringify(policyDraft) !== JSON.stringify(policy)
   const activePolicy = POLICY_CATS.find(c => c.id === activeId)
 
@@ -386,6 +386,7 @@ export default function SettingsPage() {
             { id: 'groups',     label: '그룹 템플릿' },
             { id: 'exceptions', label: '예외 규칙'   },
             { id: 'leave',      label: '연차 조정'   },
+            { id: 'holidays',   label: '전사휴무'    },
             { id: 'slack',      label: '슬랙 연동'   },
           ].map(item => (
             <button
@@ -460,6 +461,84 @@ export default function SettingsPage() {
 
           {/* ─── Tab: Slack Integration ─── */}
           {activeId === 'slack' && <SlackIntegrationTab />}
+
+          {/* ─── Tab: Company Holidays (전사휴무) ─── */}
+          {activeId === 'holidays' && (
+            <div className="max-w-lg">
+              <div className="mb-5">
+                <h2 className="text-base font-semibold text-gray-800">전사휴무 관리</h2>
+                <p className="text-xs text-gray-400 mt-1">
+                  매월 전사휴무일을 등록하면 캘린더 그리드에 별도 색상(청록)으로 표시되고,
+                  해당일 출근 시 자동으로 <strong className="text-gray-600">휴일근무</strong>로 처리됩니다.
+                </p>
+              </div>
+
+              {/* Add form */}
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-5">
+                <p className="text-xs font-semibold text-gray-500 mb-3">휴무일 추가</p>
+                <div className="flex gap-2 items-end">
+                  <div className="flex-1">
+                    <label className="block text-[11px] text-gray-400 mb-1">날짜</label>
+                    <input
+                      type="date"
+                      value={holDate}
+                      onChange={e => setHolDate(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-[11px] text-gray-400 mb-1">레이블 (선택)</label>
+                    <input
+                      type="text"
+                      placeholder="예: 5월 전사휴무"
+                      value={holLabel}
+                      onChange={e => setHolLabel(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && addCompanyHoliday()}
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+                  <button
+                    onClick={addCompanyHoliday}
+                    disabled={!holDate}
+                    className="px-4 py-2 text-sm font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    추가
+                  </button>
+                </div>
+              </div>
+
+              {/* Holiday list */}
+              {(policy.companyHolidays ?? []).length === 0 ? (
+                <div className="text-center py-10 text-sm text-gray-300">
+                  등록된 전사휴무일이 없습니다.
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {(policy.companyHolidays ?? []).map(h => {
+                    const d = new Date(h.date + 'T12:00')
+                    const DOW = ['일', '월', '화', '수', '목', '금', '토']
+                    const dayStr = `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 (${DOW[d.getDay()]})`
+                    return (
+                      <li key={h.date}
+                        className="flex items-center justify-between bg-white border border-teal-100 rounded-lg px-4 py-3 shadow-sm"
+                      >
+                        <div>
+                          <span className="text-sm font-semibold text-teal-700">{h.label}</span>
+                          <span className="ml-2 text-xs text-gray-400 tabular-nums">{dayStr}</span>
+                        </div>
+                        <button
+                          onClick={() => removeCompanyHoliday(h.date)}
+                          className="text-xs text-red-400 hover:text-red-600 transition-colors font-medium"
+                        >
+                          삭제
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
 
           {/* ─── Policy category fields ─── */}
           {activePolicy && (

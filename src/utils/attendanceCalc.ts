@@ -1,0 +1,327 @@
+/**
+ * Canonical attendance calculation — 4-step time math (Steps 1-4)
+ * + Step 3 anomaly threshold engine (computeStatusN).
+ *
+ * Single source of truth for both the UI table and Excel export.
+ * All hour values are decimal (e.g. 8h 30m = 8.5).
+ */
+import type { DayType, ErpLeaveType } from '@/types/tag'
+
+/** Parse "HH:MM" or "+HH:MM" (next-day punch) → total minutes from midnight. */
+export function parseTimeToMins(t: string): number {
+  const isNext = t.startsWith('+')
+  const clean  = isNext ? t.slice(1) : t
+  const [h, m] = clean.split(':').map(Number)
+  return (isNext ? 1440 : 0) + h * 60 + m
+}
+
+/**
+ * Step 1 — 근무A (Stay Duration).
+ * Returns 0 when clockIn or clockOut is null/empty (missing punch).
+ */
+export function computeWorkA(
+  clockIn:  string | null | undefined,
+  clockOut: string | null | undefined,
+): number {
+  if (!clockIn || !clockOut) return 0
+  return Math.max(0, parseTimeToMins(clockOut) - parseTimeToMins(clockIn)) / 60
+}
+
+/**
+ * Step 2 — 근무B (Gross Hours).
+ * leaveAmt is the fractional leave days from ERP (e.g. 0.5, 1.0).
+ * isUnpaid comes from r.isUnpaidLeave, which is set when the raw ERP
+ * 근태코드 contains "(무급)" (e.g. "병가(무급)", "난임휴가(무급)").
+ * When isUnpaid is true the multiplier is 0 — unpaid leave contributes no hours.
+ */
+export function computeWorkB(workA: number, leaveAmt: number, isUnpaid: boolean): number {
+  const leaveAdd = isUnpaid ? 0 : leaveAmt * 8
+  return workA + leaveAdd
+}
+
+/**
+ * Step 3 — 휴게 (Break Time) bracket rule, applied to 근무B.
+ *   근무B < 4h     → 0h
+ *   4h ≤ 근무B < 8.5h → 0.5h
+ *   8.5h ≤ 근무B < 12h → 1.0h
+ *   근무B ≥ 12h    → 2.0h
+ */
+export function computeBreakH(workB: number): number {
+  if (workB < 4)   return 0
+  if (workB < 8.5) return 0.5
+  if (workB < 12)  return 1.0
+  return 2.0
+}
+
+/**
+ * Step 4 — 최종근무(값).
+ * MAX(근무B − 휴게, 0) — never negative.
+ */
+export function computeFinalWork(workB: number, breakH: number): number {
+  return Math.max(0, workB - breakH)
+}
+
+// ── Step 3: Anomaly Threshold Engine ─────────────────────────────────────
+//
+// Computes Column N (근태 상태) directly from raw record fields.
+// Returns one of 8 restricted values, or null for non-working days.
+//
+// '외근' and '휴일근무' are NOT returned here — they are injected by the
+// Step 4 Slack/holiday override layer in the callers.
+
+export type DisplayStatus =
+  | '정상' | '지각' | '조기퇴근' | '지각+조기퇴근'
+  | '미태깅' | '이상치' | '외근' | '휴일근무'
+
+/**
+ * Employee rawIds whose standard start time is 10:00.
+ * These IDs are checked against emp.rawId (not the composite employeeId).
+ */
+export const LATE_10AM_IDS = new Set([
+  'E25081103', 'E25120104', 'E26010511',
+  'E25021702', 'E25011501', 'E22121901', 'E25110301',
+])
+
+/**
+ * Lateness and early-departure thresholds by leave type.
+ *
+ * Late threshold (clock-in must be ≤ this time):
+ *   오전반반차  → 11:00   오전반차  → 14:00
+ *   10AM group  → 10:00   default   → 09:00
+ *   (leave-type rules take priority over the employee exception list)
+ *
+ * Early-departure threshold (duration-based, except 오후반차):
+ *   오전반차    → workA ≥ 4.0h   오전반반차 → workA ≥ 7.0h
+ *   오후반반차  → workA ≥ 7.0h   오후반차   → clockOut ≥ 12:30 (time-based)
+ *   default     → workA ≥ 9.0h
+ *
+ * Severity: > 30 min short → 이상치; ≤ 30 min → 조기퇴근.
+ * Catch-all: finalWorkH < 8.0 with NO leave and NO explicit flags → 이상치.
+ *
+ * @param finalWorkH  Pre-computed value from computeFinalWork() (Step 2).
+ * @param rawId       Employee raw ID (emp.rawId) for the 10AM group check.
+ */
+export function computeStatusN(p: {
+  dayType:        DayType
+  clockIn:        string | null | undefined
+  clockOut:       string | null | undefined
+  leaveType:      ErpLeaveType | null | undefined
+  erpLeaveAmount: number | undefined
+  finalWorkH:     number
+  rawId:          string
+}): Exclude<DisplayStatus, '외근' | '휴일근무'> | null {
+  const { dayType, clockIn, clockOut, leaveType, erpLeaveAmount, finalWorkH, rawId } = p
+
+  // Non-working days: caller handles 주말/공휴일/휴일근무 display
+  if (dayType !== 'WEEKDAY') return null
+
+  const leaveAmt = erpLeaveAmount ?? 0
+
+  // Full-day leave (including 무급) → 정상, skip all attendance checks
+  if (leaveAmt >= 1.0) return '정상'
+
+  // ── 1. Missing punch ────────────────────────────────────────────────────
+  if (!clockIn || !clockOut) return '미태깅'
+
+  // ── 2. Lateness threshold ────────────────────────────────────────────────
+  // Leave-type-based rules take priority over the employee exception list
+  const lateThreshold: string =
+    leaveType === '오전반차'   ? '14:00' :
+    leaveType === '오전반반차' ? '11:00' :
+    LATE_10AM_IDS.has(rawId)  ? '10:00' :
+    '09:00'
+
+  const isLate = parseTimeToMins(clockIn) > parseTimeToMins(lateThreshold)
+
+  // ── 3. Early-departure threshold ─────────────────────────────────────────
+  let isEarly      = false
+  let earlyMinutes = 0
+
+  {
+    // Duration-based: required stay hours depend on leave type
+    // 반차 (half-day): 4h30min   반반차 (quarter-day): 6h   default: 9h
+    const requiredH: number =
+      leaveType === '오전반차'   ? 4.5 :
+      leaveType === '오후반차'   ? 4.5 :
+      leaveType === '오전반반차' ? 6.0 :
+      leaveType === '오후반반차' ? 6.0 :
+      9.0
+
+    const workA = computeWorkA(clockIn, clockOut)
+    if (workA < requiredH) {
+      isEarly      = true
+      earlyMinutes = Math.round((requiredH - workA) * 60)
+    }
+  }
+
+  // ── 4. Severity split & catch-all ────────────────────────────────────────
+  const isSevere = isEarly && earlyMinutes > 30
+
+  // Fires only when no other flags are set AND there is no leave credit
+  const isCatchAll = !isLate && !isEarly && leaveAmt === 0 && finalWorkH < 8.0
+
+  // ── 5. Priority resolution ────────────────────────────────────────────────
+  if (isSevere || isCatchAll)  return '이상치'
+  if (isLate   && isEarly)     return '지각+조기퇴근'
+  if (isLate)                  return '지각'
+  if (isEarly)                 return '조기퇴근'
+  return '정상'
+}
+
+// ── Zone 2: Payroll Reference Metrics ────────────────────────────────────
+//
+// Two-track architecture: Zone 1 (columns 1-12) = exact T.A.G. data.
+// Zone 2 (columns 13-16) = payroll reference with meal deduction + 30-min floor.
+
+export interface PayrollMetrics {
+  /** Col 13 — exact system OT: max(0, finalWorkH − 8.0), no truncation */
+  systemOtH:     number
+  /** Col 14 — payroll OT: elapsed-threshold with 30-min floor truncation */
+  payrollOtH:    number
+  /** Col 15 — payroll night hours after 22:00 with 30-min floor truncation */
+  payrollNightH: number
+}
+
+/**
+ * Computes Zone 2 payroll-reference metrics from a ProcessedRecord's fields.
+ *
+ * Col 14 thresholds (elapsed = clockOut − effectiveClockIn):
+ *   반반차  → 8 h  (6 h work + 1 h lunch + 1 h dinner)
+ *   반차    → 5 h  (4 h work + 1 h break)
+ *   default → 10 h (8 h work + 1 h lunch + 1 h dinner)
+ *
+ * 30-min floor: Math.floor(value / 0.5) * 0.5
+ */
+export function computePayrollMetrics(p: {
+  effectiveClockIn: string | null | undefined
+  clockOut:         string | null | undefined
+  leaveType:        ErpLeaveType | null | undefined
+  finalWorkH:       number
+  nightHours:       number
+}): PayrollMetrics {
+  const { effectiveClockIn, clockOut, leaveType, finalWorkH, nightHours } = p
+
+  const systemOtH = Math.max(0, finalWorkH - 8.0)
+
+  let payrollOtH = 0
+  if (effectiveClockIn && clockOut) {
+    const elapsed = computeWorkA(effectiveClockIn, clockOut)
+    const threshold: number =
+      (leaveType === '오전반반차' || leaveType === '오후반반차') ? 8.0 :
+      (leaveType === '오전반차'   || leaveType === '오후반차')   ? 5.0 :
+      10.0
+    const rawOT = Math.max(0, elapsed - threshold)
+    payrollOtH = Math.floor(rawOT / 0.5) * 0.5
+  }
+
+  const payrollNightH = Math.floor(nightHours / 0.5) * 0.5
+
+  return { systemOtH, payrollOtH, payrollNightH }
+}
+
+/**
+ * Normalises a raw leave-text string (from an ERP note or Slack message) into one
+ * of the canonical ErpLeaveType values.  Returns null when no leave keyword is found.
+ *
+ * Rule priority (most specific first):
+ *   1. 반반차 (quarter-day) — checked before 반차 so "오전반반차" text is never
+ *      mis-classified by the half-day branch.
+ *   2. 연차 (full-day)
+ *   3. 반차 (half-day) — direction from 오전/오후 keyword, then clock-time fallback.
+ *
+ * Clock-time fallback (only when direction keyword is absent):
+ *   clockOut ≤ 14:00  →  오후반차  (left early → took afternoon off)
+ *   clockIn  ≥ 12:00  →  오전반차  (arrived late → took morning off)
+ *   otherwise         →  오전반차  (safe default)
+ */
+export function normalizeLeaveType(
+  text: string | null | undefined,
+  clockIn?: string | null,
+  clockOut?: string | null,
+): ErpLeaveType | null {
+  if (!text) return null
+  const t = text.trim()
+
+  if (t.includes('반반차')) {
+    if (t.includes('오전')) return '오전반반차'
+    if (t.includes('오후')) return '오후반반차'
+    return '오전반반차'
+  }
+
+  if (t.includes('연차')) return '연차'
+
+  if (t.includes('반차')) {
+    if (t.includes('오전')) return '오전반차'
+    if (t.includes('오후')) return '오후반차'
+    if (clockOut && parseTimeToMins(clockOut) <= parseTimeToMins('14:00')) return '오후반차'
+    if (clockIn  && parseTimeToMins(clockIn)  >= parseTimeToMins('12:00')) return '오전반차'
+    return '오전반차'
+  }
+
+  return null
+}
+
+// ── GAS pipeline utilities (leave-last model) ────────────────────────────
+// Break is computed on raw Work-A before leave credit, matching the GAS
+// leave-last formula used in Col 10 (근로A) and Col 12 (근로B).
+
+const GAS_LUNCH_START = 750  // 12:30
+const GAS_LUNCH_END   = 810  // 13:30
+
+/**
+ * Engine B display break (집계·엑셀 출력용).
+ * Always returns one of {0, 30, 60, 120} minutes.
+ *
+ * Bracket (근무A 구간):
+ *   < 4h  → 0분
+ *   4–8h  → 30분  (특이사항: 오전반차+출근<12:30 또는 오후반차+퇴근>13:30 → 60분)
+ *   8–12h → 60분
+ *   ≥12h  → 120분
+ */
+export function computeDisplayBreakMins(
+  workAMins:    number | null,
+  clockInMins:  number | null,
+  clockOutMins: number | null,
+  leaveType?:   string | null,
+): number {
+  if (!workAMins || workAMins <= 0) return 0
+  if (workAMins >= 720) return 120          // 12h 이상
+  if (workAMins >= 480) return 60           // 8h 이상 ~ 12h 미만
+  if (workAMins >= 240) {                   // 4h 이상 ~ 8h 미만 → 기본 30분
+    // 오전반차/오전반반차: 출근 < 12:30 → 점심 전 출근이므로 60분
+    if ((leaveType === '오전반차' || leaveType === '오전반반차') &&
+        clockInMins !== null && clockInMins < GAS_LUNCH_START) return 60
+    // 오후반차/오후반반차: 퇴근 > 13:30 → 점심 지나서까지 근무이므로 60분
+    if ((leaveType === '오후반차' || leaveType === '오후반반차') &&
+        clockOutMins !== null && clockOutMins > GAS_LUNCH_END) return 60
+    return 30
+  }
+  return 0                                  // 4h 미만
+}
+
+export function computeGasOtThreshMins(leaveDays: number): number {
+  if (leaveDays >= 0.5) return 300   // 반차: 5h (엑셀 기준)
+  if (leaveDays >= 0.25) return 480  // 반반차: 8h
+  return 600                          // 기본: 10h
+}
+
+export function computeGasNightMins(clockOut: string | null | undefined): number {
+  if (!clockOut) return 0
+  const outMins = parseTimeToMins(clockOut)
+  if (outMins <= 1320) return 0
+  return Math.floor((outMins - 1320) / 30) * 30
+}
+
+// Returns payroll-eligible OT minutes (Col 16) using the GAS leave-last formula.
+// OOO rows are forced to 0 regardless of workAMins.
+// Allowance: leaveDays>=0.5 → 300 min, >=0.25 → 480 min, else → 600 min.
+// Result is floored to the nearest 30-min unit.
+export function computeGasPayOtMins(
+  workAMins:  number,
+  leaveDays:  number,
+  status:     string | null | undefined,
+): number {
+  if (status?.includes('외근')) return 0
+  const allowance = leaveDays >= 0.5 ? 300 : leaveDays >= 0.25 ? 480 : 600
+  return Math.max(0, Math.floor((workAMins - allowance) / 30) * 30)
+}

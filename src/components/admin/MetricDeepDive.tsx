@@ -3,6 +3,9 @@ import { useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
 import type { DivisionMetrics } from '@/hooks/useManagementMetrics'
 import { SectionComparisonChart } from './SectionComparisonChart'
+import {
+  computeWorkA, computeWorkB, computeBreakH, computeFinalWork, computeStatusN,
+} from '@/utils/attendanceCalc'
 
 export type Section = 'total' | 'overtime' | 'anomaly'
 
@@ -65,21 +68,44 @@ export function MetricDeepDive({
       if (ot > riskThresholds.otRedH) otOverCount[div] = (otOverCount[div] ?? 0) + 1
     }
 
-    const missedTag: Record<string, number> = {}
-    const lateCount: Record<string, number> = {}
+    const empRawId: Record<string, string> = {}
+    for (const e of employees) empRawId[e.id] = e.rawId ?? e.id.split('_')[0]
+
+    const missedTag:   Record<string, number> = {}
+    const lateCount:   Record<string, number> = {}
+    const earlyCount:  Record<string, number> = {}  // 조기퇴근 + 지각+조기퇴근
+    const severeCount: Record<string, number> = {}  // 이상치(근태이상)
     for (const r of processedRecords) {
-      if (!r.flag || approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
+      if (approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
       const div = empDiv[r.employeeId]
       if (!div) continue
-      if (r.flag === 'NO_CLOCK_OUT') missedTag[div] = (missedTag[div] ?? 0) + 1
-      if (r.flag === 'LATE')         lateCount[div] = (lateCount[div] ?? 0) + 1
+      const rawId      = empRawId[r.employeeId] ?? r.employeeId.split('_')[0]
+      const leaveAmt   = r.erpLeaveAmount ?? 0
+      const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
+      const workB      = computeWorkB(workA, leaveAmt, r.isUnpaidLeave ?? false)
+      const breakH_    = computeBreakH(workB)
+      const finalWorkH = computeFinalWork(workB, breakH_)
+      const ds: string | null =
+        r.finalStatus === '외근'     ? '외근'     :
+        r.finalStatus === '휴일근무' ? '휴일근무' :
+        computeStatusN({
+          dayType: r.dayType, clockIn: r.clockIn, clockOut: r.clockOut,
+          leaveType: r.leaveType ?? null, erpLeaveAmount: r.erpLeaveAmount,
+          finalWorkH, rawId,
+        })
+      if (ds === '미태깅')                             missedTag[div]   = (missedTag[div]   ?? 0) + 1
+      if (ds === '지각')                               lateCount[div]   = (lateCount[div]   ?? 0) + 1
+      if (ds === '조기퇴근' || ds === '지각+조기퇴근') earlyCount[div]  = (earlyCount[div]  ?? 0) + 1
+      if (ds === '이상치')                             severeCount[div] = (severeCount[div] ?? 0) + 1
     }
 
     return {
-      highestTotal, otOverCount, missedTag, lateCount,
-      totalOtOver: Object.values(otOverCount).reduce((s, v) => s + v, 0),
-      totalMissed: Object.values(missedTag).reduce((s, v) => s + v, 0),
-      totalLate:   Object.values(lateCount).reduce((s, v) => s + v, 0),
+      highestTotal, otOverCount, missedTag, lateCount, earlyCount, severeCount,
+      totalOtOver:  Object.values(otOverCount).reduce((s, v) => s + v, 0),
+      totalMissed:  Object.values(missedTag).reduce((s, v) => s + v, 0),
+      totalLate:    Object.values(lateCount).reduce((s, v) => s + v, 0),
+      totalEarly:   Object.values(earlyCount).reduce((s, v) => s + v, 0),
+      totalSevere:  Object.values(severeCount).reduce((s, v) => s + v, 0),
     }
   }, [processedRecords, employees, approvedKeys, riskThresholds.otRedH])
 
@@ -312,7 +338,7 @@ export function MetricDeepDive({
               이상치
             </span>
             <span className="text-xs text-gray-400 tabular-nums">
-              {total.anomalies}건 · 미태깅 {derived.totalMissed} · 지각 {derived.totalLate}
+              {total.anomalies}건 · 미태깅 {derived.totalMissed} · 지각 {derived.totalLate} · 조기퇴근 {derived.totalEarly} · 근태이상 {derived.totalSevere}
             </span>
             <ChevronDown open={isOpenAnomaly} />
           </button>
@@ -325,17 +351,21 @@ export function MetricDeepDive({
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500">
                     <th className="text-left   px-4 py-2.5">본부명</th>
-                    <th className="text-center px-4 py-2.5">인원</th>
-                    <th className="text-center px-4 py-2.5">총 이상치</th>
-                    <th className="text-center px-4 py-2.5">퇴근 미태깅</th>
-                    <th className="text-center px-4 py-2.5">지각</th>
+                    <th className="text-center px-3 py-2.5">인원</th>
+                    <th className="text-center px-3 py-2.5">합계</th>
+                    <th className="text-center px-3 py-2.5">미태깅</th>
+                    <th className="text-center px-3 py-2.5">지각</th>
+                    <th className="text-center px-3 py-2.5">조기퇴근</th>
+                    <th className="text-center px-3 py-2.5">근태이상</th>
                   </tr>
                 </thead>
                 <tbody>
                   {metrics.map((m, i) => {
-                    const active = selectedBUs.includes(m.division)
-                    const missed = derived.missedTag[m.division] ?? 0
-                    const late   = derived.lateCount[m.division] ?? 0
+                    const active  = selectedBUs.includes(m.division)
+                    const missed  = derived.missedTag[m.division]   ?? 0
+                    const late    = derived.lateCount[m.division]   ?? 0
+                    const early   = derived.earlyCount[m.division]  ?? 0
+                    const severe  = derived.severeCount[m.division] ?? 0
                     return (
                       <tr
                         key={m.division}
@@ -354,20 +384,30 @@ export function MetricDeepDive({
                             <span className={`font-medium ${active ? 'text-red-700' : 'text-gray-800'}`}>{m.division}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-2.5 text-center text-gray-600 tabular-nums">{m.headcount}명</td>
-                        <td className="px-4 py-2.5 text-center tabular-nums">
+                        <td className="px-3 py-2.5 text-center text-gray-600 tabular-nums">{m.headcount}명</td>
+                        <td className="px-3 py-2.5 text-center tabular-nums">
                           {m.anomalies > 0
                             ? <span className="text-red-600 font-bold">{m.anomalies}건</span>
                             : <span className="text-gray-300">—</span>}
                         </td>
-                        <td className="px-4 py-2.5 text-center tabular-nums">
+                        <td className="px-3 py-2.5 text-center tabular-nums">
                           {missed > 0
                             ? <span className="text-red-500 font-semibold">{missed}건</span>
                             : <span className="text-gray-300">—</span>}
                         </td>
-                        <td className="px-4 py-2.5 text-center tabular-nums">
+                        <td className="px-3 py-2.5 text-center tabular-nums">
                           {late > 0
                             ? <span className="text-amber-600 font-semibold">{late}건</span>
+                            : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-3 py-2.5 text-center tabular-nums">
+                          {early > 0
+                            ? <span className="text-orange-500 font-semibold">{early}건</span>
+                            : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-3 py-2.5 text-center tabular-nums">
+                          {severe > 0
+                            ? <span className="text-red-700 font-semibold">{severe}건</span>
                             : <span className="text-gray-300">—</span>}
                         </td>
                       </tr>
@@ -375,20 +415,30 @@ export function MetricDeepDive({
                   })}
                   <tr className="bg-gray-100 border-t-2 border-gray-300 font-semibold text-[12px]">
                     <td className="px-4 py-2.5 text-gray-700">전체</td>
-                    <td className="px-4 py-2.5 text-center text-gray-700 tabular-nums">{total.headcount}명</td>
-                    <td className="px-4 py-2.5 text-center tabular-nums">
+                    <td className="px-3 py-2.5 text-center text-gray-700 tabular-nums">{total.headcount}명</td>
+                    <td className="px-3 py-2.5 text-center tabular-nums">
                       {total.anomalies > 0
                         ? <span className="text-red-600">{total.anomalies}건</span>
                         : <span className="text-gray-300">—</span>}
                     </td>
-                    <td className="px-4 py-2.5 text-center tabular-nums">
+                    <td className="px-3 py-2.5 text-center tabular-nums">
                       {derived.totalMissed > 0
                         ? <span className="text-red-500">{derived.totalMissed}건</span>
                         : <span className="text-gray-300">—</span>}
                     </td>
-                    <td className="px-4 py-2.5 text-center tabular-nums">
+                    <td className="px-3 py-2.5 text-center tabular-nums">
                       {derived.totalLate > 0
                         ? <span className="text-amber-600">{derived.totalLate}건</span>
+                        : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-center tabular-nums">
+                      {derived.totalEarly > 0
+                        ? <span className="text-orange-500">{derived.totalEarly}건</span>
+                        : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-center tabular-nums">
+                      {derived.totalSevere > 0
+                        ? <span className="text-red-700">{derived.totalSevere}건</span>
                         : <span className="text-gray-300">—</span>}
                     </td>
                   </tr>
@@ -406,6 +456,8 @@ export function MetricDeepDive({
                   otOverCount={derived.otOverCount}
                   missedTag={derived.missedTag}
                   lateCount={derived.lateCount}
+                  earlyCount={derived.earlyCount}
+                  severeCount={derived.severeCount}
                 />
               </div>
             )}

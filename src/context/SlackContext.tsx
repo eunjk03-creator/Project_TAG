@@ -11,36 +11,59 @@ import type { SlackException } from '@/utils/slackApi'
 import { fetchSlackMessages, parseSlackExceptions } from '@/utils/slackApi'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 
+// ── Types ─────────────────────────────────────────────────────────────────
+
 export interface SlackConfig {
   token:     string
   channelId: string
-  year:      number
-  month:     number
+  startDate: string  // YYYY-MM-DD  (message fetch window start)
+  endDate:   string  // YYYY-MM-DD  (message fetch window end)
+}
+
+export interface SyncedRange {
+  start: string   // YYYY-MM-DD
+  end:   string   // YYYY-MM-DD
 }
 
 interface SlackContextValue {
   config:          SlackConfig
   setConfig:       (c: SlackConfig) => void
   exceptions:      SlackException[]
-  slackNoteMap:    Map<string, string>
+  slackNoteMap:    Map<string, { note: string; rawText: string }[]>
   isLoading:       boolean
-  lastSynced:      string | null
+  lastSynced:      string | null       // human-readable timestamp
+  syncedRange:     SyncedRange | null  // machine-readable range that was last synced
   error:           string | null
   fetchAndParse:   () => Promise<void>
   clearExceptions: () => void
 }
 
-const _now = new Date()
+// ── Defaults ──────────────────────────────────────────────────────────────
+
+function localDateStr(d: Date): string {
+  return (
+    d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0')
+  )
+}
+
+const _now   = new Date()
+const _prevM = new Date(_now.getFullYear(), _now.getMonth() - 1, 1)
+
 const DEFAULT_CONFIG: SlackConfig = {
   token:     '',
   channelId: '',
-  year:      _now.getFullYear(),
-  month:     _now.getMonth() + 1,
+  startDate: localDateStr(_prevM),
+  endDate:   localDateStr(_now),
 }
 
-const LS_CONFIG     = 'tag_slack_config'
-const LS_EXCEPTIONS = 'tag_slack_exceptions'
-const LS_LAST_SYNC  = 'tag_slack_last_sync'
+// ── LocalStorage keys ─────────────────────────────────────────────────────
+
+const LS_CONFIG      = 'tag_slack_config'
+const LS_EXCEPTIONS  = 'tag_slack_exceptions'
+const LS_LAST_SYNC   = 'tag_slack_last_sync'
+const LS_SYNCED_RANGE = 'tag_slack_synced_range'
 
 function loadLS<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback
@@ -50,20 +73,32 @@ function loadLS<T>(key: string, fallback: T): T {
   } catch { return fallback }
 }
 
+// ── Context ───────────────────────────────────────────────────────────────
+
 const SlackContext = createContext<SlackContextValue | null>(null)
 
 export function SlackProvider({ children }: { children: ReactNode }) {
   const { employees } = useAttendanceSource()
 
-  const [config,     setConfigState] = useState<SlackConfig>(
-    () => loadLS<SlackConfig>(LS_CONFIG, DEFAULT_CONFIG),
+  const [config,      setConfigState] = useState<SlackConfig>(
+    () => {
+      const saved = loadLS<Partial<SlackConfig>>(LS_CONFIG, {})
+      // Migrate legacy config that has year/month instead of startDate/endDate
+      if ('startDate' in saved && 'endDate' in saved) {
+        return { ...DEFAULT_CONFIG, ...saved } as SlackConfig
+      }
+      return { ...DEFAULT_CONFIG, token: saved.token ?? '', channelId: saved.channelId ?? '' }
+    },
   )
-  const [exceptions, setExceptions]  = useState<SlackException[]>(
+  const [exceptions,  setExceptions]  = useState<SlackException[]>(
     () => loadLS<SlackException[]>(LS_EXCEPTIONS, []),
   )
-  const [isLoading,  setIsLoading]   = useState(false)
-  const [lastSynced, setLastSynced]  = useState<string | null>(
+  const [isLoading,   setIsLoading]   = useState(false)
+  const [lastSynced,  setLastSynced]  = useState<string | null>(
     () => loadLS<string | null>(LS_LAST_SYNC, null),
+  )
+  const [syncedRange, setSyncedRange] = useState<SyncedRange | null>(
+    () => loadLS<SyncedRange | null>(LS_SYNCED_RANGE, null),
   )
   const [error, setError] = useState<string | null>(null)
 
@@ -73,12 +108,16 @@ export function SlackProvider({ children }: { children: ReactNode }) {
   }
 
   const slackNoteMap = useMemo(() => {
-    const map = new Map<string, string>()
+    const map = new Map<string, { note: string; rawText: string }[]>()
     for (const ex of exceptions) {
-      map.set(`${ex.empId}_${ex.date}`, ex.note)
+      const key = `${ex.empId}_${ex.date}`
+      const arr = map.get(key) ?? []
+      arr.push({ note: ex.note, rawText: ex.rawText })
+      map.set(key, arr)
     }
     if (map.size > 0 && process.env.NODE_ENV !== 'production') {
-      const sample = [...map.entries()].slice(0, 3).map(([k, v]) => `${k}→${v}`).join(', ')
+      const sample = [...map.entries()].slice(0, 3)
+        .map(([k, vs]) => `${k}→[${vs.map(v => v.note).join(',')}]`).join(', ')
       console.log(`[TAG Slack] slackNoteMap ${map.size}건 (샘플: ${sample})`)
     }
     return map
@@ -92,24 +131,33 @@ export function SlackProvider({ children }: { children: ReactNode }) {
     setIsLoading(true)
     setError(null)
     try {
-      const startDate = new Date(config.year, config.month - 1, 1)
-      const endDate   = new Date(config.year, config.month,     0, 23, 59, 59)
-      const oldest    = Math.floor(startDate.getTime() / 1000)
-      const latest    = Math.floor(endDate.getTime()   / 1000)
+      // Derive Unix timestamps from the date-string range
+      const oldest = Math.floor(new Date(config.startDate + 'T00:00:00').getTime() / 1000)
+      const latest = Math.floor(new Date(config.endDate   + 'T23:59:59').getTime() / 1000)
 
-      console.log(`[TAG Slack] API 호출: 채널=${config.channelId} 기간=${new Date(oldest*1000).toLocaleDateString('ko-KR')}~${new Date(latest*1000).toLocaleDateString('ko-KR')} 직원수=${employees.length}`)
+      // Use the year from endDate to resolve bare "M/D" date expressions
+      const year = Number(config.endDate.slice(0, 4))
+
+      console.log(
+        `[TAG Slack] API 호출: 채널=${config.channelId}` +
+        ` 기간=${config.startDate}~${config.endDate}` +
+        ` 직원수=${employees.length}`,
+      )
       const messages = await fetchSlackMessages(config.token, config.channelId, oldest, latest)
       console.log(`[TAG Slack] API 응답: ${messages.length}건 메시지 수신 (bot/join 제외)`)
 
-      const parsed = parseSlackExceptions(messages, employees, config.year)
+      const parsed = parseSlackExceptions(messages, employees, year)
 
       setExceptions(parsed)
       localStorage.setItem(LS_EXCEPTIONS, JSON.stringify(parsed))
       console.log(`[TAG Slack] localStorage 저장 완료: ${parsed.length}건 예외 규칙`)
 
-      const ts = new Date().toLocaleString('ko-KR')
+      const ts    = new Date().toLocaleString('ko-KR')
+      const range: SyncedRange = { start: config.startDate, end: config.endDate }
       setLastSynced(ts)
-      localStorage.setItem(LS_LAST_SYNC, JSON.stringify(ts))
+      setSyncedRange(range)
+      localStorage.setItem(LS_LAST_SYNC,    JSON.stringify(ts))
+      localStorage.setItem(LS_SYNCED_RANGE, JSON.stringify(range))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -119,16 +167,18 @@ export function SlackProvider({ children }: { children: ReactNode }) {
 
   function clearExceptions() {
     setExceptions([])
-    localStorage.removeItem(LS_EXCEPTIONS)
     setLastSynced(null)
+    setSyncedRange(null)
+    localStorage.removeItem(LS_EXCEPTIONS)
     localStorage.removeItem(LS_LAST_SYNC)
+    localStorage.removeItem(LS_SYNCED_RANGE)
   }
 
   return (
     <SlackContext.Provider value={{
       config, setConfig,
       exceptions, slackNoteMap,
-      isLoading, lastSynced, error,
+      isLoading, lastSynced, syncedRange, error,
       fetchAndParse, clearExceptions,
     }}>
       {children}

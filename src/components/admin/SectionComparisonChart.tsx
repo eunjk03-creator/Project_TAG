@@ -9,7 +9,7 @@ import type { RiskThresholds } from '@/types/tag'
 
 // ── Palette ────────────────────────────────────────────────────────────────
 
-const BU_PALETTE = ['#3b82f6', '#7c3aed', '#10b981', '#f97316', '#ec4899']
+const BU_PALETTE = ['#3b82f6', '#7c3aed', '#10b981', '#f97316', '#ec4899', '#14b8a6', '#fb7185', '#f59e0b']
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -41,6 +41,8 @@ type Row = {
   anomalies:  number
   missed:     number
   late:       number
+  early:      number
+  severe:     number
 }
 
 // ── Props ──────────────────────────────────────────────────────────────────
@@ -54,6 +56,8 @@ interface Props {
   otOverCount:    DerivedMap
   missedTag:      DerivedMap
   lateCount:      DerivedMap
+  earlyCount?:    DerivedMap
+  severeCount?:   DerivedMap
 }
 
 // ── Custom tooltip helpers ─────────────────────────────────────────────────
@@ -123,13 +127,17 @@ function AnomalyTooltip({ active, payload }: TT) {
   const d    = payload[0].payload as Row
   const rate = d.headcount > 0 ? ((d.anomalies / d.headcount) * 100).toFixed(1) : '0.0'
   return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-lg p-3 text-xs min-w-[175px] z-50">
+    <div className="bg-white border border-gray-200 rounded-xl shadow-lg p-3 text-xs min-w-[185px] z-50">
       <p className="font-bold text-gray-800 mb-2 pb-1.5 border-b border-gray-100">{d.division}</p>
       <div className="space-y-1">
-        <TooltipRow label="총 이상치"    value={`${d.anomalies}건`} cls={d.anomalies > 0 ? 'text-red-600' : 'text-gray-400'} />
-        <TooltipRow label="퇴근 미태깅"  value={`${d.missed}건`}   cls={d.missed > 0 ? 'text-red-500' : 'text-gray-400'} />
-        <TooltipRow label="지각"         value={`${d.late}건`}     cls={d.late > 0 ? 'text-amber-600' : 'text-gray-400'} />
-        <TooltipRow label="이상치율"     value={`${rate}%`} />
+        <TooltipRow label="합계 (이상치)"  value={`${d.anomalies}건`} cls={d.anomalies > 0 ? 'text-red-600 font-bold' : 'text-gray-400'} />
+        <div className="pl-2 space-y-0.5 border-l-2 border-gray-100 mt-1">
+          <TooltipRow label="미태깅"   value={`${d.missed}건`}  cls={d.missed  > 0 ? 'text-red-500'    : 'text-gray-300'} />
+          <TooltipRow label="지각"     value={`${d.late}건`}    cls={d.late    > 0 ? 'text-amber-600'  : 'text-gray-300'} />
+          <TooltipRow label="조기퇴근" value={`${d.early}건`}   cls={d.early   > 0 ? 'text-orange-500' : 'text-gray-300'} />
+          <TooltipRow label="근태이상" value={`${d.severe}건`}  cls={d.severe  > 0 ? 'text-red-700'    : 'text-gray-300'} />
+        </div>
+        <TooltipRow label="이상치율"   value={`${rate}%`} />
       </div>
     </div>
   )
@@ -155,6 +163,7 @@ function BULegend({ rows }: { rows: Row[] }) {
 export function SectionComparisonChart({
   section, metrics, selectedBUs,
   riskThresholds: rt, highestTotal, otOverCount, missedTag, lateCount,
+  earlyCount = {}, severeCount = {},
 }: Props) {
 
   const rows: Row[] = selectedBUs.flatMap((bu, i) => {
@@ -172,8 +181,10 @@ export function SectionComparisonChart({
       totalOt:    m.otHours,
       overCount:  otOverCount[bu] ?? 0,
       anomalies:  m.anomalies,
-      missed:     missedTag[bu] ?? 0,
-      late:       lateCount[bu] ?? 0,
+      missed:     missedTag[bu]  ?? 0,
+      late:       lateCount[bu]  ?? 0,
+      early:      earlyCount[bu]  ?? 0,
+      severe:     severeCount[bu] ?? 0,
     }]
   })
 

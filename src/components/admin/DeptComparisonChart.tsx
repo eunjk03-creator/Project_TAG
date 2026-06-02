@@ -54,6 +54,9 @@ const BU_PALETTE = [
   { barCls: 'bg-emerald-500', dotCls: 'bg-emerald-500', txtCls: 'text-emerald-700' },
   { barCls: 'bg-orange-400',  dotCls: 'bg-orange-400',  txtCls: 'text-orange-700'  },
   { barCls: 'bg-pink-500',    dotCls: 'bg-pink-500',    txtCls: 'text-pink-700'    },
+  { barCls: 'bg-teal-500',    dotCls: 'bg-teal-500',    txtCls: 'text-teal-700'    },
+  { barCls: 'bg-rose-400',    dotCls: 'bg-rose-400',    txtCls: 'text-rose-700'    },
+  { barCls: 'bg-amber-400',   dotCls: 'bg-amber-400',   txtCls: 'text-amber-700'   },
 ]
 
 type Props = {
@@ -65,7 +68,8 @@ type Props = {
 }
 
 export function DeptComparisonChart({ metrics, selectedBUs, expanded, onToggle, onClose }: Props) {
-  const rows = metrics.filter(m => selectedBUs.includes(m.division))
+  const rows    = metrics.filter(m => selectedBUs.includes(m.division))
+  const compact = rows.length > 4   // switch to compact layout for 5+ BUs
   if (rows.length < 2) return null
 
   return (
@@ -128,23 +132,25 @@ export function DeptComparisonChart({ metrics, selectedBUs, expanded, onToggle, 
                 return (
                   <div key={cfg.label}>
                     <p className="text-[11px] font-semibold text-gray-500 mb-2">{cfg.label}</p>
-                    <div className="flex items-end gap-2 h-[72px]">
+                    <div className={`flex items-end h-[72px] ${compact ? 'gap-1' : 'gap-2'}`}>
                       {rows.map((m, bi) => {
                         const raw = cfg.val(m)
                         const pct = (raw / maxVal) * 100
                         const p   = BU_PALETTE[bi % BU_PALETTE.length]
                         return (
-                          <div key={m.division} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-                            <span className={`text-[10px] font-bold tabular-nums px-1 py-0.5 rounded whitespace-nowrap ${cfg.badgeCls}`}>
-                              {cfg.fmt(raw)}
-                            </span>
-                            <div className="w-full flex items-end" style={{ height: 36 }}>
+                          <div key={m.division} className="flex-1 flex flex-col items-center gap-0.5 min-w-0">
+                            {!compact && (
+                              <span className={`text-[10px] font-bold tabular-nums px-1 py-0.5 rounded whitespace-nowrap ${cfg.badgeCls}`}>
+                                {cfg.fmt(raw)}
+                              </span>
+                            )}
+                            <div className="w-full flex items-end" style={{ height: compact ? 44 : 36 }}>
                               <div
                                 className={`w-full rounded-t transition-all duration-500 ${p.barCls}`}
                                 style={{ height: raw > 0 ? `${Math.max(pct, 8)}%` : '0%' }}
                               />
                             </div>
-                            <span className={`text-[9px] font-semibold truncate w-full text-center leading-tight ${p.txtCls}`}>
+                            <span className={`font-semibold truncate w-full text-center leading-tight ${compact ? 'text-[8px]' : 'text-[9px]'} ${p.txtCls}`}>
                               {m.division.replace(/본부$/, '')}
                             </span>
                           </div>
