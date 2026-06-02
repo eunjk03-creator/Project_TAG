@@ -447,7 +447,7 @@ export function AttendanceResultTable({
       if (r.finalStatus === '외근') normalTags.push('외근')
       if (r.finalStatus === '휴일근무') normalTags.push('휴일근로')
       if (r.overtimeHours > 0) normalTags.push('연장근로')
-      if (normalTags.length === 0 && r.finalStatus === '정상' && r.dayType === 'WEEKDAY') normalTags.push('일반')
+      if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
       // Zone 2 — GAS formula payroll metrics (leave-last, 30-min floor)
       const systemOtH      = Math.max(0, finalWorkH - 8.0)
       const gasPayOtMins   = computeGasPayOtMins(gasWorkAMins, leaveAmt, displayStatus)

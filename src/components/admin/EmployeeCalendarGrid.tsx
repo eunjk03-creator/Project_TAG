@@ -891,7 +891,7 @@ const empStats = useMemo(() => {
                                              tags.push({ cls: TAG.anomaly,   text: '근무시간 미달' })
                       if ((rec?.overtimeHours ?? 0) > 0 && !flag)
                                              tags.push({ cls: TAG.ot,        text: '연장근로'    })
-                      if (tags.length === 0 && fs === '정상' && rec?.dayType === 'WEEKDAY')
+                      if (tags.length === 0 && !flag && rec?.clockIn !== null && rec?.dayType === 'WEEKDAY')
                                              tags.push({ cls: TAG.normal,    text: '일반'        })
 
                       return (
