@@ -484,17 +484,15 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                 )}
               </SourceBlock>
 
+              {/* ── ERP 연차·휴가 정보 ── */}
               <SourceBlock
                 icon="📋"
-                label="ERP (인사시스템)"
-                statusDot={erpStatus}
+                label="ERP 연차·휴가"
+                statusDot="ok"
                 editButton={
                   <button
                     onClick={() => {
-                      if (isEditingErp) {
-                        setErpOtEdit(record.erpOtApplied ? '신청됨' : record.overtimeHours > 0 ? '미신청' : '해당없음')
-                        setErpLeaveEdit(initialErpLeaveType ?? '없음')
-                      }
+                      if (isEditingErp) setErpLeaveEdit(initialErpLeaveType ?? '없음')
                       setIsEditingErp(p => !p)
                     }}
                     className="text-[11px] font-medium text-blue-500 hover:text-blue-700 transition-colors"
@@ -504,26 +502,6 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                 }
               >
                 <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-500 w-20 shrink-0">연장근무 신청</span>
-                    {isEditingErp ? (
-                      <select
-                        value={erpOtEdit}
-                        onChange={e => setErpOtEdit(e.target.value)}
-                        className="text-xs border border-blue-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                      >
-                        <option value="신청됨">✓ 신청됨</option>
-                        <option value="미신청">✗ 미신청</option>
-                        <option value="해당없음">해당없음</option>
-                      </select>
-                    ) : (
-                      record.erpOtApplied
-                        ? <span className="text-emerald-600 font-semibold">✓ 신청됨</span>
-                        : record.overtimeHours > 0
-                        ? <span className="text-red-500 font-semibold">✗ 미신청</span>
-                        : <span className="text-gray-400">해당없음</span>
-                    )}
-                  </div>
                   <div className="flex items-center gap-2">
                     <span className="text-gray-500 w-20 shrink-0">연차 / 반차</span>
                     {isEditingErp ? (
@@ -546,15 +524,34 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                         ? (
                           <span className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-blue-700 font-semibold">{formatErpLeave(erpLeaveEdit, record.erpLeaveAmount)}</span>
-                            {record.rawLeaveCode && record.rawLeaveCode !== erpLeaveEdit && (
+                            {record.rawLeaveCode && (
                               <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
-                                ERP코드: {record.rawLeaveCode}
+                                {record.rawLeaveCode}
                               </span>
                             )}
                           </span>
                         )
                         : <span className="text-gray-400">없음</span>
                     )}
+                  </div>
+                </div>
+              </SourceBlock>
+
+              {/* ── ERP 연장근무 신청 ── */}
+              <SourceBlock
+                icon="⏱️"
+                label="ERP 연장근무 신청"
+                statusDot={erpStatus}
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 w-20 shrink-0">신청 여부</span>
+                    {record.erpOtApplied
+                      ? <span className="text-emerald-600 font-semibold">✓ 신청됨</span>
+                      : record.overtimeHours > 0
+                      ? <span className="text-red-500 font-semibold">✗ 미신청</span>
+                      : <span className="text-gray-400">해당없음</span>
+                    }
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-gray-500 w-20 shrink-0">표준 퇴근</span>
@@ -610,6 +607,81 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                   <span className="text-gray-400 text-xs">연동된 슬랙 메시지가 없습니다.</span>
                 )}
               </SourceBlock>
+            </div>
+          </section>
+
+          {/* 상태 계산 과정 */}
+          <section>
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">상태 계산 과정</p>
+            <div className="bg-gray-50 rounded-xl px-4 py-3 space-y-2 text-xs">
+              {/* ERP 연차 */}
+              {record.leaveType && (
+                <div className="flex items-start gap-2">
+                  <span className="text-gray-400 shrink-0 w-5">①</span>
+                  <span>
+                    <span className="font-medium text-blue-700">ERP 연차</span>
+                    {' '}인식 →{' '}
+                    <span className="font-semibold">{record.rawLeaveCode ?? record.leaveType}</span>
+                    {record.erpLeaveAmount ? ` (${record.erpLeaveAmount}일)` : ''}
+                  </span>
+                </div>
+              )}
+              {/* CAPS 체류 */}
+              {(record.clockIn || record.clockOut) && (
+                <div className="flex items-start gap-2">
+                  <span className="text-gray-400 shrink-0 w-5">{record.leaveType ? '②' : '①'}</span>
+                  <span>
+                    <span className="font-medium text-gray-700">출입태그</span>
+                    {' '}{record.clockIn ?? '미태깅'} ~ {record.clockOut ?? '미태깅'}
+                  </span>
+                </div>
+              )}
+              {/* 이상치 플래그 */}
+              {record.flag && (
+                <div className="flex items-start gap-2">
+                  <span className="text-gray-400 shrink-0 w-5">⚠</span>
+                  <span className="text-red-600 font-medium">
+                    이상 감지: {
+                      record.flag === 'LATE' ? '지각' :
+                      record.flag === 'NO_CLOCK_IN' ? '출근 미태깅' :
+                      record.flag === 'NO_CLOCK_OUT' ? '퇴근 미태깅' :
+                      record.flag === 'EARLY_DEPARTURE' ? '조기퇴근 (30분 이내)' :
+                      record.flag === 'ATTENDANCE_ANOMALY' ? '근무시간 미달 (30분 초과)' :
+                      record.flag === 'LATE_AND_EARLY_DEPARTURE' ? '지각 + 조기퇴근' :
+                      record.flag === 'LATE_AND_ANOMALY' ? '지각 + 근무시간 미달' :
+                      record.flag
+                    }
+                  </span>
+                </div>
+              )}
+              {/* Slack */}
+              {slackEntriesForDay.length > 0 && (
+                <div className="flex items-start gap-2">
+                  <span className="text-gray-400 shrink-0 w-5">💬</span>
+                  <span>
+                    <span className="font-medium text-violet-700">Slack</span>
+                    {' '}→ {slackEntriesForDay.map(e => e.note).join(', ')}
+                  </span>
+                </div>
+              )}
+              {/* verificationNote */}
+              {(record.verificationNote ?? []).filter(n => !n.startsWith('✅')).map((n, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className="text-gray-400 shrink-0 w-5">→</span>
+                  <span className="text-gray-600">{n}</span>
+                </div>
+              ))}
+              {/* 최종 상태 */}
+              <div className="flex items-start gap-2 pt-1 border-t border-gray-200">
+                <span className="text-gray-400 shrink-0 w-5">✓</span>
+                <span>
+                  <span className="font-medium text-gray-700">최종 판정</span>
+                  {' → '}
+                  <span className={`font-bold ${
+                    record.flag ? 'text-red-600' : 'text-emerald-600'
+                  }`}>{record.finalStatus}</span>
+                </span>
+              </div>
             </div>
           </section>
 
