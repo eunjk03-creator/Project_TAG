@@ -9,22 +9,22 @@ import { usePolicy } from '@/context/PolicyContext'
 // ── Context interface ─────────────────────────────────────────────────────
 
 interface AttendanceSourceContextValue {
-  employees:     Employee[]
-  rawRecords:    RawRecord[]
-  isLiveData:    boolean
-  /** True while initial DB fetch is in flight */
-  isLoading:     boolean
-  /** ISO string of last upload, or null if no data in DB */
+  employees:      Employee[]
+  rawRecords:     RawRecord[]
+  isLiveData:     boolean
+  isLoading:      boolean
   lastUploadedAt: string | null
-  /**
-   * Admin upload: parses CSV arrays, saves raw data to DB, updates state.
-   * Returns ParseResult so the caller can show a status summary.
-   */
-  setRawData:    (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult>
-  clearLiveData: () => Promise<void>
+  setRawData:     (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult>
+  clearLiveData:  () => Promise<void>
 }
 
 const AttendanceSourceContext = createContext<AttendanceSourceContextValue | null>(null)
+
+// ── Stored shape (parsed output, not raw CSV) ─────────────────────────────
+interface StoredAttendance {
+  employees:  Employee[]
+  rawRecords: RawRecord[]
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -32,9 +32,9 @@ function normalizeDivisions(employees: Employee[]): Employee[] {
   return employees.map(e => e.division === '기타' ? { ...e, division: '신사업본부' } : e)
 }
 
-async function dbGet<T>(key: string): Promise<{ data: T | null; updatedAt: string | null }> {
+async function dbGet(): Promise<{ data: StoredAttendance | null; updatedAt: string | null }> {
   try {
-    const res = await fetch(`/api/shared-data/${key}`)
+    const res = await fetch('/api/shared-data/attendance_data')
     if (!res.ok) return { data: null, updatedAt: null }
     return res.json()
   } catch {
@@ -42,9 +42,9 @@ async function dbGet<T>(key: string): Promise<{ data: T | null; updatedAt: strin
   }
 }
 
-async function dbPut(key: string, data: unknown): Promise<string | null> {
+async function dbPut(data: StoredAttendance | null): Promise<string | null> {
   try {
-    const res = await fetch(`/api/shared-data/${key}`, {
+    const res = await fetch('/api/shared-data/attendance_data', {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ data }),
@@ -76,35 +76,26 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     let cancelled = false
     async function load() {
       setIsLoading(true)
-      const [capsRes, erpRes] = await Promise.all([
-        dbGet<CapsRow[]>('caps_data'),
-        dbGet<ErpUnifiedRow[]>('erp_data'),
-      ])
-
-      if (cancelled) return
-
-      const caps = capsRes.data
-      const erp  = erpRes.data
-
-      if (caps && erp) {
-        const result     = parseAttendanceData(caps, erp, policy)
-        const normalized = normalizeDivisions(result.employees)
-        setRawCaps(caps)
-        setRawErp(erp)
-        setLiveEmployees(normalized)
-        setLiveRecords(result.rawRecords)
-        // use the later of the two timestamps
-        const ts = erpRes.updatedAt ?? capsRes.updatedAt ?? null
-        setLastUploadedAt(ts)
+      try {
+        const { data, updatedAt } = await dbGet()
+        if (cancelled) return
+        if (data?.employees && data?.rawRecords) {
+          const normalized = normalizeDivisions(data.employees)
+          setLiveEmployees(normalized)
+          setLiveRecords(data.rawRecords)
+          setLastUploadedAt(updatedAt)
+        }
+      } catch (err) {
+        console.error('[AttendanceSourceContext] DB load failed:', err)
+      } finally {
+        if (!cancelled) setIsLoading(false)
       }
-
-      setIsLoading(false)
     }
     load()
     return () => { cancelled = true }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
-  // ── Re-parse when policy changes (skip initial mount) ─────────────────
+  // ── Re-parse when policy changes (only if raw CSV is in memory) ────────
   const mountedRef = useRef(false)
   useEffect(() => {
     if (!mountedRef.current) { mountedRef.current = true; return }
@@ -115,7 +106,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     setLiveRecords(rawRecords)
   }, [policy]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── setRawData: admin upload → save to DB → update state ──────────────
+  // ── setRawData: parse → save parsed output to DB ──────────────────────
   const setRawData = useCallback(async (caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<ParseResult> => {
     const result     = parseAttendanceData(caps, erp, policy)
     const normalized = normalizeDivisions(result.employees)
@@ -125,25 +116,15 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     setLiveEmployees(normalized)
     setLiveRecords(result.rawRecords)
 
-    // persist to DB (fire both, await both)
-    const [capsTs, erpTs] = await Promise.all([
-      dbPut('caps_data', caps),
-      dbPut('erp_data',  erp),
-    ])
-    // only mark as shared if at least one save confirmed
-    if (capsTs || erpTs) {
-      setLastUploadedAt(erpTs ?? capsTs ?? null)
-    }
+    const ts = await dbPut({ employees: normalized, rawRecords: result.rawRecords })
+    if (ts) setLastUploadedAt(ts)
 
     return { ...result, employees: normalized }
   }, [policy])
 
-  // ── clearLiveData: wipe DB + state ───────────────────────────────────
+  // ── clearLiveData ─────────────────────────────────────────────────────
   const clearLiveData = useCallback(async () => {
-    await Promise.all([
-      dbPut('caps_data', null),
-      dbPut('erp_data',  null),
-    ])
+    await dbPut(null)
     setRawCaps(null)
     setRawErp(null)
     setLiveEmployees(null)

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
-const ALLOWED_KEYS = ['caps_data', 'erp_data'] as const
+const ALLOWED_KEYS = ['caps_data', 'erp_data', 'attendance_data'] as const
 
 export async function GET(
   _req: NextRequest,
