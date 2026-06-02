@@ -250,11 +250,12 @@ export function processRecord(
 
     // 퇴근 기록 없으면 표준 근무일로 고정
     if (!actualOut) {
+      const rawIn = r.effectiveClockIn ?? r.clockIn ?? '09:00'
       return {
         ...r,
         clockIn:          r.clockIn ?? '09:00',
         clockOut:         '18:00',
-        effectiveClockIn: r.effectiveClockIn ?? r.clockIn ?? '09:00',
+        effectiveClockIn: fmtMins(Math.max(parseTime(rawIn), flexStartMins)),
         regularHours:     effectiveStdH,
         overtimeHours:    0,
         nightHours:       0,
@@ -267,8 +268,9 @@ export function processRecord(
       }
     }
 
-    // 퇴근 기록 있으면 실제 퇴근 시각 유지, 외근 상태만 적용
-    const frozenInMins  = r.effectiveClockIn ? parseTime(r.effectiveClockIn) : flexStartMins
+    // 퇴근 기록 있으면 실제 퇴근 시각 유지, 외근 상태만 적용 (08:00 이전 클램핑)
+    const rawFrozenMins = r.effectiveClockIn ? parseTime(r.effectiveClockIn) : (r.clockIn ? parseTime(r.clockIn) : flexStartMins)
+    const frozenInMins  = Math.max(rawFrozenMins, flexStartMins)
     const actualOutMins = parseTime(actualOut)
     const lunchDuration = lunchEndMins - lunchStartMins
     const stdOutMins    = frozenInMins + effectiveStdH * 60 + lunchDuration
@@ -497,7 +499,8 @@ export function processRecord(
     const isSchedLate  = actualInMins > schedIn
 
     if (!clockOut) {
-      return applySlack({ ...base, effectiveClockIn: clockIn, breakMinutes: schedBreak,
+      const clampedIn = clockIn ? fmtMins(Math.max(parseTime(clockIn), schedIn)) : null
+      return applySlack({ ...base, effectiveClockIn: clampedIn, breakMinutes: schedBreak,
         flag: isSchedLate ? 'LATE' : 'NO_CLOCK_OUT', verificationNote: schedNote })
     }
     const co = parseTime(clockOut)
@@ -522,7 +525,8 @@ export function processRecord(
     const isSchedLate  = actualInMins > schedIn
 
     if (!clockOut) {
-      return applySlack({ ...base, effectiveClockIn: clockIn, breakMinutes: schedBreak,
+      const clampedIn = clockIn ? fmtMins(Math.max(parseTime(clockIn), schedIn)) : null
+      return applySlack({ ...base, effectiveClockIn: clampedIn, breakMinutes: schedBreak,
         flag: isSchedLate ? 'LATE' : 'NO_CLOCK_OUT', verificationNote: schedNote })
     }
     const co = parseTime(clockOut)
@@ -554,7 +558,8 @@ export function processRecord(
 
   if (!clockOut) {
     const noClockFlag: SieveFlag = (bypassAllAnomalies || isDispatchedWorker) ? null : 'NO_CLOCK_OUT'
-    return applySlack({ ...base, effectiveClockIn: clockIn, flag: noClockFlag })
+    const clampedIn = clockIn ? fmtMins(Math.max(parseTime(clockIn), flexStartMins)) : null
+    return applySlack({ ...base, effectiveClockIn: clampedIn, flag: noClockFlag })
   }
 
   const outMins         = parseTime(clockOut)
