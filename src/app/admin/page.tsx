@@ -582,11 +582,11 @@ export default function AdminDashboard() {
 
     for (const r of tabPreStatusRecords) {
       if (approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
-      if (r.dayType !== 'WEEKDAY' && r.finalStatus !== '휴일근무') continue
 
       const flag = r.flag
       const hasAnomaly = flag !== null
 
+      // 정상/비정상: 요일 구분 없이 모든 레코드 집계 (테이블 근태상태 열과 동일 기준)
       if (hasAnomaly) {
         abnormal++
         if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') missing++
@@ -600,7 +600,8 @@ export default function AdminDashboard() {
       if (r.finalStatus === '외근')     offsite++
       if (r.finalStatus === '휴일근무') holidayWork++
       if (r.overtimeHours > 0)         overtime++
-      if (!hasAnomaly && r.clockIn !== null && !r.finalStatus?.match(/외근|휴일근무/) && r.overtimeHours === 0) regular++
+      // 일반: WEEKDAY만 (테이블 normalTags 로직과 동일)
+      if (!hasAnomaly && r.clockIn !== null && !r.finalStatus?.match(/외근|휴일근무/) && r.overtimeHours === 0 && r.dayType === 'WEEKDAY') regular++
     }
     return { normal, abnormal, regular, overtime, offsite, holidayWork, late, early, shortWork, missing }
   }, [tabPreStatusRecords, approvedKeys])
