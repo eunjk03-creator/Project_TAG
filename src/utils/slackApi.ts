@@ -337,15 +337,39 @@ export function parseSlackExceptions(
           results.push({ empId: emp.id, empName: emp.name, date, type: effectiveCls.type, note: effectiveCls.note, rawText: text })
         }
       } else {
-        // 동명이인: two-tier dept disambiguation
+        // 동명이인: three-tier dept disambiguation
         let deptMatches = group
-        const detectedDivision = detectDivisionFromText(text)
-        if (detectedDivision) {
-          deptMatches = group.filter(({ emp }) => emp.division.includes(detectedDivision))
+
+        // Tier 1: 이름 인근 컨텍스트에서 부서코드 탐색 — "최우정(PE_OD)" 형태 처리
+        // 이름 매칭 위치 ±30자 안에 부서코드가 있으면 해당 부서 직원으로 좁힘
+        const nameInContext = ((): string | null => {
+          const reg = group[0].regex
+          const m = reg.exec(text)
+          if (!m || m.index === undefined) return null
+          const start = Math.max(0, m.index - 5)
+          const end   = Math.min(text.length, m.index + m[0].length + 30)
+          return text.slice(start, end)
+        })()
+        if (nameInContext) {
+          const nearDiv = detectDivisionFromText(nameInContext)
+          if (nearDiv) {
+            deptMatches = group.filter(({ emp }) => emp.division.includes(nearDiv))
+          }
         }
-        if (deptMatches.length === 0) {
+
+        // Tier 2: 전체 메시지에서 부서코드 탐색
+        if (deptMatches.length !== 1) {
+          const detectedDivision = detectDivisionFromText(text)
+          if (detectedDivision) {
+            deptMatches = group.filter(({ emp }) => emp.division.includes(detectedDivision))
+          }
+        }
+
+        // Tier 3: 메시지에 본부명/팀명이 직접 포함된 경우
+        if (deptMatches.length !== 1) {
           deptMatches = group.filter(({ emp }) => text.includes(emp.division) || text.includes(emp.team))
         }
+
         if (deptMatches.length === 1) {
           const { emp } = deptMatches[0]
           for (const date of dates) {
