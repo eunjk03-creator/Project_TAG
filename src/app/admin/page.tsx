@@ -445,40 +445,6 @@ export default function AdminDashboard() {
     }).length
   }, [scopedRecords, approvedKeys])
 
-  // Per-status counts for dropdown badges
-  const anomalyCounts = useMemo(() => {
-    let normal = 0, abnormal = 0
-    let regular = 0, overtime = 0, offsite = 0, holidayWork = 0
-    let late = 0, early = 0, shortWork = 0, missing = 0
-
-    for (const r of scopedRecords) {
-      if (approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
-      if (r.dayType !== 'WEEKDAY' && r.finalStatus !== '휴일근무') continue  // 주말/공휴일 집계 제외
-
-      const flag = r.flag
-
-      // 비정상 태그
-      const hasAnomaly = flag !== null
-      if (hasAnomaly) {
-        abnormal++
-        if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') missing++
-        if (flag === 'LATE' || flag === 'LATE_AND_EARLY_DEPARTURE' || flag === 'LATE_AND_ANOMALY') late++
-        if (flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE') early++
-        if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY') shortWork++
-      } else {
-        normal++
-      }
-
-      // 정상 태그 (비정상 여부와 무관하게 집계)
-      if (r.finalStatus === '외근')     offsite++
-      if (r.finalStatus === '휴일근무') holidayWork++
-      if (r.overtimeHours > 0)         overtime++
-      const isLeaveDay = !!(r.leaveType && ['연차','오전반차','오후반차','오전반반차','오후반반차','출장','재택근무'].includes(r.leaveType))
-      if (!r.finalStatus?.match(/외근|휴일근무/) && r.overtimeHours === 0 && !isLeaveDay && !hasAnomaly) regular++
-    }
-    return { normal, abnormal, regular, overtime, offsite, holidayWork, late, early, shortWork, missing }
-  }, [scopedRecords, approvedKeys])
-
   // ── Filters ───────────────────────────────────────────────────────────────
   const searchQuery = DAY_ALIASES[search.trim().toLowerCase()] ?? search.trim().toLowerCase()
 
@@ -505,8 +471,7 @@ export default function AdminDashboard() {
     if (r.finalStatus === '외근') normalTags.push('외근')
     if (r.finalStatus === '휴일근무') normalTags.push('휴일근로')
     if (r.overtimeHours > 0) normalTags.push('연장근로')
-    const isLeaveDay = !!(r.leaveType && ['연차','오전반차','오후반차','오전반반차','오후반반차','출장','재택근무'].includes(r.leaveType))
-    if (normalTags.length === 0 && !isLeaveDay && r.dayType === 'WEEKDAY') normalTags.push('일반')
+    if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
 
     switch (status) {
       case '정상':         return isNormal
@@ -533,11 +498,11 @@ export default function AdminDashboard() {
     }
   }
 
-  const filteredRecords = useMemo(() => {
+  // pre-status: search + division only (status 필터 제외) → anomalyCounts 카운팅용
+  const preStatusRecords = useMemo(() => {
     return scopedRecords.filter(r => {
       const emp   = baseEmployees.find(e => e.id === r.employeeId)
       const rawId = emp?.rawId ?? r.employeeId.split('_')[0]
-
       if (searchQuery) {
         const hit = (
           (emp?.name     ?? '').toLowerCase().includes(searchQuery) ||
@@ -549,15 +514,17 @@ export default function AdminDashboard() {
         )
         if (!hit) return false
       }
-
-      // Division: OR within category
       if (selectedDivisions.length > 0 && !selectedDivisions.includes(emp?.division ?? '')) return false
-      // Status/anomaly: OR within category
-      if (selectedStatuses.length > 0 && !selectedStatuses.some(s => matchesStatus(r, s))) return false
-
       return true
     })
-  }, [scopedRecords, searchQuery, selectedDivisions, selectedStatuses, baseEmployees])
+  }, [scopedRecords, searchQuery, selectedDivisions, baseEmployees])
+
+  const filteredRecords = useMemo(() => {
+    if (selectedStatuses.length === 0) return preStatusRecords
+    return preStatusRecords.filter(r =>
+      selectedStatuses.some(s => matchesStatus(r, s))
+    )
+  }, [preStatusRecords, selectedStatuses])
 
   // Direct employeeId → division.trim() map used to filter individual attendance rows.
   const empDivisionMap = useMemo(
@@ -565,34 +532,65 @@ export default function AdminDashboard() {
     [baseEmployees],
   )
 
-  // Tab-scoped + chart-BU-scoped records.
-  // Records are filtered twice — once by the active tab (employee/leader/all)
-  // and once directly by comparing each row's employee division to selectedBUs.
-  const tabFilteredRecords = useMemo(() => {
+  // Tab + BU 게이트 적용 함수 (status 포함/제외 양쪽에서 재사용)
+  function applyTabBU(recs: PR[]): PR[] {
     const hasBUFilter  = selectedBUs.length > 0
     const hasTabFilter = activeTab !== 'all'
-
-    if (!hasBUFilter && !hasTabFilter) return filteredRecords
-
-    const tabEmpIds = hasTabFilter
-      ? new Set(activeEmployees.map(e => e.id))
-      : null
-
-    const selectedBUSet = hasBUFilter
-      ? new Set(selectedBUs.map(b => b.trim()))
-      : null
-
-    return filteredRecords.filter(r => {
-      // Tab gate
+    if (!hasBUFilter && !hasTabFilter) return recs
+    const tabEmpIds    = hasTabFilter ? new Set(activeEmployees.map(e => e.id)) : null
+    const selectedBUSet = hasBUFilter ? new Set(selectedBUs.map(b => b.trim())) : null
+    return recs.filter(r => {
       if (tabEmpIds && !tabEmpIds.has(r.employeeId)) return false
-      // Division gate — look up this record's employee division directly
       if (selectedBUSet) {
         const div = empDivisionMap.get(r.employeeId) ?? ''
         if (!selectedBUSet.has(div)) return false
       }
       return true
     })
-  }, [filteredRecords, activeTab, activeEmployees, selectedBUs, empDivisionMap])
+  }
+
+  // status 제외 탭+BU 필터 → anomalyCounts 카운팅 전용
+  const tabPreStatusRecords = useMemo(
+    () => applyTabBU(preStatusRecords),
+    [preStatusRecords, activeTab, activeEmployees, selectedBUs, empDivisionMap], // eslint-disable-line react-hooks/exhaustive-deps
+  )
+
+  // 전체 필터 적용 (status 포함) → 테이블 표시용
+  const tabFilteredRecords = useMemo(
+    () => applyTabBU(filteredRecords),
+    [filteredRecords, activeTab, activeEmployees, selectedBUs, empDivisionMap], // eslint-disable-line react-hooks/exhaustive-deps
+  )
+
+  // Per-status counts for dropdown badges (status 필터 제외, 나머지 필터 반영)
+  const anomalyCounts = useMemo(() => {
+    let normal = 0, abnormal = 0
+    let regular = 0, overtime = 0, offsite = 0, holidayWork = 0
+    let late = 0, early = 0, shortWork = 0, missing = 0
+
+    for (const r of tabPreStatusRecords) {
+      if (approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
+      if (r.dayType !== 'WEEKDAY' && r.finalStatus !== '휴일근무') continue
+
+      const flag = r.flag
+      const hasAnomaly = flag !== null
+
+      if (hasAnomaly) {
+        abnormal++
+        if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') missing++
+        if (flag === 'LATE' || flag === 'LATE_AND_EARLY_DEPARTURE' || flag === 'LATE_AND_ANOMALY') late++
+        if (flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE') early++
+        if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY') shortWork++
+      } else {
+        normal++
+      }
+
+      if (r.finalStatus === '외근')     offsite++
+      if (r.finalStatus === '휴일근무') holidayWork++
+      if (r.overtimeHours > 0)         overtime++
+      if (!hasAnomaly && r.clockIn !== null && !r.finalStatus?.match(/외근|휴일근무/) && r.overtimeHours === 0) regular++
+    }
+    return { normal, abnormal, regular, overtime, offsite, holidayWork, late, early, shortWork, missing }
+  }, [tabPreStatusRecords, approvedKeys])
 
   // Grid-view: filter displayed employees by search + division
   const searchFilteredEmployees = useMemo(() => {
