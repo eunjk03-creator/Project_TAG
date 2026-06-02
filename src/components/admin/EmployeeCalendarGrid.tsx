@@ -163,9 +163,20 @@ export function EmployeeCalendarGrid({
   const companyHolLabel = useMemo(() => new Map(companyHolidays.map(h => [h.date, h.label])), [companyHolidays])
 
   // ── Inline sort / filter state ─────────────────────────────────────────
+  type SortKey = 'name' | 'ot' | 'night' | 'holiday' | 'anomaly'
+  const [sortKey,      setSortKey]      = useState<SortKey>('name')
   const [sortDir,      setSortDir]      = useState<SortDir>('none')
   const [filterDiv,    setFilterDiv]    = useState<string | null>(null)
   const [filterTeam,   setFilterTeam]   = useState<string | null>(null)
+
+  function handleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir(d => d === 'none' ? (key === 'name' ? 'asc' : 'desc') : d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      setSortDir(key === 'name' ? 'asc' : 'desc')
+    }
+  }
   const [openDropdown, setOpenDropdown] = useState<'org' | 'total' | null>(null)
   const [dropdownRect, setDropdownRect] = useState<DOMRect | null>(null)
   const [showAll,      setShowAll]      = useState(false)
@@ -199,14 +210,8 @@ export function EmployeeCalendarGrid({
     let result = employees
     if (filterDiv)  result = result.filter(e => e.division === filterDiv)
     if (filterTeam) result = result.filter(e => e.team === filterTeam)
-    if (sortDir !== 'none') {
-      result = [...result].sort((a, b) => {
-        const cmp = a.name.localeCompare(b.name, 'ko')
-        return sortDir === 'asc' ? cmp : -cmp
-      })
-    }
     return result
-  }, [employees, filterDiv, filterTeam, sortDir])
+  }, [employees, filterDiv, filterTeam])
 
   // ── Existing data memos ────────────────────────────────────────────────
   const lookup = useMemo(() => {
@@ -298,10 +303,32 @@ const empStats = useMemo(() => {
     })
   }, [displayEmployees, hoursFilter, empStats, showExactTime])
 
+  // Sort after stats are available
+  const sortedEmployees = useMemo(() => {
+    if (sortDir === 'none') return filteredEmployees
+    return [...filteredEmployees].sort((a, b) => {
+      let cmp = 0
+      if (sortKey === 'name') {
+        cmp = a.name.localeCompare(b.name, 'ko')
+      } else {
+        const sa = empStats[a.id] ?? { ot: 0, night: 0, holiday: 0, anomalies: 0 }
+        const sb = empStats[b.id] ?? { ot: 0, night: 0, holiday: 0, anomalies: 0 }
+        const field = sortKey === 'ot' ? 'ot' : sortKey === 'night' ? 'night' : sortKey === 'holiday' ? 'holiday' : 'anomalies'
+        cmp = (showExactTime
+          ? (sa as Record<string, number>)['raw' + field.charAt(0).toUpperCase() + field.slice(1)] ?? sa[field as keyof typeof sa]
+          : (sa as Record<string, number>)[field]) -
+          (showExactTime
+          ? (sb as Record<string, number>)['raw' + field.charAt(0).toUpperCase() + field.slice(1)] ?? sb[field as keyof typeof sb]
+          : (sb as Record<string, number>)[field])
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [filteredEmployees, sortKey, sortDir, empStats, showExactTime])
+
   // Slice to 10 when risk mode is active and the user hasn't expanded yet
   const visibleEmployees = riskMode && !showAll
-    ? filteredEmployees.slice(0, 10)
-    : filteredEmployees
+    ? sortedEmployees.slice(0, 10)
+    : sortedEmployees
 
   const isMultiMonth =
     dates.length > 1 &&
@@ -461,11 +488,11 @@ const empStats = useMemo(() => {
                 <th className="sticky z-50 bg-gray-50 pl-3 pr-2 py-3 text-left text-[11px] font-semibold text-gray-500"
                   style={{ top: 0, left: L1, width: W_NAME, minWidth: W_NAME }}>
                   <button
-                    onClick={() => setSortDir(d => d === 'none' ? 'asc' : d === 'asc' ? 'desc' : 'none')}
+                    onClick={() => handleSort('name')}
                     className="flex items-center justify-between gap-1 w-full hover:text-gray-700 transition-colors"
                   >
-                    <span className={sortDir !== 'none' ? 'text-blue-600' : ''}>이름</span>
-                    <SortIcon dir={sortDir} />
+                    <span className={sortKey === 'name' && sortDir !== 'none' ? 'text-blue-600' : ''}>이름</span>
+                    <SortIcon dir={sortKey === 'name' ? sortDir : 'none'} />
                   </button>
                 </th>
 
@@ -493,25 +520,24 @@ const empStats = useMemo(() => {
                   </button>
                 </th>
 
-                <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
-                  style={{ top: 0, left: L_OT, width: W_OT, minWidth: W_OT }}>
-                  연장
-                </th>
-
-                <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
-                  style={{ top: 0, left: L_NIGHT, width: W_NIGHT, minWidth: W_NIGHT }}>
-                  야간
-                </th>
-
-                <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
-                  style={{ top: 0, left: L_HOLIDAY, width: W_HOLIDAY, minWidth: W_HOLIDAY }}>
-                  휴일
-                </th>
-
-                <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
-                  style={{ top: 0, left: L_ANOMALY, width: W_ANOMALY, minWidth: W_ANOMALY }}>
-                  이상
-                </th>
+                {([
+                  { key: 'ot',      label: '연장', left: L_OT,      w: W_OT      },
+                  { key: 'night',   label: '야간', left: L_NIGHT,   w: W_NIGHT   },
+                  { key: 'holiday', label: '휴일', left: L_HOLIDAY, w: W_HOLIDAY },
+                  { key: 'anomaly', label: '이상', left: L_ANOMALY, w: W_ANOMALY },
+                ] as const).map(({ key, label, left, w }) => (
+                  <th key={key}
+                    className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
+                    style={{ top: 0, left, width: w, minWidth: w }}>
+                    <button
+                      onClick={() => handleSort(key)}
+                      className="flex items-center justify-center gap-0.5 w-full hover:text-gray-700 transition-colors"
+                    >
+                      <span className={sortKey === key && sortDir !== 'none' ? 'text-blue-600' : ''}>{label}</span>
+                      <SortIcon dir={sortKey === key ? sortDir : 'none'} />
+                    </button>
+                  </th>
+                ))}
 
                 <th className="sticky z-50 bg-gray-50 px-2 py-3 text-left text-[11px] font-semibold text-gray-500 border-l border-gray-200"
                   style={{ top: 0, left: L4, width: W_CAT, minWidth: W_CAT, boxShadow: STICKY_SEP }}>
