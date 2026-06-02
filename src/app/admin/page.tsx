@@ -1263,25 +1263,6 @@ export default function AdminDashboard() {
               otExemptIds={otExemptIds}
             />
 
-            {stats.anomalies > 0 && (
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h2 className="text-sm font-semibold text-gray-700 mb-3">전체 이상치 현황</h2>
-                <div className="flex flex-wrap gap-3">
-                  {([
-                    { key: '지각',          count: anomalyCounts.late      },
-                    { key: '조기퇴근',      count: anomalyCounts.early     },
-                    { key: '근무시간 미달', count: anomalyCounts.shortWork  },
-                    { key: '미태깅',        count: anomalyCounts.missing   },
-                  ] as { key: string; count: number }[]).filter(({ count }) => count > 0).map(({ key, count }) => (
-                    <div key={key}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium ${ANOM_COLOR[key]}`}>
-                      {ANOM_LABEL[key]}
-                      <span className="font-bold">{count}건</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
