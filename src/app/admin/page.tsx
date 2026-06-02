@@ -282,6 +282,16 @@ export default function AdminDashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employeeAttrMap, excludeFromOtIds, exceptionRules, baseEmployees])
 
+  // 전체제외 직원 ID 집합 — 그리드·테이블에서 숨김
+  const globalExclusionIds = useMemo(
+    () => new Set(
+      [...finalAttrMap.entries()]
+        .filter(([, attrs]) => attrs.isGlobalExclusion)
+        .map(([id]) => id)
+    ),
+    [finalAttrMap],
+  )
+
   // Merge user-defined OT exemptions + auto-detected leaders from CSV
   const otExemptIds = useMemo(() => new Set([
     ...remappedExcludeIds,
@@ -319,11 +329,13 @@ export default function AdminDashboard() {
       .map(e => e.id),
   ), [scopedEmployees, finalAttrMap])
 
-  const activeEmployees = useMemo(() =>
-    activeTab === 'all'      ? scopedEmployees :
-    activeTab === 'employee' ? scopedEmployees.filter(e => !leaderIdSet.has(e.id)) :
-                               scopedEmployees.filter(e => leaderIdSet.has(e.id)),
-  [activeTab, scopedEmployees, leaderIdSet])
+  const activeEmployees = useMemo(() => {
+    const base =
+      activeTab === 'all'      ? scopedEmployees :
+      activeTab === 'employee' ? scopedEmployees.filter(e => !leaderIdSet.has(e.id)) :
+                                 scopedEmployees.filter(e => leaderIdSet.has(e.id))
+    return base.filter(e => !globalExclusionIds.has(e.id))
+  }, [activeTab, scopedEmployees, leaderIdSet, globalExclusionIds])
 
   const activeMetrics =
     activeTab === 'all'      ? metrics        :
@@ -501,6 +513,7 @@ export default function AdminDashboard() {
   // pre-status: search + division only (status 필터 제외) → anomalyCounts 카운팅용
   const preStatusRecords = useMemo(() => {
     return scopedRecords.filter(r => {
+      if (globalExclusionIds.has(r.employeeId)) return false
       const emp   = baseEmployees.find(e => e.id === r.employeeId)
       const rawId = emp?.rawId ?? r.employeeId.split('_')[0]
       if (searchQuery) {
@@ -517,7 +530,7 @@ export default function AdminDashboard() {
       if (selectedDivisions.length > 0 && !selectedDivisions.includes(emp?.division ?? '')) return false
       return true
     })
-  }, [scopedRecords, searchQuery, selectedDivisions, baseEmployees])
+  }, [scopedRecords, searchQuery, selectedDivisions, baseEmployees, globalExclusionIds])
 
   const filteredRecords = useMemo(() => {
     if (selectedStatuses.length === 0) return preStatusRecords
