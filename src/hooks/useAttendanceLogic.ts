@@ -66,8 +66,14 @@ export function processRecord(
     : (record.erpLeaveAmount ?? 0)
 
   // ── Per-employee attribute overrides ──────────────────────────────────────
-  const isParentalLeave    = attrOverrides?.isParentalLeave    ?? false
-  const isShortenedHours   = attrOverrides?.isShortenedHours   ?? false
+  const isParentalLeave = (attrOverrides?.isParentalLeave ?? false) && (
+    (!attrOverrides?.parentalLeaveFrom || record.date >= attrOverrides.parentalLeaveFrom) &&
+    (!attrOverrides?.parentalLeaveTo   || record.date <= attrOverrides.parentalLeaveTo)
+  )
+  const isShortenedHours = (attrOverrides?.isShortenedHours ?? false) && (
+    (!attrOverrides?.shortenedHoursFrom || record.date >= attrOverrides.shortenedHoursFrom) &&
+    (!attrOverrides?.shortenedHoursTo   || record.date <= attrOverrides.shortenedHoursTo)
+  )
 
   // 임신기 단축근로 날짜 범위 사전 체크 (effectiveStdH 계산에 필요)
   const _pregActive = (attrOverrides?.isPregnantReduced ?? false) && (
@@ -79,7 +85,10 @@ export function processRecord(
     isShortenedHours ? (attrOverrides?.shortenedHoursValue ?? 6) :
     policy.standardHours
   const isTenAMStarter     = attrOverrides?.isTenAMStarter     ?? false
-  const isDispatchedWorker = attrOverrides?.isDispatchedWorker ?? false
+  const isDispatchedWorker = (attrOverrides?.isDispatchedWorker ?? false) && (
+    (!attrOverrides?.dispatchedWorkerFrom || record.date >= attrOverrides.dispatchedWorkerFrom) &&
+    (!attrOverrides?.dispatchedWorkerTo   || record.date <= attrOverrides.dispatchedWorkerTo)
+  )
   const isEasyLogis        = attrOverrides?.isEasyLogis        ?? false
   const isFixedScheduleA   = attrOverrides?.isFixedScheduleA   ?? false
   const isFixedScheduleB   = attrOverrides?.isFixedScheduleB   ?? false
@@ -92,7 +101,10 @@ export function processRecord(
     (!_pTo   || record.date <= _pTo)
   )
   const isGlobalExclusion  = attrOverrides?.isGlobalExclusion  ?? false
-  const isResigned         = attrOverrides?.isResigned         ?? false
+  // 퇴사자: resignedFrom(퇴사일) 이후 날짜부터 적용
+  const isResigned = (attrOverrides?.isResigned ?? false) && (
+    !attrOverrides?.resignedFrom || record.date >= attrOverrides.resignedFrom
+  )
 
   const bypassAllAnomalies = isParentalLeave
 

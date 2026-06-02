@@ -165,16 +165,23 @@ export function EmployeeExceptionsProvider({ children }: { children: ReactNode }
           merged.set(rule.employeeId, { ...ex, isLeader: rule.excludeFromOt ? true : ex.isLeader })
           break
         case 'shortened_hours':
-          merged.set(rule.employeeId, { ...ex, isShortenedHours: true, shortenedHoursValue: rule.shortenedHours })
+          merged.set(rule.employeeId, { ...ex, isShortenedHours: true,
+            shortenedHoursValue: rule.shortenedHours,
+            shortenedHoursFrom: rule.validFrom || undefined,
+            shortenedHoursTo:   rule.validTo   || undefined })
           break
         case 'ten_am_starter':
           merged.set(rule.employeeId, { ...ex, isTenAMStarter: true })
           break
         case 'dispatched_worker':
-          merged.set(rule.employeeId, { ...ex, isDispatchedWorker: true })
+          merged.set(rule.employeeId, { ...ex, isDispatchedWorker: true,
+            dispatchedWorkerFrom: rule.validFrom || undefined,
+            dispatchedWorkerTo:   rule.validTo   || undefined })
           break
         case 'parental_leave':
-          merged.set(rule.employeeId, { ...ex, isParentalLeave: true })
+          merged.set(rule.employeeId, { ...ex, isParentalLeave: true,
+            parentalLeaveFrom: rule.validFrom || undefined,
+            parentalLeaveTo:   rule.validTo   || undefined })
           break
         case 'easy_logis':
           merged.set(rule.employeeId, { ...ex, isEasyLogis: true })
@@ -197,7 +204,8 @@ export function EmployeeExceptionsProvider({ children }: { children: ReactNode }
           merged.set(rule.employeeId, { ...ex, isGlobalExclusion: true })
           break
         case 'resigned':
-          merged.set(rule.employeeId, { ...ex, isResigned: true })
+          merged.set(rule.employeeId, { ...ex, isResigned: true,
+            resignedFrom: rule.validFrom || undefined })
           break
       }
     }

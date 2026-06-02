@@ -231,14 +231,20 @@ export interface EmployeeAttributeOverrides {
   isLeader?:            boolean
   /** 육아휴직자: exempt from ALL anomaly checks — always shows 정상/연차 */
   isParentalLeave?:     boolean
+  parentalLeaveFrom?:   string  // YYYY-MM-DD
+  parentalLeaveTo?:     string
   /** 단축근로: override policy.standardHours with shortenedHoursValue */
   isShortenedHours?:    boolean
   /** Effective hours/day when isShortenedHours is true (default 6) */
   shortenedHoursValue?: number
+  shortenedHoursFrom?:  string
+  shortenedHoursTo?:    string
   /** 10시 출근자: snap effectiveIn to 10:00; LATE / OT thresholds shift accordingly */
   isTenAMStarter?:      boolean
   /** 파견자: skip NO_CLOCK_OUT flag — missing punch is expected */
   isDispatchedWorker?:  boolean
+  dispatchedWorkerFrom?: string
+  dispatchedWorkerTo?:   string
   /** 이지로지스: special subsidiary — suppress all anomaly flags */
   isEasyLogis?:         boolean
   /** 특수근무제 A: In 08:00 snap, Out ≥ 16:00, Break 30 min, Late >08:00 */
@@ -255,6 +261,7 @@ export interface EmployeeAttributeOverrides {
   isGlobalExclusion?: boolean
   /** 퇴사자: same as global exclusion — completely filtered from all output */
   isResigned?: boolean
+  resignedFrom?: string  // 퇴사일 (YYYY-MM-DD) — 이 날 이후로 적용
 }
 
 export type RecordOverride = {

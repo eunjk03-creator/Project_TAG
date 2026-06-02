@@ -168,6 +168,32 @@ function AddModal({
     patch({ employees: draft.employees.filter(e => e.id !== id) })
   }
 
+  // 공통 날짜 범위 UI (색상 커스텀)
+  function renderDateRange(color: 'teal'|'pink'|'red'|'gray' = 'gray') {
+    const borderCls = `border-${color}-200`
+    const ringCls   = `focus:ring-${color}-400`
+    const textCls   = `text-${color}-600`
+    return (
+      <div className={`bg-${color}-50 rounded-xl px-4 py-3`}>
+        <p className={`text-xs font-semibold ${textCls} mb-2`}>
+          적용 기간 <span className={`font-normal opacity-60`}>(선택, 비워두면 항상 적용)</span>
+        </p>
+        <div className="flex items-center gap-2">
+          <input type="date" value={draft.validFrom}
+            onChange={e => patch({ validFrom: e.target.value })}
+            className={`flex-1 px-2 py-1.5 text-xs border ${borderCls} rounded-lg focus:outline-none focus:ring-2 ${ringCls} bg-white`} />
+          <span className={`${textCls} text-xs shrink-0`}>~</span>
+          <input type="date" value={draft.validTo} min={draft.validFrom}
+            onChange={e => patch({ validTo: e.target.value })}
+            className={`flex-1 px-2 py-1.5 text-xs border ${borderCls} rounded-lg focus:outline-none focus:ring-2 ${ringCls} bg-white`} />
+        </div>
+        {draft.validFrom && draft.validTo && draft.validFrom > draft.validTo && (
+          <p className="text-[10px] text-red-500 mt-1">종료일이 시작일보다 빠릅니다</p>
+        )}
+      </div>
+    )
+  }
+
   const canSubmit =
     draft.employees.length > 0 &&
     (draft.ruleType !== 'shortened_hours' ||
@@ -362,22 +388,28 @@ function AddModal({
           )}
 
           {draft.ruleType === 'dispatched_worker' && (
-            <div className="bg-teal-50 rounded-xl px-4 py-3">
-              <p className="text-xs font-semibold text-teal-700">파견자 적용 내용</p>
-              <ul className="text-[10px] text-teal-600 mt-1.5 space-y-0.5 list-disc list-inside">
-                <li>출퇴근 미기록(미태깅) 이상치 감지 면제</li>
-                <li>CAPS 태깅이 없어도 출퇴근누락 플래그 미발생</li>
-              </ul>
+            <div className="space-y-2.5">
+              <div className="bg-teal-50 rounded-xl px-4 py-3">
+                <p className="text-xs font-semibold text-teal-700">파견자 적용 내용</p>
+                <ul className="text-[10px] text-teal-600 mt-1.5 space-y-0.5 list-disc list-inside">
+                  <li>출퇴근 미기록(미태깅) 이상치 감지 면제</li>
+                  <li>CAPS 태깅이 없어도 출퇴근누락 플래그 미발생</li>
+                </ul>
+              </div>
+              {renderDateRange('teal')}
             </div>
           )}
 
           {draft.ruleType === 'parental_leave' && (
-            <div className="bg-pink-50 rounded-xl px-4 py-3">
-              <p className="text-xs font-semibold text-pink-700">육아휴직자 적용 내용</p>
-              <ul className="text-[10px] text-pink-600 mt-1.5 space-y-0.5 list-disc list-inside">
-                <li>모든 근태 이상치 감지 면제 (지각·조기퇴근·미태깅·미신청OT)</li>
-                <li>해당 기간 데이터는 정상 또는 휴가로 표시</li>
-              </ul>
+            <div className="space-y-2.5">
+              <div className="bg-pink-50 rounded-xl px-4 py-3">
+                <p className="text-xs font-semibold text-pink-700">육아휴직자 적용 내용</p>
+                <ul className="text-[10px] text-pink-600 mt-1.5 space-y-0.5 list-disc list-inside">
+                  <li>모든 근태 이상치 감지 면제 (지각·조기퇴근·미태깅·미신청OT)</li>
+                  <li>해당 기간 데이터는 정상 또는 휴가로 표시</li>
+                </ul>
+              </div>
+              {renderDateRange('pink')}
             </div>
           )}
           {draft.ruleType === 'fixed_schedule_a' && (
@@ -437,6 +469,25 @@ function AddModal({
                 {draft.validFrom && draft.validTo && draft.validFrom > draft.validTo && (
                   <p className="text-[10px] text-red-500 mt-1">종료일이 시작일보다 빠릅니다</p>
                 )}
+              </div>
+            </div>
+          )}
+          {draft.ruleType === 'resigned' && (
+            <div className="space-y-2.5">
+              <div className="bg-red-50 rounded-xl px-4 py-3">
+                <p className="text-xs font-semibold text-red-700">퇴사자 적용 내용</p>
+                <ul className="text-[10px] text-red-600 mt-1.5 space-y-0.5 list-disc list-inside">
+                  <li>퇴사일 이후 모든 근태 이상치 감지 제외</li>
+                  <li>집계 및 이상치 목록에서 제외</li>
+                </ul>
+              </div>
+              <div className="bg-red-50 rounded-xl px-4 py-3">
+                <p className="text-xs font-semibold text-red-700 mb-2">
+                  퇴사일 <span className="font-normal opacity-60">(이 날부터 적용)</span>
+                </p>
+                <input type="date" value={draft.validFrom}
+                  onChange={e => patch({ validFrom: e.target.value })}
+                  className="w-full px-2 py-1.5 text-xs border border-red-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400 bg-white" />
               </div>
             </div>
           )}
