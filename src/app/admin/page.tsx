@@ -791,38 +791,6 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          <div className="w-px h-4 bg-gray-200 shrink-0" />
-
-          <span className="text-[11px] text-gray-400 whitespace-nowrap">리스크 기준</span>
-          <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-[11px] font-medium">
-            <button
-              onClick={() => setRiskView('hr')}
-              className={`px-2.5 py-1 rounded-md transition-all ${
-                riskView === 'hr'
-                  ? 'bg-white text-gray-800 shadow-sm'
-                  : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              HR
-            </button>
-            <button
-              onClick={() => setRiskView('exec')}
-              className={`px-2.5 py-1 rounded-md transition-all ${
-                riskView === 'exec'
-                  ? 'bg-white text-gray-800 shadow-sm'
-                  : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              경영진
-            </button>
-          </div>
-          {/* Threshold hint */}
-          <span className="text-[10px] text-gray-400 whitespace-nowrap">
-            {riskView === 'hr'
-              ? `총 >${riskThresholds.totalAmberH}h · OT >${riskThresholds.dailyOtWarnH}h`
-              : `총 >${riskThresholds.totalAmberH}h`
-            }
-          </span>
         </div>
       </div>
 
@@ -966,6 +934,33 @@ export default function AdminDashboard() {
               </button>
             </div>
 
+          </div>
+        </div>
+
+        {/* ── 통합검색 ── */}
+        <div className="px-6 pb-3 shrink-0">
+          <div className="relative max-w-sm">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="사번 또는 이름으로 검색..."
+              className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-lg bg-white
+                focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400
+                placeholder-gray-300 shadow-sm transition-colors"
+            />
+            {search && (
+              <button onClick={() => setSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center
+                  text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded-full transition-colors text-xs">
+                ✕
+              </button>
+            )}
           </div>
         </div>
 
