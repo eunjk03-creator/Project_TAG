@@ -844,11 +844,6 @@ export default function AdminDashboard() {
                   }`}>
                     {cardStats ? fmt(cardStats.avgTotal) : '—'}
                   </span>
-                  {cardStats && cardStats.avgTotal > riskThresholds.totalAmberH && (
-                    <span className="text-[9px] px-1 py-px rounded bg-amber-100 text-amber-700 font-semibold">
-                      {riskView === 'hr' ? 'HR기준 초과' : '주의'}
-                    </span>
-                  )}
                 </p>
                 {cardStats && (
                   <p className="text-xs text-gray-400 truncate">
@@ -881,11 +876,6 @@ export default function AdminDashboard() {
                   </span>
                   <span className="text-gray-300">·</span>
                   <span className="tabular-nums text-gray-400">{cardStats ? cardStats.otRatio.toFixed(1) : 0}%</span>
-                  {cardStats && cardStats.avgOt > riskThresholds.otAmberH && (
-                    <span className="text-[9px] px-1 py-px rounded bg-amber-100 text-amber-700 font-semibold">
-                      {riskView === 'hr' ? 'HR기준 초과' : '주의'}
-                    </span>
-                  )}
                 </p>
                 {cardStats && (
                   <p className="text-xs text-gray-400 truncate">
@@ -917,11 +907,6 @@ export default function AdminDashboard() {
                   평균 <span className="text-gray-600 font-medium tabular-nums">
                     {activeTotal.headcount > 0 ? (activeTotal.anomalies / activeTotal.headcount).toFixed(1) : 0}건/인
                   </span>
-                  {compoundAnomalyCount > 0 && (
-                    <span className="ml-1.5 text-orange-500 font-medium tabular-nums">
-                      · 중복 {compoundAnomalyCount}건
-                    </span>
-                  )}
                 </p>
                 {cardStats && cardStats.topAnomalies.anomalies > 0 ? (
                   <p className="text-xs text-gray-400 truncate">
