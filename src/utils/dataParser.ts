@@ -749,6 +749,7 @@ export function parseAttendanceData(
       leaveType,
       ...(erpLeaveAmount !== undefined && { erpLeaveAmount }),
       ...(isUnpaidLeave && { isUnpaidLeave }),
+      ...(leaveEntry?.rawCode && { rawLeaveCode: leaveEntry.rawCode }),
       isHolidayWork,
       ...(employeeMap.get(compositeKey)?.isLeader && { isLeader: true }),
       ...(verificationNote.length > 0 && { verificationNote }),

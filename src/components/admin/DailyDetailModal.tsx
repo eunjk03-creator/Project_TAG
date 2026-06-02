@@ -543,7 +543,16 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                       </select>
                     ) : (
                       erpLeaveEdit && erpLeaveEdit !== '없음'
-                        ? <span className="text-blue-700 font-semibold">{formatErpLeave(erpLeaveEdit, record.erpLeaveAmount)}</span>
+                        ? (
+                          <span className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-blue-700 font-semibold">{formatErpLeave(erpLeaveEdit, record.erpLeaveAmount)}</span>
+                            {record.rawLeaveCode && record.rawLeaveCode !== erpLeaveEdit && (
+                              <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                                ERP코드: {record.rawLeaveCode}
+                              </span>
+                            )}
+                          </span>
+                        )
                         : <span className="text-gray-400">없음</span>
                     )}
                   </div>

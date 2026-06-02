@@ -137,6 +137,8 @@ export interface RawRecord {
   erpLeaveAmount?: number
   /** True when the ERP leave code contains '무급' — contributes 0h instead of 8h in 근무B. */
   isUnpaidLeave?: boolean
+  /** Original ERP 근태코드 before mapping (e.g. '배우자 출산휴가', '리프레쉬휴가(3년)') */
+  rawLeaveCode?: string
 }
 
 export interface ProcessedRecord extends RawRecord {
