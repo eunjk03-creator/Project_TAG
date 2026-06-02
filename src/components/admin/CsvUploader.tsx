@@ -298,7 +298,7 @@ const MAX_CAPS = 5
 
 // ── Main export ───────────────────────────────────────────────────────────
 export function CsvUploader() {
-  const { setRawData, clearLiveData, isLiveData, employees, rawRecords } = useAttendanceSource()
+  const { setRawData, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords } = useAttendanceSource()
 
   // CAPS: 복수 파일 지원 (최대 MAX_CAPS)
   const capsDataRefs = useRef<(Record<string, string>[] | null)[]>([null])
@@ -308,6 +308,7 @@ export function CsvUploader() {
   const [erpSlot,   setErpSlot]   = useState<SlotState>({ phase: 'idle' })
   const [result,    setResult]    = useState<ApplyResult | null>(null)
   const [expanded,  setExpanded]  = useState(false)
+  const [isSaving,  setIsSaving]  = useState(false)
 
   function setCapsSlot(idx: number, s: SlotState) {
     setCapsSlots(prev => prev.map((v, i) => i === idx ? s : v))
@@ -326,18 +327,16 @@ export function CsvUploader() {
     setResult(null)
   }
 
-  // ── Merge + push to context ────────────────────────────────────────────
-  function applyAll() {
+  // ── Merge + push to context (async: saves to DB) ─────────────────────
+  async function applyAll() {
     const allCaps = capsDataRefs.current.filter(Boolean) as Record<string, string>[][]
     const erpData = erpDataRef.current
     if (allCaps.length === 0 || !erpData) return
 
-    // 여러 CAPS 파일 행 합산 (중복 행은 파서가 composite key로 처리)
     const mergedCaps = allCaps.flat()
-    console.log(`[TAG CAPS 병합] ${allCaps.length}개 파일:`, allCaps.map((r, i) => `파일${i+1}=${r.length}행`).join(', '), `→ 합산 ${mergedCaps.length}행`)
-
+    setIsSaving(true)
     try {
-      const { employees: emps, rawRecords: recs, skippedCount } = setRawData(
+      const { employees: emps, rawRecords: recs, skippedCount } = await setRawData(
         mergedCaps as unknown as CapsRow[],
         erpData    as unknown as ErpUnifiedRow[],
       )
@@ -345,6 +344,8 @@ export function CsvUploader() {
       setExpanded(false)
     } catch (e) {
       setResult({ ok: false, msg: (e as Error).message })
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -391,8 +392,8 @@ export function CsvUploader() {
   }
 
   // ── Reset ─────────────────────────────────────────────────────────────
-  function handleClear() {
-    clearLiveData()
+  async function handleClear() {
+    await clearLiveData()
     capsDataRefs.current = [null]
     erpDataRef.current   = null
     setCapsSlots([{ phase: 'idle' }])
@@ -412,24 +413,48 @@ export function CsvUploader() {
           데이터 소스
         </span>
 
-        <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap ${
-          isLiveData ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
-        }`}>
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLiveData ? 'bg-emerald-500' : 'bg-gray-400'}`} />
-          {isLiveData
-            ? `LIVE · ${employees.length}명 · ${rawRecords.length.toLocaleString()}건`
-            : '목업 데이터'}
-        </div>
+        {/* 상태 배지 */}
+        {isDbLoading ? (
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-50 text-blue-500 text-[11px] font-semibold whitespace-nowrap">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
+            DB 로딩 중…
+          </div>
+        ) : (
+          <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap ${
+            isLiveData ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLiveData ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+            {isLiveData
+              ? `LIVE · ${employees.length}명 · ${rawRecords.length.toLocaleString()}건`
+              : '목업 데이터'}
+          </div>
+        )}
 
-        {isLiveData && capsSlots.some(s => s.phase === 'ready') && erpSlot.phase === 'ready' && (
-          <span className="text-[10px] text-gray-400 truncate hidden sm:block">
-            CAPS {capsSlots.filter(s => s.phase === 'ready').length}파일 + ERP
+        {/* DB 공유 표시 */}
+        {isLiveData && !isDbLoading && (
+          <span className="flex items-center gap-1 text-[10px] text-emerald-600 font-medium whitespace-nowrap">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+            </svg>
+            DB 공유 중
+            {lastUploadedAt && (
+              <span className="text-gray-400 font-normal">
+                · {new Date(lastUploadedAt).toLocaleString('ko-KR', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}
+              </span>
+            )}
           </span>
         )}
 
-        {result?.ok && (
+        {isSaving && (
+          <span className="text-[11px] text-blue-500 font-medium whitespace-nowrap flex items-center gap-1">
+            <span className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+            DB 저장 중…
+          </span>
+        )}
+        {!isSaving && result?.ok && (
           <span className="text-[11px] text-emerald-600 font-medium whitespace-nowrap">
-            ✓ 로드 완료{result.skipped > 0 ? ` (${result.skipped}건 스킵)` : ''}
+            ✓ 저장 완료{result.skipped > 0 ? ` (${result.skipped}건 스킵)` : ''}
           </span>
         )}
         {result && !result.ok && (

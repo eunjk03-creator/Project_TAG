@@ -1,119 +1,160 @@
 'use client'
-import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
 import { EMPLOYEES } from '@/data/orgChart'
 import { ALL_RECORDS } from '@/data/mockData'
 import type { Employee, RawRecord, CapsRow, ErpUnifiedRow } from '@/types/tag'
 import { parseAttendanceData, type ParseResult } from '@/utils/dataParser'
 import { usePolicy } from '@/context/PolicyContext'
 
-// ── localStorage keys ─────────────────────────────────────────────────────
+// ── Context interface ─────────────────────────────────────────────────────
 
-const LS_EMP  = 'tag_live_employees'
-const LS_REC  = 'tag_live_rawRecords'
-const LS_CAPS = 'tag_raw_caps'
-const LS_ERP  = 'tag_raw_erp'   // unified leave + OT
-
-function load<T>(key: string): T | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const s = localStorage.getItem(key)
-    return s ? (JSON.parse(s) as T) : null
-  } catch {
-    return null
-  }
+interface AttendanceSourceContextValue {
+  employees:     Employee[]
+  rawRecords:    RawRecord[]
+  isLiveData:    boolean
+  /** True while initial DB fetch is in flight */
+  isLoading:     boolean
+  /** ISO string of last upload, or null if no data in DB */
+  lastUploadedAt: string | null
+  /**
+   * Admin upload: parses CSV arrays, saves raw data to DB, updates state.
+   * Returns ParseResult so the caller can show a status summary.
+   */
+  setRawData:    (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult>
+  clearLiveData: () => Promise<void>
 }
 
-function save(key: string, value: unknown) {
-  try { localStorage.setItem(key, JSON.stringify(value)) } catch {}
-}
+const AttendanceSourceContext = createContext<AttendanceSourceContextValue | null>(null)
 
-function drop(key: string) {
-  try { localStorage.removeItem(key) } catch {}
-}
+// ── Helpers ───────────────────────────────────────────────────────────────
 
 function normalizeDivisions(employees: Employee[]): Employee[] {
   return employees.map(e => e.division === '기타' ? { ...e, division: '신사업본부' } : e)
 }
 
-// ── Context interface ─────────────────────────────────────────────────────
-
-interface AttendanceSourceContextValue {
-  employees:    Employee[]
-  rawRecords:   RawRecord[]
-  isLiveData:   boolean
-  /**
-   * Upload raw CSV arrays.  Context parses them immediately with the current
-   * policy, persists everything to localStorage, and returns the ParseResult
-   * (including skippedCount) so the caller can show a status summary.
-   */
-  setRawData:   (caps: CapsRow[], erp: ErpUnifiedRow[]) => ParseResult
-  clearLiveData: () => void
+async function dbGet<T>(key: string): Promise<{ data: T | null; updatedAt: string | null }> {
+  try {
+    const res = await fetch(`/api/shared-data/${key}`)
+    if (!res.ok) return { data: null, updatedAt: null }
+    return res.json()
+  } catch {
+    return { data: null, updatedAt: null }
+  }
 }
 
-const AttendanceSourceContext = createContext<AttendanceSourceContextValue | null>(null)
+async function dbPut(key: string, data: unknown): Promise<string | null> {
+  try {
+    const res = await fetch(`/api/shared-data/${key}`, {
+      method:  'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ data }),
+    })
+    if (!res.ok) return null
+    const json = await res.json() as { ok: boolean; updatedAt: string }
+    return json.updatedAt ?? null
+  } catch {
+    return null
+  }
+}
 
 // ── Provider ──────────────────────────────────────────────────────────────
 
 export function AttendanceSourceProvider({ children }: { children: ReactNode }) {
   const { policy } = usePolicy()
 
-  // ── Parsed (derived) state ────────────────────────────────────────────
-  const [liveEmployees, setLiveEmployees] = useState<Employee[] | null>(() => {
-    const stored = load<Employee[]>(LS_EMP)
-    return stored ? normalizeDivisions(stored) : null
-  })
-  const [liveRecords, setLiveRecords] = useState<RawRecord[] | null>(
-    () => load<RawRecord[]>(LS_REC),
-  )
-
-  // ── Raw CSV state (kept for policy-triggered re-parse) ────────────────
-  const [rawCaps, setRawCaps] = useState<CapsRow[]       | null>(() => load<CapsRow[]>(LS_CAPS))
-  const [rawErp,  setRawErp]  = useState<ErpUnifiedRow[] | null>(() => load<ErpUnifiedRow[]>(LS_ERP))
+  const [liveEmployees, setLiveEmployees] = useState<Employee[] | null>(null)
+  const [liveRecords,   setLiveRecords]   = useState<RawRecord[] | null>(null)
+  const [rawCaps,       setRawCaps]       = useState<CapsRow[]        | null>(null)
+  const [rawErp,        setRawErp]        = useState<ErpUnifiedRow[]  | null>(null)
+  const [isLoading,     setIsLoading]     = useState(true)
+  const [lastUploadedAt, setLastUploadedAt] = useState<string | null>(null)
 
   const isLiveData = liveEmployees !== null
+
+  // ── Initial load from DB ──────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setIsLoading(true)
+      const [capsRes, erpRes] = await Promise.all([
+        dbGet<CapsRow[]>('caps_data'),
+        dbGet<ErpUnifiedRow[]>('erp_data'),
+      ])
+
+      if (cancelled) return
+
+      const caps = capsRes.data
+      const erp  = erpRes.data
+
+      if (caps && erp) {
+        const result     = parseAttendanceData(caps, erp, policy)
+        const normalized = normalizeDivisions(result.employees)
+        setRawCaps(caps)
+        setRawErp(erp)
+        setLiveEmployees(normalized)
+        setLiveRecords(result.rawRecords)
+        // use the later of the two timestamps
+        const ts = erpRes.updatedAt ?? capsRes.updatedAt ?? null
+        setLastUploadedAt(ts)
+      }
+
+      setIsLoading(false)
+    }
+    load()
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Re-parse when policy changes (skip initial mount) ─────────────────
   const mountedRef = useRef(false)
   useEffect(() => {
     if (!mountedRef.current) { mountedRef.current = true; return }
     if (!rawCaps || !rawErp) return
-
     const { employees, rawRecords } = parseAttendanceData(rawCaps, rawErp, policy)
     const normalized = normalizeDivisions(employees)
     setLiveEmployees(normalized)
     setLiveRecords(rawRecords)
-    save(LS_EMP, normalized)
-    save(LS_REC, rawRecords)
   }, [policy]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── setRawData: called by CsvUploader on new upload ───────────────────
-  function setRawData(caps: CapsRow[], erp: ErpUnifiedRow[]): ParseResult {
-    setRawCaps(caps); save(LS_CAPS, caps)
-    setRawErp(erp);   save(LS_ERP,  erp)
-
-    const result = parseAttendanceData(caps, erp, policy)
+  // ── setRawData: admin upload → save to DB → update state ──────────────
+  const setRawData = useCallback(async (caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<ParseResult> => {
+    const result     = parseAttendanceData(caps, erp, policy)
     const normalized = normalizeDivisions(result.employees)
+
+    setRawCaps(caps)
+    setRawErp(erp)
     setLiveEmployees(normalized)
     setLiveRecords(result.rawRecords)
-    save(LS_EMP, normalized)
-    save(LS_REC, result.rawRecords)
+
+    // persist to DB (fire both, await both)
+    const [, erpTs] = await Promise.all([
+      dbPut('caps_data', caps),
+      dbPut('erp_data',  erp),
+    ])
+    setLastUploadedAt(erpTs ?? new Date().toISOString())
 
     return { ...result, employees: normalized }
-  }
+  }, [policy])
 
-  // ── clearLiveData: wipe everything ────────────────────────────────────
-  function clearLiveData() {
-    setRawCaps(null); drop(LS_CAPS)
-    setRawErp(null);  drop(LS_ERP)
-    setLiveEmployees(null); drop(LS_EMP)
-    setLiveRecords(null);   drop(LS_REC)
-  }
+  // ── clearLiveData: wipe DB + state ───────────────────────────────────
+  const clearLiveData = useCallback(async () => {
+    await Promise.all([
+      dbPut('caps_data', null),
+      dbPut('erp_data',  null),
+    ])
+    setRawCaps(null)
+    setRawErp(null)
+    setLiveEmployees(null)
+    setLiveRecords(null)
+    setLastUploadedAt(null)
+  }, [])
 
   return (
     <AttendanceSourceContext.Provider value={{
-      employees:  liveEmployees ?? EMPLOYEES,
-      rawRecords: liveRecords   ?? ALL_RECORDS,
+      employees:      liveEmployees ?? EMPLOYEES,
+      rawRecords:     liveRecords   ?? ALL_RECORDS,
       isLiveData,
+      isLoading,
+      lastUploadedAt,
       setRawData,
       clearLiveData,
     }}>

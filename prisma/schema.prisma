@@ -236,6 +236,16 @@ model SlackException {
   @@map("slack_exceptions")
 }
 
+// ─── 공유 데이터 저장소 (CAPS/ERP 공통 공유) ─────────────
+model SharedDataStore {
+  key       String   @id
+  data      Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by")
+
+  @@map("shared_data_store")
+}
+
 // ─── 근태 메모 (테이블 메모 칸) ──────────────────────────
 model AttendanceNote {
   id         String   @id @default(uuid())
