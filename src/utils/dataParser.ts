@@ -350,7 +350,7 @@ function buildLeaveMap(
     const status = String(r['승인상태'] ?? '').trim()
     if (!isAcceptedStatus(status)) continue
 
-    const code = String(r['근태코드'] ?? '').trim()
+    const code = String(r['근태코드'] ?? '').normalize('NFKC').trim()
     if (OT_CODE_SET.has(code)) continue
 
     const category = String(r['근태구분'] ?? '').trim()
@@ -374,7 +374,8 @@ function buildLeaveMap(
 
   // ── Pass 2: accumulation with type inference ──────────────────────────
   for (const { compositeKey, row: r } of dedupMap.values()) {
-    const code = String(r['근태코드'] ?? '').trim()
+    // NFKC 정규화: 전각괄호（）→ 반각() 등 fullwidth 문자 변환
+    const code = String(r['근태코드'] ?? '').normalize('NFKC').trim()
 
     const leaveType = ERP_LEAVE_TYPE_MAP[code]
     if (!leaveType) continue  // code not in leave whitelist — silently skip

@@ -43,3 +43,5 @@ next-env.d.ts
 # raw attendance data — never commit employee records
 *.xls
 *.xlsx
+
+.vercel
