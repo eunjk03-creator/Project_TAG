@@ -5,6 +5,7 @@ import { HOLIDAYS } from '@/data/mockData'
 import {
   computeWorkA, computeWorkB, computeBreakH, computeFinalWork,
 } from '@/utils/attendanceCalc'
+import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Public types ───────────────────────────────────────────────────────────
 
@@ -172,51 +173,36 @@ export function useManagementMetrics(
     )
 
     // ── Backward-compat: all-employee metrics (used by existing dashboard) ─────
-    const divisions = [...new Set(employees.map(e => e.division))]
+    const divisions = sortByDivisionOrder([...new Set(employees.map(e => e.division))])
     const metrics: DivisionMetrics[] = divisions.map(div => {
       const divEmps = employees.filter(e => e.division === div)
       const empIds  = new Set(divEmps.map(e => e.id))
       return buildMetrics(div, empIds, divEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
     })
-    metrics.sort((a, b) =>
-      b.weeklyOver45 !== a.weeklyOver45
-        ? b.weeklyOver45 - a.weeklyOver45
-        : b.avgOtPerPerson - a.avgOtPerPerson,
-    )
     const allIds           = new Set(employees.map(e => e.id))
     const gt               = buildMetrics('전체', allIds, employees.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
     const { division: _d, ...total } = gt
 
     // ── 사원 (non-leader) split ───────────────────────────────────────────────
     const employeeEmps = employees.filter(e => !leaderIdSet.has(e.id))
-    const empDivisions = [...new Set(employeeEmps.map(e => e.division))]
+    const empDivisions = sortByDivisionOrder([...new Set(employeeEmps.map(e => e.division))])
     const employeeMetrics: DivisionMetrics[] = empDivisions.map(div => {
       const divEmps = employeeEmps.filter(e => e.division === div)
       const empIds  = new Set(divEmps.map(e => e.id))
       return buildMetrics(div, empIds, divEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
     })
-    employeeMetrics.sort((a, b) =>
-      b.weeklyOver45 !== a.weeklyOver45
-        ? b.weeklyOver45 - a.weeklyOver45
-        : b.avgOtPerPerson - a.avgOtPerPerson,
-    )
     const empAllIds        = new Set(employeeEmps.map(e => e.id))
     const empGt            = buildMetrics('전체', empAllIds, employeeEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
     const { division: _d2, ...employeeTotal } = empGt
 
     // ── 직책자 (leader) split ─────────────────────────────────────────────────
     const leaderEmps   = employees.filter(e => leaderIdSet.has(e.id))
-    const ldDivisions  = [...new Set(leaderEmps.map(e => e.division))]
+    const ldDivisions  = sortByDivisionOrder([...new Set(leaderEmps.map(e => e.division))])
     const leaderMetrics: DivisionMetrics[] = ldDivisions.map(div => {
       const divEmps = leaderEmps.filter(e => e.division === div)
       const empIds  = new Set(divEmps.map(e => e.id))
       return buildMetrics(div, empIds, divEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
     })
-    leaderMetrics.sort((a, b) =>
-      b.weeklyOver45 !== a.weeklyOver45
-        ? b.weeklyOver45 - a.weeklyOver45
-        : b.avgOtPerPerson - a.avgOtPerPerson,
-    )
     const ldAllIds         = new Set(leaderEmps.map(e => e.id))
     const ldGt             = buildMetrics('전체', ldAllIds, leaderEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
     const { division: _d3, ...leaderTotal } = ldGt

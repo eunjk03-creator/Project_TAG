@@ -3,6 +3,7 @@ import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
 import { computeWorkA, computeDisplayBreakMins, parseTimeToMins } from '@/utils/attendanceCalc'
+import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
 type Status = 'N' | 'OT' | 'L' | 'A' | 'H' | 'APPROVED' | 'WEEKEND' | 'ABSENT'
@@ -176,11 +177,8 @@ export function EmployeeCalendarGrid({
   // ── Dropdown option lists ──────────────────────────────────────────────
   const divOptions = useMemo(() => {
     const seen = new Set<string>()
-    const result: string[] = []
-    for (const e of employees) {
-      if (e.division && !seen.has(e.division)) { seen.add(e.division); result.push(e.division) }
-    }
-    return result.sort((a, b) => a.localeCompare(b, 'ko'))
+    for (const e of employees) { if (e.division) seen.add(e.division) }
+    return sortByDivisionOrder([...seen])
   }, [employees])
 
   const teamOptions = useMemo(() => {

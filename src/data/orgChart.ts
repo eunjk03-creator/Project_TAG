@@ -18,6 +18,23 @@ export const DIVISIONS = [
   '신사업본부',
 ] as const
 
+/** UI 표시용 부서 정렬 순서 (사업부서 → 지원부서) */
+export const DIVISION_ORDER: string[] = [
+  'HMR사업부문', '음료사업부문', '헬스케어사업부문', '뷰티사업부문', '신사업본부',
+  '경영기획본부', '피플본부', 'SCM본부', 'GTM본부', 'HQ',
+]
+
+export function sortByDivisionOrder(divisions: string[]): string[] {
+  return [...divisions].sort((a, b) => {
+    const ai = DIVISION_ORDER.indexOf(a)
+    const bi = DIVISION_ORDER.indexOf(b)
+    if (ai === -1 && bi === -1) return a.localeCompare(b, 'ko')
+    if (ai === -1) return 1
+    if (bi === -1) return -1
+    return ai - bi
+  })
+}
+
 export type DivisionName = (typeof DIVISIONS)[number]
 
 // Known teams per division. Used for Strategy 4 (team-only lookup) and filter dropdowns.

@@ -24,6 +24,7 @@ import { useSlack } from '@/context/SlackContext'
 import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
 import { HR_THRESHOLDS, EXEC_THRESHOLDS } from '@/types/tag'
 import type { RiskView, ProcessedRecord as PR } from '@/types/tag'
+import { sortByDivisionOrder } from '@/data/orgChart'
 
 const ANOMALY_STATUSES = new Set(['지각', '조기퇴근', '지각+조기퇴근', '미태깅', '이상치'])
 
@@ -373,21 +374,9 @@ export default function AdminDashboard() {
     [selectedBUs, filteredRankedEmployees],
   )
 
-  const DIVISION_ORDER = [
-    'HMR사업부문','음료사업부문','헬스케어사업부문','뷰티사업부문','신사업본부',
-    '경영기획본부','피플본부','SCM본부','GTM본부','HQ',
-  ]
   const divisionList = useMemo(
-    () => {
-      const all = [...new Set(baseEmployees.map(e => e.division).filter(Boolean))]
-      return all.sort((a, b) => {
-        const ai = DIVISION_ORDER.indexOf(a); const bi = DIVISION_ORDER.indexOf(b)
-        if (ai === -1 && bi === -1) return a.localeCompare(b, 'ko')
-        if (ai === -1) return 1; if (bi === -1) return -1
-        return ai - bi
-      })
-    },
-    [baseEmployees], // eslint-disable-line react-hooks/exhaustive-deps
+    () => sortByDivisionOrder([...new Set(baseEmployees.map(e => e.division).filter(Boolean))]),
+    [baseEmployees],
   )
 
   const teamList = useMemo(() => {
