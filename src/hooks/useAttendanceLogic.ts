@@ -199,6 +199,11 @@ export function processRecord(
       result = applyOffsiteEntry(result, entry)
     }
 
+    // finalStatus가 base 기본값('정상')이면 computeFinalStatus 호출
+    // 비평일 + 외근 항목만 있어서 applyOffsiteEntry가 스킵된 경우 대응
+    if (result.finalStatus === '정상') {
+      return { ...result, finalStatus: computeFinalStatus(result) }
+    }
     return result
   }
 
