@@ -1,5 +1,5 @@
 'use client'
-import { useMemo, useState, useEffect } from 'react'
+import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
 import {
@@ -63,19 +63,38 @@ export interface Props {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function ColTip({ label, tip }: { label: string; tip: string }) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const ref = useRef<HTMLSpanElement>(null)
+
+  function show() {
+    if (!ref.current) return
+    const r = ref.current.getBoundingClientRect()
+    setPos({ x: r.left + r.width / 2, y: r.top - 6 })
+  }
+
   return (
-    <span className="group relative inline-flex items-center gap-0.5 cursor-default select-none">
+    <span
+      ref={ref}
+      className="inline-flex items-center gap-0.5 cursor-default select-none"
+      onMouseEnter={show}
+      onMouseLeave={() => setPos(null)}
+    >
       {label}
-      <svg className="w-3 h-3 text-gray-300 group-hover:text-gray-400 shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg className="w-3 h-3 text-gray-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
-      <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50
-        w-max max-w-[190px] rounded-lg bg-gray-800 text-white text-[10px] leading-snug
-        px-2.5 py-2 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity duration-150
-        whitespace-normal text-center">
-        {tip}
-        <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800" />
-      </span>
+      {pos && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed z-[9999] pointer-events-none"
+          style={{ left: pos.x, top: pos.y, transform: 'translate(-50%, -100%)' }}
+        >
+          <div className="max-w-[200px] rounded-lg bg-gray-800 text-white text-[10px] leading-snug px-2.5 py-2 shadow-xl whitespace-normal text-center">
+            {tip}
+            <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800" />
+          </div>
+        </div>,
+        document.body,
+      )}
     </span>
   )
 }
@@ -740,36 +759,6 @@ export function AttendanceResultTable({
 
       {/* ── Slim toolbar ──────────────────────────────────────────────────── */}
       <div className="px-4 py-2 border-b border-gray-100 flex items-center gap-2 flex-wrap">
-
-        {/* 52h quick filter */}
-        <button
-          onClick={() => setShowOver52h(v => !v)}
-          className={`text-xs font-semibold px-2.5 py-1 rounded-lg border transition-colors ${
-            showOver52h ? 'bg-red-600 text-white border-red-600' : 'bg-white text-red-600 border-red-200 hover:bg-red-50'
-          }`}
-        >
-          52h 초과
-          {over52hEmployeeIds.size > 0 && (
-            <span className={`ml-1 px-1.5 py-0.5 rounded text-[10px] ${
-              showOver52h ? 'bg-red-500 text-white' : 'bg-red-100 text-red-700'
-            }`}>{over52hEmployeeIds.size}명</span>
-          )}
-        </button>
-
-        {/* Holiday quick filter */}
-        <button
-          onClick={() => setShowHolidayWork(v => !v)}
-          className={`text-xs font-semibold px-2.5 py-1 rounded-lg border transition-colors ${
-            showHolidayWork ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-purple-600 border-purple-200 hover:bg-purple-50'
-          }`}
-        >
-          휴일근로
-          {holidayWorkerIds.size > 0 && (
-            <span className={`ml-1 px-1.5 py-0.5 rounded text-[10px] ${
-              showHolidayWork ? 'bg-purple-500 text-white' : 'bg-purple-100 text-purple-700'
-            }`}>{holidayWorkerIds.size}명</span>
-          )}
-        </button>
 
         <div className="flex-1" />
 
