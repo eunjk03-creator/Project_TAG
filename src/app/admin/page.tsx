@@ -126,14 +126,11 @@ export default function AdminDashboard() {
     erpOtApplied:  true,
   })
   const [selectedDivisions,  setSelectedDivisions]  = useState<string[]>([])
-  const [selectedTeams,      setSelectedTeams]      = useState<string[]>([])
   const [selectedStatuses,   setSelectedStatuses]   = useState<string[]>([])
   const [divisionOpen,       setDivisionOpen]       = useState(false)
-  const [teamOpen,           setTeamOpen]           = useState(false)
   const [statusOpen,         setStatusOpen]         = useState(false)
   const gridRef        = useRef<HTMLDivElement>(null)
   const divDropRef     = useRef<HTMLDivElement>(null)
-  const teamDropRef    = useRef<HTMLDivElement>(null)
   const statusDropRef  = useRef<HTMLDivElement>(null)
 
   const riskThresholds = riskView === 'hr' ? HR_THRESHOLDS : EXEC_THRESHOLDS
@@ -157,14 +154,12 @@ export default function AdminDashboard() {
     function onDown(e: MouseEvent) {
       if (divisionOpen && divDropRef.current && !divDropRef.current.contains(e.target as Node))
         setDivisionOpen(false)
-      if (teamOpen && teamDropRef.current && !teamDropRef.current.contains(e.target as Node))
-        setTeamOpen(false)
       if (statusOpen && statusDropRef.current && !statusDropRef.current.contains(e.target as Node))
         setStatusOpen(false)
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
-  }, [divisionOpen, teamOpen, statusOpen])
+  }, [divisionOpen, statusOpen])
 
   // Scroll to grid on single-BU drill-down
   useEffect(() => {
@@ -378,9 +373,21 @@ export default function AdminDashboard() {
     [selectedBUs, filteredRankedEmployees],
   )
 
+  const DIVISION_ORDER = [
+    'HMR사업부문','음료사업부문','헬스케어사업부문','뷰티사업부문','신사업본부',
+    '경영기획본부','피플본부','SCM본부','GTM본부','HQ',
+  ]
   const divisionList = useMemo(
-    () => [...new Set(baseEmployees.map(e => e.division).filter(Boolean))].sort(),
-    [baseEmployees],
+    () => {
+      const all = [...new Set(baseEmployees.map(e => e.division).filter(Boolean))]
+      return all.sort((a, b) => {
+        const ai = DIVISION_ORDER.indexOf(a); const bi = DIVISION_ORDER.indexOf(b)
+        if (ai === -1 && bi === -1) return a.localeCompare(b, 'ko')
+        if (ai === -1) return 1; if (bi === -1) return -1
+        return ai - bi
+      })
+    },
+    [baseEmployees], // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   const teamList = useMemo(() => {
@@ -486,12 +493,11 @@ export default function AdminDashboard() {
   // ── Filters ───────────────────────────────────────────────────────────────
   const searchQuery = DAY_ALIASES[search.trim().toLowerCase()] ?? search.trim().toLowerCase()
 
-  const isAnyFilterActive = !!search || selectedDivisions.length > 0 || selectedTeams.length > 0 || selectedStatuses.length > 0 || selectedBUs.length > 0
+  const isAnyFilterActive = !!search || selectedDivisions.length > 0 || selectedStatuses.length > 0 || selectedBUs.length > 0
 
   function clearAllFilters() {
     setSearch('')
     setSelectedDivisions([])
-    setSelectedTeams([])
     setSelectedStatuses([])
   }
 
@@ -557,9 +563,6 @@ export default function AdminDashboard() {
 
       // Division: OR within category
       if (selectedDivisions.length > 0 && !selectedDivisions.includes(emp?.division ?? '')) return false
-      // Team: OR within category
-      if (selectedTeams.length > 0 && !selectedTeams.includes(emp?.team ?? '')) return false
-
       // Status/anomaly: OR within category
       if (selectedStatuses.length > 0 && !selectedStatuses.some(s => matchesStatus(r, s))) return false
 
@@ -951,35 +954,6 @@ export default function AdminDashboard() {
         </div>
 
 
-        {/* ── 그리드 전용 검색창 ── */}
-        {view === 'grid' && (
-          <div className="px-6 pb-3 shrink-0">
-            <div className="relative max-w-sm">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
-                fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                type="text"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="사번 또는 이름으로 검색..."
-                className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-lg bg-white
-                  focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400
-                  placeholder-gray-300 shadow-sm transition-colors"
-              />
-              {search && (
-                <button onClick={() => setSearch('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center
-                    text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded-full transition-colors text-xs">
-                  ✕
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* ── Section Deep Dives ── */}
         {openSections.size > 0 && (
           <div className="px-6 pb-4 shrink-0">
@@ -1084,52 +1058,6 @@ export default function AdminDashboard() {
                         className="accent-blue-600 w-3.5 h-3.5 shrink-0 cursor-pointer"
                       />
                       <span className="text-sm text-gray-700">{d}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Team multi-select */}
-            <div className="relative" ref={teamDropRef}>
-              <button
-                onClick={() => { setTeamOpen(p => !p); setDivisionOpen(false); setStatusOpen(false) }}
-                className={`flex items-center gap-1.5 py-2 pl-3 pr-2.5 text-sm border rounded-lg bg-white
-                  shadow-sm transition-colors cursor-pointer focus:outline-none
-                  ${selectedTeams.length > 0 ? 'border-blue-400 text-blue-700' : 'border-gray-200 text-gray-700 hover:border-gray-300'}`}
-              >
-                <span>
-                  {selectedTeams.length === 0 ? '팀 전체'
-                    : selectedTeams.length === 1 ? selectedTeams[0]
-                    : `${selectedTeams[0]} 외 ${selectedTeams.length - 1}`}
-                </span>
-                {selectedTeams.length > 0 && (
-                  <span className="ml-0.5 min-w-[18px] h-[18px] flex items-center justify-center
-                    text-[10px] font-bold bg-blue-600 text-white rounded-full px-1">
-                    {selectedTeams.length}
-                  </span>
-                )}
-                <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${teamOpen ? 'rotate-180' : ''}`}
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              {teamOpen && (
-                <div className="absolute top-full mt-1 left-0 z-30 bg-white border border-gray-200
-                  rounded-lg shadow-lg py-1 min-w-[160px] max-h-[260px] overflow-y-auto">
-                  {teamList.length === 0 ? (
-                    <p className="px-3 py-2 text-xs text-gray-400">본부를 먼저 선택하세요</p>
-                  ) : teamList.map(t => (
-                    <label key={t}
-                      className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-gray-50 cursor-pointer">
-                      <input type="checkbox"
-                        checked={selectedTeams.includes(t)}
-                        onChange={() => setSelectedTeams(prev =>
-                          prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]
-                        )}
-                        className="accent-blue-600 w-3.5 h-3.5 shrink-0 cursor-pointer"
-                      />
-                      <span className="text-sm text-gray-700">{t}</span>
                     </label>
                   ))}
                 </div>
@@ -1283,6 +1211,33 @@ export default function AdminDashboard() {
         </>} {/* end table-only filters */}
 
         {/* ── Grid view ── */}
+        {view === 'grid' && (
+          <div className="px-6 pt-1 pb-2 shrink-0">
+            <div className="relative max-w-sm">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="사번 또는 이름으로 검색..."
+                className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-lg bg-white
+                  focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400
+                  placeholder-gray-300 shadow-sm transition-colors"
+              />
+              {search && (
+                <button onClick={() => setSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center
+                    text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded-full transition-colors text-xs">
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         {view === 'grid' && (
           <div
             ref={gridRef}
