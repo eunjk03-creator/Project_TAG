@@ -43,6 +43,8 @@ const TAG = {
   remote:    'border border-indigo-200 bg-indigo-50  text-indigo-700',
   late:      'border border-amber-200  bg-amber-50   text-amber-600',
   earlyExit: 'border border-orange-200 bg-orange-50  text-orange-600',
+  ot:        'border border-sky-200    bg-sky-50     text-sky-700',
+  normal:    'border border-gray-200   bg-gray-50    text-gray-500',
 }
 
 const DOW_KR = ['일', '월', '화', '수', '목', '금', '토']
@@ -887,6 +889,10 @@ const empStats = useMemo(() => {
                       if (fs === '휴일근무')  tags.push({ cls: TAG.holiday,   text: '휴일근로'   })
                       if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY')
                                              tags.push({ cls: TAG.anomaly,   text: '근무시간 미달' })
+                      if ((rec?.overtimeHours ?? 0) > 0 && !flag)
+                                             tags.push({ cls: TAG.ot,        text: '연장근로'    })
+                      if (tags.length === 0 && fs === '정상' && rec?.dayType === 'WEEKDAY')
+                                             tags.push({ cls: TAG.normal,    text: '일반'        })
 
                       return (
                         <td key={date}
