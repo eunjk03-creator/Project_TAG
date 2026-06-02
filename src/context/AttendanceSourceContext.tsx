@@ -126,11 +126,14 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     setLiveRecords(result.rawRecords)
 
     // persist to DB (fire both, await both)
-    const [, erpTs] = await Promise.all([
+    const [capsTs, erpTs] = await Promise.all([
       dbPut('caps_data', caps),
       dbPut('erp_data',  erp),
     ])
-    setLastUploadedAt(erpTs ?? new Date().toISOString())
+    // only mark as shared if at least one save confirmed
+    if (capsTs || erpTs) {
+      setLastUploadedAt(erpTs ?? capsTs ?? null)
+    }
 
     return { ...result, employees: normalized }
   }, [policy])
