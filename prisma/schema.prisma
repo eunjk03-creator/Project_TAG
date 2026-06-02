@@ -221,6 +221,21 @@ model AttendanceOverride {
   @@map("attendance_overrides")
 }
 
+// ─── Slack 파싱 결과 (공유용) ────────────────────────────
+model SlackException {
+  id         String   @id @default(uuid())
+  empId      String   @map("emp_id")
+  empName    String   @map("emp_name")
+  date       String
+  type       String
+  note       String
+  rawText    String   @map("raw_text")
+  syncedAt   DateTime @default(now()) @map("synced_at")
+
+  @@index([empId, date])
+  @@map("slack_exceptions")
+}
+
 // ─── 근태 메모 (테이블 메모 칸) ──────────────────────────
 model AttendanceNote {
   id         String   @id @default(uuid())

@@ -3,6 +3,7 @@ import {
   createContext,
   useContext,
   useState,
+  useEffect,
   useMemo,
   useCallback,
   type ReactNode,
@@ -93,6 +94,19 @@ export function SlackProvider({ children }: { children: ReactNode }) {
   const [exceptions,  setExceptions]  = useState<SlackException[]>(
     () => loadLS<SlackException[]>(LS_EXCEPTIONS, []),
   )
+
+  // 마운트 시 DB에서 공유 Slack 예외 로드 (다른 사용자가 동기화한 데이터 반영)
+  useEffect(() => {
+    fetch('/api/slack/exceptions')
+      .then(r => r.json())
+      .then((rows: SlackException[]) => {
+        if (rows.length > 0) {
+          setExceptions(rows)
+          localStorage.setItem(LS_EXCEPTIONS, JSON.stringify(rows))
+        }
+      })
+      .catch(() => {})
+  }, [])
   const [isLoading,   setIsLoading]   = useState(false)
   const [lastSynced,  setLastSynced]  = useState<string | null>(
     () => loadLS<string | null>(LS_LAST_SYNC, null),
@@ -151,6 +165,16 @@ export function SlackProvider({ children }: { children: ReactNode }) {
       setExceptions(parsed)
       localStorage.setItem(LS_EXCEPTIONS, JSON.stringify(parsed))
       console.log(`[TAG Slack] localStorage 저장 완료: ${parsed.length}건 예외 규칙`)
+
+      // DB에 저장 (다른 사용자와 공유)
+      fetch('/api/slack/exceptions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed.map(e => ({
+          empId: e.empId, empName: e.empName, date: e.date,
+          type: e.type, note: e.note, rawText: e.rawText,
+        }))),
+      }).catch(() => {})
 
       const ts    = new Date().toLocaleString('ko-KR')
       const range: SyncedRange = { start: config.startDate, end: config.endDate }
