@@ -62,6 +62,24 @@ export interface Props {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
+function ColTip({ label, tip }: { label: string; tip: string }) {
+  return (
+    <span className="group relative inline-flex items-center gap-0.5 cursor-default select-none">
+      {label}
+      <svg className="w-3 h-3 text-gray-300 group-hover:text-gray-400 shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50
+        w-max max-w-[190px] rounded-lg bg-gray-800 text-white text-[10px] leading-snug
+        px-2.5 py-2 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity duration-150
+        whitespace-normal text-center">
+        {tip}
+        <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800" />
+      </span>
+    </span>
+  )
+}
+
 function fmtH(hours: number): string {
   const m  = Math.round(hours * 60)
   const hh = Math.floor(m / 60)
@@ -546,21 +564,21 @@ export function AttendanceResultTable({
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('leaveAmt', {
-      id: 'leaveAmt', header: '연차일수', size: 75, minSize: 60,
+      id: 'leaveAmt', header: () => <ColTip label="연차일수" tip="ERP 휴가 사용량 (0.25=반반차, 0.5=반차, 1=연차)" />, size: 75, minSize: 60,
       filterFn: numMultiSelectFilter,
       cell: i => i.getValue() > 0
         ? <span className="text-blue-700 font-semibold tabular-nums text-xs">{i.getValue()}일</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('leaveType', {
-      id: 'leaveType', header: '연차코드', size: 85, minSize: 65,
+      id: 'leaveType', header: () => <ColTip label="연차코드" tip="ERP 원본 근태코드 (연차·오전반차·리프레쉬휴가 등)" />, size: 85, minSize: 65,
       filterFn: multiSelectFilter,
       cell: i => i.getValue()
         ? <span className="text-blue-600 text-[10px] font-medium">{i.getValue()}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('leaveSource', {
-      id: 'leaveSource', header: '연차정보', size: 72, minSize: 55,
+      id: 'leaveSource', header: () => <ColTip label="연차정보" tip="휴가 출처 — ERP: 정상 상신, Slack: ERP 미상신" />, size: 72, minSize: 55,
       filterFn: multiSelectFilter,
       cell: i => {
         const v = i.getValue() as string
@@ -569,32 +587,32 @@ export function AttendanceResultTable({
       },
     }),
     col.accessor('gasWorkAMins', {
-      id: 'gasWorkAMins', header: '근로A', size: 72, minSize: 55,
+      id: 'gasWorkAMins', header: () => <ColTip label="근로A" tip="출근~퇴근 총 경과시간 (휴가·휴게 차감 전)" />, size: 72, minSize: 55,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-gray-600 text-xs">{fmtH(i.getValue() / 60)}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('breakH', {
-      id: 'breakH', header: '휴게', size: 60, minSize: 48,
+      id: 'breakH', header: () => <ColTip label="휴게" tip="법정 휴게 — 근로A 4h↑30분 / 8h↑60분 / 12h↑120분" />, size: 60, minSize: 48,
       filterFn: numMultiSelectFilter,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-gray-400 text-xs">{Math.round(i.getValue() * 60)}m</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('gasWorkBMins', {
-      id: 'gasWorkBMins', header: '근로B', size: 72, minSize: 55,
+      id: 'gasWorkBMins', header: () => <ColTip label="근로B" tip="근로A − 휴게 = 실 근무시간" />, size: 72, minSize: 55,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-gray-600 text-xs">{fmtH(i.getValue() / 60)}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('finalWorkH', {
-      id: 'finalWorkH', header: '최종근무', size: 85, minSize: 70,
+      id: 'finalWorkH', header: () => <ColTip label="최종근무" tip="법정 인정 근무시간 (근로B 기준)" />, size: 85, minSize: 70,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-semibold text-gray-800">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('attendanceStatus', {
-      id: 'attendanceStatus', header: '근태상태', size: 72, minSize: 60,
+      id: 'attendanceStatus', header: () => <ColTip label="근태상태" tip="이상치 존재 여부 (정상 / 비정상)" />, size: 72, minSize: 60,
       filterFn: multiSelectFilter,
       cell: i => {
         const v = i.getValue() as '정상' | '비정상'
@@ -604,7 +622,7 @@ export function AttendanceResultTable({
       },
     }),
     col.accessor('normalTags', {
-      id: 'normalTags', header: '정상정보', size: 130, minSize: 80,
+      id: 'normalTags', header: () => <ColTip label="정상정보" tip="정상 출근 유형 (일반 · 연장근로 · 외근 · 휴일근로)" />, size: 130, minSize: 80,
       filterFn: tagArrayFilter,
       cell: i => {
         const tags = i.getValue() as string[]
@@ -619,7 +637,7 @@ export function AttendanceResultTable({
       },
     }),
     col.accessor('anomalyTags', {
-      id: 'anomalyTags', header: '비정상정보', size: 150, minSize: 90,
+      id: 'anomalyTags', header: () => <ColTip label="비정상정보" tip="이상치 유형 (지각 · 조기퇴근 · 근무시간미달 · 미태깅)" />, size: 150, minSize: 90,
       filterFn: tagArrayFilter,
       cell: i => {
         const tags = i.getValue() as string[]
@@ -642,25 +660,25 @@ export function AttendanceResultTable({
     }),
     // ── Zone 2: columns 13–16 (Payroll reference) ───────────────────────────
     col.accessor('systemOtH', {
-      id: 'systemOtH', header: '초과근로', size: 80, minSize: 65,
+      id: 'systemOtH', header: () => <ColTip label="초과근로" tip="최종근무 − 8h 초과분" />, size: 80, minSize: 65,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-medium text-amber-600">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('payrollOtH', {
-      id: 'payrollOtH', header: '급여용연장', size: 90, minSize: 72,
+      id: 'payrollOtH', header: () => <ColTip label="급여용연장" tip="근로A − 10h 초과분, 30분 단위 절사 (10h = 8h근무 + 점심1h + 저녁1h)" />, size: 90, minSize: 72,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('payrollNightH', {
-      id: 'payrollNightH', header: '급여용야간', size: 90, minSize: 72,
+      id: 'payrollNightH', header: () => <ColTip label="급여용야간" tip="22시 이후 근무시간, 30분 단위 절사" />, size: 90, minSize: 72,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-semibold text-indigo-600">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('erpOtStatus', {
-      id: 'erpOtApplied', header: 'ERP연장신청', size: 110, minSize: 85,
+      id: 'erpOtApplied', header: () => <ColTip label="ERP연장신청" tip="ERP 연장근무 사전 신청 여부 및 신청 시간" />, size: 110, minSize: 85,
       filterFn: multiSelectFilter,
       cell: i => {
         const v = i.getValue() as '신청' | '미신청' | '—'
