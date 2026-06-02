@@ -3,10 +3,8 @@ import { useMemo } from 'react'
 import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
 import { HOLIDAYS } from '@/data/mockData'
 import {
-  computeWorkA, computeWorkB, computeBreakH, computeFinalWork, computeStatusN,
+  computeWorkA, computeWorkB, computeBreakH, computeFinalWork,
 } from '@/utils/attendanceCalc'
-
-const ANOMALY_STATUSES = new Set(['지각', '조기퇴근', '지각+조기퇴근', '미태깅', '이상치'])
 
 // ── Public types ───────────────────────────────────────────────────────────
 
@@ -121,24 +119,11 @@ function buildMetrics(
   const otHours       = weekdayOtH + nightHours + holidayHoursS
   const weeklyOver45 = [...empIds].filter(id => (weeklyHoursMap[id] ?? 0) > 45).length
 
+  // 테이블 비정상 필터와 동일 기준: r.flag !== null
   let anomalies = 0
   for (const r of recs) {
     if (approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
-    const rawId      = empRawIdMap.get(r.employeeId) ?? r.employeeId.split('_')[0]
-    const leaveAmt   = r.erpLeaveAmount ?? 0
-    const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
-    const workB      = computeWorkB(workA, leaveAmt, r.isUnpaidLeave ?? false)
-    const breakH_    = computeBreakH(workB)
-    const finalWorkH = computeFinalWork(workB, breakH_)
-    const ds: string | null =
-      r.finalStatus === '외근'     ? '외근'     :
-      r.finalStatus === '휴일근무' ? '휴일근무' :
-      computeStatusN({
-        dayType: r.dayType, clockIn: r.clockIn, clockOut: r.clockOut,
-        leaveType: r.leaveType ?? null, erpLeaveAmount: r.erpLeaveAmount,
-        finalWorkH, rawId,
-      })
-    if (ds !== null && ANOMALY_STATUSES.has(ds)) anomalies++
+    if (r.flag !== null && r.flag !== undefined) anomalies++
   }
 
   const capacity          = bizDays * headcount * 8

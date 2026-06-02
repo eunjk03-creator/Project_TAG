@@ -441,6 +441,14 @@ export default function AdminDashboard() {
     }
   }, [scopedRecords, approvedKeys, displayStatusMap])
 
+  // 복합 플래그(중복) 건수: LATE_AND_EARLY_DEPARTURE, LATE_AND_ANOMALY
+  const compoundAnomalyCount = useMemo(() => {
+    return scopedRecords.filter(r => {
+      if (approvedKeys.has(`${r.employeeId}_${r.date}`)) return false
+      return r.flag === 'LATE_AND_EARLY_DEPARTURE' || r.flag === 'LATE_AND_ANOMALY'
+    }).length
+  }, [scopedRecords, approvedKeys])
+
   // Per-status counts for dropdown badges
   const anomalyCounts = useMemo(() => {
     let normal = 0, abnormal = 0
@@ -919,6 +927,11 @@ export default function AdminDashboard() {
                   평균 <span className="text-gray-600 font-medium tabular-nums">
                     {activeTotal.headcount > 0 ? (activeTotal.anomalies / activeTotal.headcount).toFixed(1) : 0}건/인
                   </span>
+                  {compoundAnomalyCount > 0 && (
+                    <span className="ml-1.5 text-orange-500 font-medium tabular-nums">
+                      · 중복 {compoundAnomalyCount}건
+                    </span>
+                  )}
                 </p>
                 {cardStats && cardStats.topAnomalies.anomalies > 0 ? (
                   <p className="text-xs text-gray-400 truncate">
