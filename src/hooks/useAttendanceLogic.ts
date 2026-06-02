@@ -68,9 +68,16 @@ export function processRecord(
   // ── Per-employee attribute overrides ──────────────────────────────────────
   const isParentalLeave    = attrOverrides?.isParentalLeave    ?? false
   const isShortenedHours   = attrOverrides?.isShortenedHours   ?? false
-  const effectiveStdH      = isShortenedHours
-    ? (attrOverrides?.shortenedHoursValue ?? 6)
-    : policy.standardHours
+
+  // 임신기 단축근로 날짜 범위 사전 체크 (effectiveStdH 계산에 필요)
+  const _pregActive = (attrOverrides?.isPregnantReduced ?? false) && (
+    (!attrOverrides?.pregnantReducedFrom || record.date >= attrOverrides.pregnantReducedFrom) &&
+    (!attrOverrides?.pregnantReducedTo   || record.date <= attrOverrides.pregnantReducedTo)
+  )
+
+  const effectiveStdH = _pregActive ? 6 :
+    isShortenedHours ? (attrOverrides?.shortenedHoursValue ?? 6) :
+    policy.standardHours
   const isTenAMStarter     = attrOverrides?.isTenAMStarter     ?? false
   const isDispatchedWorker = attrOverrides?.isDispatchedWorker ?? false
   const isEasyLogis        = attrOverrides?.isEasyLogis        ?? false
