@@ -1,7 +1,7 @@
 'use client'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  Cell, CartesianGrid, ReferenceLine,
+  Cell, CartesianGrid,
 } from 'recharts'
 import type { DivisionMetrics } from '@/hooks/useManagementMetrics'
 import type { Section } from './MetricDeepDive'
@@ -228,11 +228,6 @@ export function SectionComparisonChart({
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
                 <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} width={36} />
-                <ReferenceLine
-                  y={rt.totalAmberH}
-                  stroke="#f59e0b" strokeDasharray="4 2" strokeWidth={1.5}
-                  label={{ value: `기준 ${fmtH(rt.totalAmberH)}`, position: 'insideTopRight', fontSize: 9, fill: '#f59e0b' }}
-                />
                 <Tooltip
                   content={(p) => <TotalTooltip active={p.active} payload={p.payload} rt={rt} />}
                   cursor={{ fill: '#f8fafc' }}
@@ -242,7 +237,7 @@ export function SectionComparisonChart({
                     <Cell
                       key={r.division}
                       fill={BU_PALETTE[i % BU_PALETTE.length]}
-                      fillOpacity={r.avgHours > rt.totalAmberH ? 1 : 0.55}
+                      fillOpacity={0.85}
                     />
                   ))}
                 </Bar>
@@ -270,27 +265,14 @@ export function SectionComparisonChart({
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
                 <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} width={36} />
-                <ReferenceLine
-                  y={rt.otAmberH}
-                  stroke="#f59e0b" strokeDasharray="4 2" strokeWidth={1.5}
-                  label={{ value: '주의', position: 'insideTopRight', fontSize: 9, fill: '#f59e0b' }}
-                />
-                <ReferenceLine
-                  y={rt.otRedH}
-                  stroke="#ef4444" strokeDasharray="4 2" strokeWidth={1.5}
-                  label={{ value: '위험', position: 'insideTopRight', fontSize: 9, fill: '#ef4444' }}
-                />
                 <Tooltip
                   content={(p) => <OvertimeTooltip active={p.active} payload={p.payload} rt={rt} />}
                   cursor={{ fill: '#fffbeb' }}
                 />
                 <Bar dataKey="avgOt" radius={[4, 4, 0, 0]} maxBarSize={52}>
-                  {rows.map(r => {
-                    const fill = r.avgOt > rt.otRedH   ? '#ef4444'
-                               : r.avgOt > rt.otAmberH ? '#f59e0b'
-                               :                          '#10b981'
-                    return <Cell key={r.division} fill={fill} />
-                  })}
+                  {rows.map((r, i) => (
+                    <Cell key={r.division} fill={BU_PALETTE[i % BU_PALETTE.length]} fillOpacity={0.85} />
+                  ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -320,14 +302,6 @@ export function SectionComparisonChart({
 
         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 items-center">
           <BULegend rows={rows} />
-          <span className="flex items-center gap-1 text-[10px] text-amber-500 ml-3">
-            <span className="w-4 border-t-2 border-dashed border-amber-500 inline-block" />
-            주의 ({fmtH(rt.otAmberH)})
-          </span>
-          <span className="flex items-center gap-1 text-[10px] text-red-500">
-            <span className="w-4 border-t-2 border-dashed border-red-500 inline-block" />
-            위험 ({fmtH(rt.otRedH)})
-          </span>
         </div>
       </div>
     )

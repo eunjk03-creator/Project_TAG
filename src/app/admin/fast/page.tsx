@@ -343,7 +343,7 @@ export default function FastDashboard() {
             <div className="mt-2 space-y-0.5">
               <p className="text-xs text-gray-400 flex items-center gap-1">
                 1인 평균
-                <span className="font-medium tabular-nums text-gray-600">
+                <span className={`font-medium tabular-nums ${cardStats && cardStats.avgTotal > HR_THRESHOLDS.totalAmberH ? 'text-amber-600' : 'text-gray-600'}`}>
                   {cardStats ? fmt(cardStats.avgTotal) : '—'}
                 </span>
               </p>
@@ -364,7 +364,7 @@ export default function FastDashboard() {
             <div className="mt-2 space-y-0.5">
               <p className="text-xs text-gray-400 flex items-center gap-1 flex-wrap">
                 1인 평균
-                <span className="font-medium tabular-nums text-gray-600">
+                <span className={`font-medium tabular-nums ${cardStats && cardStats.avgOt > HR_THRESHOLDS.otAmberH ? 'text-amber-600' : 'text-gray-600'}`}>
                   {cardStats ? fmt(cardStats.avgOt) : '—'}
                 </span>
                 <span className="text-gray-300">·</span>
