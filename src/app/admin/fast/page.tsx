@@ -300,14 +300,35 @@ export default function FastDashboard() {
         <div className="flex items-center gap-4 flex-wrap">
           <DateRangePicker value={dateRange} onChange={setDateRange} />
           <span className="text-xs text-gray-400">{bizDays}영업일</span>
-          <div className="ml-auto flex items-center gap-2 text-xs text-gray-500">
-            <span className="font-semibold text-gray-800">{activeTotal.headcount}명</span>
-            <span>·</span>
-            <span>연장 {activeTotal.otHours.toFixed(1)}h</span>
-            <span>·</span>
-            <span className="text-red-500">이상치 {activeTotal.anomalies}건</span>
-          </div>
         </div>
+
+        {/* KPI 카드 */}
+        {activeMetrics.length > 0 && (() => {
+          const n      = activeTotal.headcount || 1
+          const topTotal     = activeMetrics.reduce((a, b) => a.totalHours > b.totalHours ? a : b)
+          const topOt        = activeMetrics.reduce((a, b) => a.otHours    > b.otHours    ? a : b)
+          const topAnomalies = activeMetrics.reduce((a, b) => a.anomalies  > b.anomalies  ? a : b)
+          const avgTotal = activeTotal.totalHours / n
+          const avgOt    = activeTotal.otHours    / n
+          const otRatio  = activeTotal.totalHours > 0 ? (activeTotal.otHours / activeTotal.totalHours) * 100 : 0
+          const fmt = (h: number) => h === 0 ? '—' : `${Math.floor(h)}h${Math.round((h % 1) * 60) > 0 ? ` ${Math.round((h % 1) * 60)}m` : ''}`
+          return (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: '인당 평균 근무',  value: fmt(avgTotal),                   sub: `최다: ${topTotal.division}`     },
+                { label: '인당 평균 연장',  value: fmt(avgOt),                      sub: `${otRatio.toFixed(1)}% 비중`   },
+                { label: '이상치 최다 본부', value: topAnomalies.division,           sub: `${topAnomalies.anomalies}건`   },
+                { label: '연장 최다 본부',  value: topOt.division,                  sub: fmt(topOt.otHours)              },
+              ].map(c => (
+                <div key={c.label} className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
+                  <div className="text-[10px] text-gray-400 mb-1">{c.label}</div>
+                  <div className="text-sm font-semibold text-gray-800 truncate">{c.value}</div>
+                  <div className="text-[11px] text-gray-400 mt-0.5">{c.sub}</div>
+                </div>
+              ))}
+            </div>
+          )
+        })()}
 
         {/* Tab bar */}
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit text-sm">
