@@ -13,7 +13,6 @@ import type { SavePayload } from '@/components/admin/DailyDetailModal'
 import { DateRangePicker } from '@/components/admin/DateRangePicker'
 import { MetricDeepDive } from '@/components/admin/MetricDeepDive'
 import type { Section } from '@/components/admin/MetricDeepDive'
-import { DeptComparisonChart } from '@/components/admin/DeptComparisonChart'
 import { CsvUploader } from '@/components/admin/CsvUploader'
 import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
 import {
@@ -120,7 +119,6 @@ export default function AdminDashboard() {
   const [gridFading,  setGridFading]  = useState(false)
   const [riskView,    setRiskView]    = useState<RiskView>('hr')
   const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader'>('all')
-  const [chartExpanded, setChartExpanded] = useState(true)
   const [showExactTime, setShowExactTime] = useState(false)
   const [tableColVisibility, setTableColVisibility] = useState<Record<string, boolean>>({
     normalTags:    true,
@@ -1404,14 +1402,6 @@ export default function AdminDashboard() {
         />
       )}
 
-      {/* ── Floating multi-BU comparison panel (≥ 2 selected) ── */}
-      <DeptComparisonChart
-        metrics={activeMetrics}
-        selectedBUs={selectedBUs}
-        expanded={chartExpanded}
-        onToggle={() => setChartExpanded(v => !v)}
-        onClose={() => setSelectedBUs([])}
-      />
 
     </div>
   )
