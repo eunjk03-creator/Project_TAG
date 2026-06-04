@@ -105,7 +105,7 @@ export default function AdminDashboard() {
     processedRecords: serverProcessed, isProcessing: isServerProcessing,
     recomputeProcessed,
   } = useAttendanceSource()
-  const { slackNoteMap, exceptions: slackExceptions } = useSlack()
+  const { slackNoteMap } = useSlack()
 
   const [isMounted,           setIsMounted]           = useState(false)
   const [noteMap,             setNoteMap]             = useState<Map<string, string>>(new Map())
@@ -335,25 +335,6 @@ export default function AdminDashboard() {
     })
   }, [serverProcessed, clientProcessed, dateRange.from, dateRange.to, recordOverrides, policy, otExemptIds, slackNoteMap, finalAttrMap])
 
-  // ── Re-trigger server computation on data source changes ─────────────────
-  const skipTriggersRef = useRef({ rules: true, slack: true, policy: true })
-  useEffect(() => {
-    if (skipTriggersRef.current.rules) { skipTriggersRef.current.rules = false; return }
-    if (!isLiveData) return
-    recomputeProcessed()
-  }, [exceptionRules]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (skipTriggersRef.current.slack) { skipTriggersRef.current.slack = false; return }
-    if (!isLiveData) return
-    recomputeProcessed()
-  }, [slackExceptions]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (skipTriggersRef.current.policy) { skipTriggersRef.current.policy = false; return }
-    if (!isLiveData) return
-    recomputeProcessed()
-  }, [policy]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const scopedRecords = useMemo(
     () => allProcessed.filter(r => scopedEmployeeIds.has(r.employeeId)),
@@ -862,14 +843,29 @@ export default function AdminDashboard() {
       {/* ── CSV / Excel uploader ── */}
       <CsvUploader />
 
-      {/* ── Server computation status ── */}
-      {isServerProcessing && (
-        <div className="px-6 py-2 bg-blue-50 border-b border-blue-100 flex items-center gap-2 text-sm text-blue-700">
-          <svg className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-          </svg>
-          서버에서 근태 데이터를 재계산 중입니다...
+      {/* ── Server computation status / manual recompute ── */}
+      {isLiveData && (
+        <div className="px-6 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-3 text-sm">
+          {isServerProcessing ? (
+            <span className="flex items-center gap-2 text-blue-600">
+              <svg className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+              </svg>
+              서버 재계산 중...
+            </span>
+          ) : (
+            <button
+              onClick={recomputeProcessed}
+              className="flex items-center gap-1.5 text-gray-500 hover:text-gray-800 transition-colors"
+              title="예외규칙·Slack·정책 변경 후 수동 재계산"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+              데이터 재계산
+            </button>
+          )}
         </div>
       )}
 
