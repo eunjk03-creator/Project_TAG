@@ -14,6 +14,8 @@ import { EmployeeCalendarGrid } from '@/components/admin/EmployeeCalendarGrid'
 import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
 import { DeptComparisonChart } from '@/components/admin/DeptComparisonChart'
 import { DateRangePicker } from '@/components/admin/DateRangePicker'
+import { MetricDeepDive } from '@/components/admin/MetricDeepDive'
+import type { Section } from '@/components/admin/MetricDeepDive'
 import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
 import { HR_THRESHOLDS } from '@/types/tag'
 import { sortByDivisionOrder } from '@/data/orgChart'
@@ -76,6 +78,7 @@ export default function FastDashboard() {
   const [selectedStatuses,  setSelectedStatuses] = useState<string[]>([])
   const [activeTab,         setActiveTab]        = useState<'all' | 'employee' | 'leader'>('all')
   const [gridPage,          setGridPage]         = useState(0)
+  const [openSections, setOpenSections] = useState<Set<Section>>(new Set())
   const [tableColVisibility] = useState<Record<string, boolean>>({
     normalTags: true, anomalyTags: true, leaveSource: true,
     gasWorkAMins: true, breakH: true, gasWorkBMins: true,
@@ -329,6 +332,20 @@ export default function FastDashboard() {
             </div>
           )
         })()}
+
+        {/* MetricDeepDive 토글 카드 */}
+        <MetricDeepDive
+          openSections={openSections}
+          onToggle={s => setOpenSections(p => { const n = new Set(p); n.has(s) ? n.delete(s) : n.add(s); return n })}
+          metrics={activeMetrics}
+          total={activeTotal}
+          processedRecords={scopedRecords}
+          employees={activeEmployees}
+          approvedKeys={approvedKeys}
+          riskThresholds={HR_THRESHOLDS}
+          selectedBUs={selectedBUs}
+          onBUsChange={setSelectedBUs}
+        />
 
         {/* Tab bar */}
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit text-sm">
