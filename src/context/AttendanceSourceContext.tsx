@@ -20,13 +20,36 @@ interface AttendanceSourceContextValue {
 
 const AttendanceSourceContext = createContext<AttendanceSourceContextValue | null>(null)
 
-// ── Stored shape (parsed output, not raw CSV) ─────────────────────────────
+// ── Stored shape ──────────────────────────────────────────────────────────
 interface StoredAttendance {
   employees:  Employee[]
   rawRecords: RawRecord[]
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+interface CacheEntry extends StoredAttendance {
+  updatedAt: string
+}
+
+// ── localStorage cache helpers ────────────────────────────────────────────
+const LS_KEY = 'tag_attendance_v1'
+
+function lsLoad(): CacheEntry | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const s = localStorage.getItem(LS_KEY)
+    return s ? (JSON.parse(s) as CacheEntry) : null
+  } catch { return null }
+}
+
+function lsSave(entry: CacheEntry) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(entry)) } catch {}
+}
+
+function lsClear() {
+  try { localStorage.removeItem(LS_KEY) } catch {}
+}
+
+// ── DB helpers ────────────────────────────────────────────────────────────
 
 function normalizeDivisions(employees: Employee[]): Employee[] {
   return employees.map(e => e.division === '기타' ? { ...e, division: '신사업본부' } : e)
@@ -62,19 +85,48 @@ async function dbPut(data: StoredAttendance | null): Promise<string | null> {
 export function AttendanceSourceProvider({ children }: { children: ReactNode }) {
   const { policy } = usePolicy()
 
-  const [liveEmployees, setLiveEmployees] = useState<Employee[] | null>(null)
-  const [liveRecords,   setLiveRecords]   = useState<RawRecord[] | null>(null)
-  const [rawCaps,       setRawCaps]       = useState<CapsRow[]        | null>(null)
-  const [rawErp,        setRawErp]        = useState<ErpUnifiedRow[]  | null>(null)
-  const [isLoading,     setIsLoading]     = useState(true)
+  const [liveEmployees,  setLiveEmployees]  = useState<Employee[] | null>(null)
+  const [liveRecords,    setLiveRecords]    = useState<RawRecord[] | null>(null)
+  const [rawCaps,        setRawCaps]        = useState<CapsRow[]        | null>(null)
+  const [rawErp,         setRawErp]         = useState<ErpUnifiedRow[]  | null>(null)
+  const [isLoading,      setIsLoading]      = useState(true)
   const [lastUploadedAt, setLastUploadedAt] = useState<string | null>(null)
 
   const isLiveData = liveEmployees !== null
 
-  // ── Initial load from DB ──────────────────────────────────────────────
+  // ── Initial load: localStorage → 즉시 표시, DB에서 백그라운드 갱신 ──────
   useEffect(() => {
     let cancelled = false
+
     async function load() {
+      // 1) localStorage 캐시가 있으면 즉시 화면에 표시
+      const cached = lsLoad()
+      if (cached?.employees && cached?.rawRecords) {
+        if (!cancelled) {
+          const normalized = normalizeDivisions(cached.employees)
+          setLiveEmployees(normalized)
+          setLiveRecords(cached.rawRecords)
+          setLastUploadedAt(cached.updatedAt)
+          setIsLoading(false)
+        }
+
+        // 2) 백그라운드에서 DB 타임스탬프 확인
+        try {
+          const { data, updatedAt: dbTs } = await dbGet()
+          if (cancelled) return
+          // DB에 더 최신 데이터가 있을 때만 교체
+          if (dbTs && dbTs > cached.updatedAt && data?.employees && data?.rawRecords) {
+            const normalized = normalizeDivisions(data.employees)
+            setLiveEmployees(normalized)
+            setLiveRecords(data.rawRecords)
+            setLastUploadedAt(dbTs)
+            lsSave({ ...data, employees: normalized, updatedAt: dbTs })
+          }
+        } catch { /* 네트워크 오류 시 캐시 그대로 사용 */ }
+        return
+      }
+
+      // 3) 캐시 없으면 DB에서 전체 로드
       setIsLoading(true)
       try {
         const { data, updatedAt } = await dbGet()
@@ -84,6 +136,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
           setLiveEmployees(normalized)
           setLiveRecords(data.rawRecords)
           setLastUploadedAt(updatedAt)
+          if (updatedAt) lsSave({ ...data, employees: normalized, updatedAt })
         }
       } catch (err) {
         console.error('[AttendanceSourceContext] DB load failed:', err)
@@ -91,6 +144,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
         if (!cancelled) setIsLoading(false)
       }
     }
+
     load()
     return () => { cancelled = true }
   }, [])
@@ -106,7 +160,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     setLiveRecords(rawRecords)
   }, [policy]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── setRawData: parse → save parsed output to DB ──────────────────────
+  // ── setRawData: parse → DB 저장 + localStorage 캐시 갱신 ─────────────
   const setRawData = useCallback(async (caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<ParseResult> => {
     const result     = parseAttendanceData(caps, erp, policy)
     const normalized = normalizeDivisions(result.employees)
@@ -117,7 +171,10 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     setLiveRecords(result.rawRecords)
 
     const ts = await dbPut({ employees: normalized, rawRecords: result.rawRecords })
-    if (ts) setLastUploadedAt(ts)
+    if (ts) {
+      setLastUploadedAt(ts)
+      lsSave({ employees: normalized, rawRecords: result.rawRecords, updatedAt: ts })
+    }
 
     return { ...result, employees: normalized }
   }, [policy])
@@ -125,6 +182,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
   // ── clearLiveData ─────────────────────────────────────────────────────
   const clearLiveData = useCallback(async () => {
     await dbPut(null)
+    lsClear()
     setRawCaps(null)
     setRawErp(null)
     setLiveEmployees(null)
