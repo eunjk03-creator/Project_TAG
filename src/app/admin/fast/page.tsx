@@ -12,7 +12,6 @@ import { useSlack } from '@/context/SlackContext'
 import { CsvUploader } from '@/components/admin/CsvUploader'
 import { EmployeeCalendarGrid } from '@/components/admin/EmployeeCalendarGrid'
 import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
-import { DeptComparisonChart } from '@/components/admin/DeptComparisonChart'
 import { DateRangePicker } from '@/components/admin/DateRangePicker'
 import { MetricDeepDive } from '@/components/admin/MetricDeepDive'
 import type { Section } from '@/components/admin/MetricDeepDive'
@@ -590,14 +589,6 @@ export default function FastDashboard() {
         </div>
       )}
 
-      {/* ── Dept comparison chart ── */}
-      <DeptComparisonChart
-        metrics={activeMetrics}
-        selectedBUs={selectedBUs}
-        expanded={true}
-        onToggle={() => {}}
-        onClose={() => setSelectedBUs([])}
-      />
     </div>
   )
 }

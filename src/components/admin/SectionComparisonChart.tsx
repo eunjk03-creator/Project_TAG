@@ -320,17 +320,17 @@ export function SectionComparisonChart({
             content={(p) => <AnomalyTooltip active={p.active} payload={p.payload} />}
             cursor={{ fill: '#fef2f2' }}
           />
-          <Bar dataKey="missed" name="퇴근 미태깅" stackId="s" fill="#f87171" maxBarSize={52} />
-          <Bar dataKey="late"   name="지각"        stackId="s" fill="#fbbf24" radius={[4, 4, 0, 0]} maxBarSize={52} />
+          <Bar dataKey="missed" name="미태깅"   stackId="s" fill="#f87171" maxBarSize={52} />
+          <Bar dataKey="late"   name="지각"     stackId="s" fill="#fbbf24" maxBarSize={52} />
+          <Bar dataKey="early"  name="조기퇴근" stackId="s" fill="#fb923c" maxBarSize={52} />
+          <Bar dataKey="severe" name="근태이상" stackId="s" fill="#c084fc" radius={[4, 4, 0, 0]} maxBarSize={52} />
         </BarChart>
       </ResponsiveContainer>
-      <div className="flex items-center gap-4 mt-3">
-        <span className="flex items-center gap-1.5 text-[10px] text-gray-600">
-          <span className="w-2.5 h-2.5 rounded-sm bg-red-400 shrink-0" /> 퇴근 미태깅
-        </span>
-        <span className="flex items-center gap-1.5 text-[10px] text-gray-600">
-          <span className="w-2.5 h-2.5 rounded-sm bg-amber-400 shrink-0" /> 지각
-        </span>
+      <div className="flex items-center gap-4 mt-3 flex-wrap">
+        <span className="flex items-center gap-1.5 text-[10px] text-gray-600"><span className="w-2.5 h-2.5 rounded-sm bg-red-400 shrink-0" /> 미태깅</span>
+        <span className="flex items-center gap-1.5 text-[10px] text-gray-600"><span className="w-2.5 h-2.5 rounded-sm bg-amber-400 shrink-0" /> 지각</span>
+        <span className="flex items-center gap-1.5 text-[10px] text-gray-600"><span className="w-2.5 h-2.5 rounded-sm bg-orange-400 shrink-0" /> 조기퇴근</span>
+        <span className="flex items-center gap-1.5 text-[10px] text-gray-600"><span className="w-2.5 h-2.5 rounded-sm bg-purple-400 shrink-0" /> 근태이상</span>
       </div>
     </div>
   )
