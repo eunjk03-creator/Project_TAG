@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { processRecord } from '@/lib/processRecord'
 import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
+import { DEFAULT_POLICY } from '@/types/tag'
 import type { PolicySettings, RawRecord, Employee } from '@/types/tag'
 
 interface StoredAttendance {
@@ -12,11 +13,9 @@ interface StoredAttendance {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { policy } = body as { policy: PolicySettings }
-
-    if (!policy) {
-      return NextResponse.json({ error: 'policy required' }, { status: 400 })
-    }
+    const { policy: rawPolicy } = body as { policy?: Partial<PolicySettings> }
+    // Merge with DEFAULT_POLICY so missing fields never cause undefined errors
+    const policy: PolicySettings = { ...DEFAULT_POLICY, ...(rawPolicy ?? {}) }
 
     // 1. Load raw attendance data
     const rawStore = await prisma.sharedDataStore.findUnique({
