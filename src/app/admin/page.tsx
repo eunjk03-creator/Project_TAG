@@ -108,6 +108,8 @@ export default function AdminDashboard() {
   const { slackNoteMap } = useSlack()
 
   const [isMounted,           setIsMounted]           = useState(false)
+  const [snapshotUrl,         setSnapshotUrl]         = useState<string | null>(null)
+  const [isCreatingSnapshot,  setIsCreatingSnapshot]  = useState(false)
   const [noteMap,             setNoteMap]             = useState<Map<string, string>>(new Map())
   const [view,                setView]                = useState<View>('grid')
   const [search,              setSearch]              = useState('')
@@ -843,9 +845,9 @@ export default function AdminDashboard() {
       {/* ── CSV / Excel uploader ── */}
       <CsvUploader />
 
-      {/* ── Server computation status / manual recompute ── */}
+      {/* ── Server computation status / manual recompute / snapshot ── */}
       {isLiveData && (
-        <div className="px-6 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-3 text-sm">
+        <div className="px-6 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-4 text-sm">
           {isServerProcessing ? (
             <span className="flex items-center gap-2 text-blue-600">
               <svg className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
@@ -866,6 +868,57 @@ export default function AdminDashboard() {
               데이터 재계산
             </button>
           )}
+
+          {/* Share snapshot */}
+          <div className="ml-auto flex items-center gap-2">
+            {snapshotUrl ? (
+              <>
+                <input readOnly value={`${window.location.origin}${snapshotUrl}`}
+                  className="text-xs border border-gray-200 rounded px-2 py-1 w-72 bg-white text-gray-700 focus:outline-none" />
+                <button
+                  onClick={() => { navigator.clipboard.writeText(`${window.location.origin}${snapshotUrl}`); setSnapshotUrl(null) }}
+                  className="text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors whitespace-nowrap">
+                  복사 후 닫기
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={async () => {
+                  setIsCreatingSnapshot(true)
+                  try {
+                    const res = await fetch('/api/snapshots', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        leaderIds:          [...leaderIdSet],
+                        globalExclusionIds: [...globalExclusionIds],
+                        otExemptIds:        [...otExemptIds],
+                        companyHolidays:    policy.companyHolidays ?? [],
+                      }),
+                    })
+                    const { url } = await res.json()
+                    if (url) setSnapshotUrl(url)
+                  } finally {
+                    setIsCreatingSnapshot(false)
+                  }
+                }}
+                disabled={isCreatingSnapshot}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 whitespace-nowrap"
+              >
+                {isCreatingSnapshot ? (
+                  <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                  </svg>
+                ) : (
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                  </svg>
+                )}
+                이 화면 공유
+              </button>
+            )}
+          </div>
         </div>
       )}
 
