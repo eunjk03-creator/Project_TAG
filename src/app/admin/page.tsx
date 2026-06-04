@@ -1,6 +1,7 @@
 'use client'
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useAttendanceLogic } from '@/hooks/useAttendanceLogic'
+import { processRecord } from '@/lib/processRecord'
 import { useManagementMetrics } from '@/hooks/useManagementMetrics'
 import { usePolicy } from '@/context/PolicyContext'
 import { EmployeeCalendarGrid } from '@/components/admin/EmployeeCalendarGrid'
@@ -99,8 +100,12 @@ export default function AdminDashboard() {
   const { openDrawer, exceptions, excludeFromOtIds, employeeAttrMap, exceptionRules } = useEmployeeExceptions()
   const { dateRange, setDateRange } = useDateRange()
   const { recordOverrides, setRecordOverrides, resolutions, setResolutions, saveOverride } = useAttendanceData()
-  const { employees: baseEmployees, rawRecords: baseRecords, isLiveData } = useAttendanceSource()
-  const { slackNoteMap } = useSlack()
+  const {
+    employees: baseEmployees, rawRecords: baseRecords, isLiveData,
+    processedRecords: serverProcessed, isProcessing: isServerProcessing,
+    recomputeProcessed,
+  } = useAttendanceSource()
+  const { slackNoteMap, exceptions: slackExceptions } = useSlack()
 
   const [isMounted,           setIsMounted]           = useState(false)
   const [noteMap,             setNoteMap]             = useState<Map<string, string>>(new Map())
@@ -298,9 +303,57 @@ export default function AdminDashboard() {
     ...baseEmployees.filter(e => e.isLeader).map(e => e.id),
   ]), [remappedExcludeIds, baseEmployees])
 
-  const { processed: allProcessed } = useAttendanceLogic(
-    overriddenRawRecords, policy, dateRange.from, dateRange.to, otExemptIds, slackNoteMap, finalAttrMap,
+  // ── Fallback: full client-side computation (used when server result not yet available) ──
+  const { processed: clientProcessed } = useAttendanceLogic(
+    serverProcessed ? [] : overriddenRawRecords,
+    policy, dateRange.from, dateRange.to, otExemptIds, slackNoteMap, finalAttrMap,
   )
+
+  // ── Main processed records: server-computed when available, client fallback otherwise ──
+  const allProcessed = useMemo<ProcessedRecord[]>(() => {
+    if (!serverProcessed) return clientProcessed
+
+    // Fast path: date-range filter only (O(n) scan, no heavy computation)
+    const dateFiltered = serverProcessed.filter(
+      r => r.date >= dateRange.from && r.date <= dateRange.to,
+    )
+
+    // Apply admin overrides locally — only re-process changed records (O(k), k << n)
+    if (Object.keys(recordOverrides).length === 0) return dateFiltered
+    return dateFiltered.map(r => {
+      const ov = recordOverrides[`${r.employeeId}_${r.date}`]
+      if (!ov) return r
+      return processRecord(
+        {
+          ...r,
+          clockIn:      ov.clockIn      ?? r.clockIn,
+          clockOut:     ov.clockOut     ?? r.clockOut,
+          erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
+        },
+        policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId),
+      )
+    })
+  }, [serverProcessed, clientProcessed, dateRange.from, dateRange.to, recordOverrides, policy, otExemptIds, slackNoteMap, finalAttrMap])
+
+  // ── Re-trigger server computation on data source changes ─────────────────
+  const skipTriggersRef = useRef({ rules: true, slack: true, policy: true })
+  useEffect(() => {
+    if (skipTriggersRef.current.rules) { skipTriggersRef.current.rules = false; return }
+    if (!isLiveData) return
+    recomputeProcessed()
+  }, [exceptionRules]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (skipTriggersRef.current.slack) { skipTriggersRef.current.slack = false; return }
+    if (!isLiveData) return
+    recomputeProcessed()
+  }, [slackExceptions]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (skipTriggersRef.current.policy) { skipTriggersRef.current.policy = false; return }
+    if (!isLiveData) return
+    recomputeProcessed()
+  }, [policy]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const scopedRecords = useMemo(
     () => allProcessed.filter(r => scopedEmployeeIds.has(r.employeeId)),
@@ -808,6 +861,17 @@ export default function AdminDashboard() {
 
       {/* ── CSV / Excel uploader ── */}
       <CsvUploader />
+
+      {/* ── Server computation status ── */}
+      {isServerProcessing && (
+        <div className="px-6 py-2 bg-blue-50 border-b border-blue-100 flex items-center gap-2 text-sm text-blue-700">
+          <svg className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+          </svg>
+          서버에서 근태 데이터를 재계산 중입니다...
+        </div>
+      )}
 
       {/* ── All / Employee / Leader 3-way tab bar ── */}
       <div className="px-6 py-2.5 bg-white border-b border-gray-100 shrink-0">

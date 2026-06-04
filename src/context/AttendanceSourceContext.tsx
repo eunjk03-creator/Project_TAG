@@ -2,36 +2,50 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
 import { EMPLOYEES } from '@/data/orgChart'
 import { ALL_RECORDS } from '@/data/mockData'
-import type { Employee, RawRecord, CapsRow, ErpUnifiedRow } from '@/types/tag'
+import type { Employee, RawRecord, CapsRow, ErpUnifiedRow, ProcessedRecord, PolicySettings } from '@/types/tag'
 import { parseAttendanceData, type ParseResult } from '@/utils/dataParser'
 import { usePolicy } from '@/context/PolicyContext'
 
 // ── Context interface ─────────────────────────────────────────────────────
 
 interface AttendanceSourceContextValue {
-  employees:      Employee[]
-  rawRecords:     RawRecord[]
-  isLiveData:     boolean
-  isLoading:      boolean
-  lastUploadedAt: string | null
-  setRawData:     (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult>
-  clearLiveData:  () => Promise<void>
+  employees:          Employee[]
+  rawRecords:         RawRecord[]
+  processedRecords:   ProcessedRecord[] | null
+  processedAt:        string | null
+  isLiveData:         boolean
+  isLoading:          boolean
+  isProcessing:       boolean
+  lastUploadedAt:     string | null
+  setRawData:         (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult>
+  clearLiveData:      () => Promise<void>
+  recomputeProcessed: () => Promise<void>
 }
 
 const AttendanceSourceContext = createContext<AttendanceSourceContextValue | null>(null)
 
-// ── Stored shape ──────────────────────────────────────────────────────────
+// ── Stored shapes ─────────────────────────────────────────────────────────
 interface StoredAttendance {
   employees:  Employee[]
   rawRecords: RawRecord[]
+}
+
+interface StoredProcessed {
+  processed:   ProcessedRecord[]
+  processedAt: string
 }
 
 interface CacheEntry extends StoredAttendance {
   updatedAt: string
 }
 
-// ── localStorage cache helpers ────────────────────────────────────────────
-const LS_KEY = 'tag_attendance_v1'
+interface ProcessedCacheEntry extends StoredProcessed {
+  cachedAt: string
+}
+
+// ── localStorage helpers ──────────────────────────────────────────────────
+const LS_KEY           = 'tag_attendance_v1'
+const LS_PROCESSED_KEY = 'tag_processed_v1'
 
 function lsLoad(): CacheEntry | null {
   if (typeof window === 'undefined') return null
@@ -47,6 +61,22 @@ function lsSave(entry: CacheEntry) {
 
 function lsClear() {
   try { localStorage.removeItem(LS_KEY) } catch {}
+}
+
+function lsLoadProcessed(): ProcessedCacheEntry | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const s = localStorage.getItem(LS_PROCESSED_KEY)
+    return s ? (JSON.parse(s) as ProcessedCacheEntry) : null
+  } catch { return null }
+}
+
+function lsSaveProcessed(entry: ProcessedCacheEntry) {
+  try { localStorage.setItem(LS_PROCESSED_KEY, JSON.stringify(entry)) } catch {}
+}
+
+function lsClearProcessed() {
+  try { localStorage.removeItem(LS_PROCESSED_KEY) } catch {}
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────
@@ -80,26 +110,73 @@ async function dbPut(data: StoredAttendance | null): Promise<string | null> {
   }
 }
 
+async function dbGetProcessed(): Promise<{ data: StoredProcessed | null; updatedAt: string | null }> {
+  try {
+    const res = await fetch('/api/shared-data/processed_data')
+    if (!res.ok) return { data: null, updatedAt: null }
+    return res.json()
+  } catch {
+    return { data: null, updatedAt: null }
+  }
+}
+
+async function apiCompute(policy: PolicySettings): Promise<string | null> {
+  try {
+    const res = await fetch('/api/compute-attendance', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ policy }),
+    })
+    if (!res.ok) return null
+    const json = await res.json() as { ok: boolean; processedAt: string }
+    return json.processedAt ?? null
+  } catch {
+    return null
+  }
+}
+
 // ── Provider ──────────────────────────────────────────────────────────────
 
 export function AttendanceSourceProvider({ children }: { children: ReactNode }) {
   const { policy } = usePolicy()
 
-  const [liveEmployees,  setLiveEmployees]  = useState<Employee[] | null>(null)
-  const [liveRecords,    setLiveRecords]    = useState<RawRecord[] | null>(null)
-  const [rawCaps,        setRawCaps]        = useState<CapsRow[]        | null>(null)
-  const [rawErp,         setRawErp]         = useState<ErpUnifiedRow[]  | null>(null)
-  const [isLoading,      setIsLoading]      = useState(true)
-  const [lastUploadedAt, setLastUploadedAt] = useState<string | null>(null)
+  const [liveEmployees,    setLiveEmployees]    = useState<Employee[] | null>(null)
+  const [liveRecords,      setLiveRecords]      = useState<RawRecord[] | null>(null)
+  const [rawCaps,          setRawCaps]          = useState<CapsRow[]       | null>(null)
+  const [rawErp,           setRawErp]           = useState<ErpUnifiedRow[] | null>(null)
+  const [processedRecords, setProcessedRecords] = useState<ProcessedRecord[] | null>(null)
+  const [processedAt,      setProcessedAt]      = useState<string | null>(null)
+  const [isLoading,        setIsLoading]        = useState(true)
+  const [isProcessing,     setIsProcessing]     = useState(false)
+  const [lastUploadedAt,   setLastUploadedAt]   = useState<string | null>(null)
 
   const isLiveData = liveEmployees !== null
 
-  // ── Initial load: localStorage → 즉시 표시, DB에서 백그라운드 갱신 ──────
+  // ── Load processed records from DB / localStorage ─────────────────────
+  const loadProcessedFromDB = useCallback(async () => {
+    const { data, updatedAt } = await dbGetProcessed()
+    if (data?.processed?.length) {
+      setProcessedRecords(data.processed)
+      setProcessedAt(updatedAt ?? data.processedAt)
+      lsSaveProcessed({ processed: data.processed, processedAt: data.processedAt, cachedAt: new Date().toISOString() })
+    }
+  }, [])
+
+  // ── Initial load: localStorage → 즉시 표시, DB 백그라운드 갱신 ─────────
   useEffect(() => {
     let cancelled = false
 
     async function load() {
-      // 1) localStorage 캐시가 있으면 즉시 화면에 표시
+      // Load processed records from localStorage immediately
+      const cachedProcessed = lsLoadProcessed()
+      if (cachedProcessed?.processed?.length) {
+        if (!cancelled) {
+          setProcessedRecords(cachedProcessed.processed)
+          setProcessedAt(cachedProcessed.processedAt)
+        }
+      }
+
+      // Load raw records
       const cached = lsLoad()
       if (cached?.employees && cached?.rawRecords) {
         if (!cancelled) {
@@ -110,33 +187,57 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
           setIsLoading(false)
         }
 
-        // 2) 백그라운드에서 DB 타임스탬프 확인
+        // Background: sync DB raw data
         try {
           const { data, updatedAt: dbTs } = await dbGet()
           if (cancelled) return
-          // DB에 더 최신 데이터가 있을 때만 교체
           if (dbTs && dbTs > cached.updatedAt && data?.employees && data?.rawRecords) {
             const normalized = normalizeDivisions(data.employees)
-            setLiveEmployees(normalized)
-            setLiveRecords(data.rawRecords)
-            setLastUploadedAt(dbTs)
-            lsSave({ ...data, employees: normalized, updatedAt: dbTs })
+            if (!cancelled) {
+              setLiveEmployees(normalized)
+              setLiveRecords(data.rawRecords)
+              setLastUploadedAt(dbTs)
+              lsSave({ ...data, employees: normalized, updatedAt: dbTs })
+            }
           }
-        } catch { /* 네트워크 오류 시 캐시 그대로 사용 */ }
+        } catch { /* network error — use cache */ }
+
+        // Background: sync DB processed data
+        try {
+          const { data: pd, updatedAt: pdTs } = await dbGetProcessed()
+          if (cancelled) return
+          const currentPdAt = cachedProcessed?.processedAt ?? ''
+          if (pd?.processed?.length && (!currentPdAt || (pdTs && pdTs > currentPdAt))) {
+            if (!cancelled) {
+              setProcessedRecords(pd.processed)
+              setProcessedAt(pdTs ?? pd.processedAt)
+              lsSaveProcessed({ processed: pd.processed, processedAt: pd.processedAt, cachedAt: new Date().toISOString() })
+            }
+          }
+        } catch { /* network error — use cache */ }
         return
       }
 
-      // 3) 캐시 없으면 DB에서 전체 로드
+      // No cache — full load from DB
       setIsLoading(true)
       try {
-        const { data, updatedAt } = await dbGet()
+        const [rawResult, pdResult] = await Promise.all([dbGet(), dbGetProcessed()])
         if (cancelled) return
+
+        const { data, updatedAt } = rawResult
         if (data?.employees && data?.rawRecords) {
           const normalized = normalizeDivisions(data.employees)
           setLiveEmployees(normalized)
           setLiveRecords(data.rawRecords)
           setLastUploadedAt(updatedAt)
           if (updatedAt) lsSave({ ...data, employees: normalized, updatedAt })
+        }
+
+        const { data: pd, updatedAt: pdTs } = pdResult
+        if (pd?.processed?.length) {
+          setProcessedRecords(pd.processed)
+          setProcessedAt(pdTs ?? pd.processedAt)
+          lsSaveProcessed({ processed: pd.processed, processedAt: pd.processedAt, cachedAt: new Date().toISOString() })
         }
       } catch (err) {
         console.error('[AttendanceSourceContext] DB load failed:', err)
@@ -149,7 +250,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     return () => { cancelled = true }
   }, [])
 
-  // ── Re-parse when policy changes (only if raw CSV is in memory) ────────
+  // ── Re-parse rawRecords when policy changes (raw CSV in memory) ────────
   const mountedRef = useRef(false)
   useEffect(() => {
     if (!mountedRef.current) { mountedRef.current = true; return }
@@ -160,7 +261,22 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     setLiveRecords(rawRecords)
   }, [policy]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── setRawData: parse → DB 저장 + localStorage 캐시 갱신 ─────────────
+  // ── recomputeProcessed: trigger server-side computation ───────────────
+  const recomputeProcessed = useCallback(async () => {
+    setIsProcessing(true)
+    try {
+      const processedAt = await apiCompute(policy)
+      if (processedAt) {
+        await loadProcessedFromDB()
+      }
+    } catch (err) {
+      console.error('[AttendanceSourceContext] recompute failed:', err)
+    } finally {
+      setIsProcessing(false)
+    }
+  }, [policy, loadProcessedFromDB])
+
+  // ── setRawData: parse → save to DB → server compute ───────────────────
   const setRawData = useCallback(async (caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<ParseResult> => {
     const result     = parseAttendanceData(caps, erp, policy)
     const normalized = normalizeDivisions(result.employees)
@@ -176,29 +292,44 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
       lsSave({ employees: normalized, rawRecords: result.rawRecords, updatedAt: ts })
     }
 
+    // Trigger server-side computation (non-blocking)
+    setIsProcessing(true)
+    apiCompute(policy).then(async (processedAt) => {
+      if (processedAt) {
+        await loadProcessedFromDB()
+      }
+    }).catch(console.error).finally(() => setIsProcessing(false))
+
     return { ...result, employees: normalized }
-  }, [policy])
+  }, [policy, loadProcessedFromDB])
 
   // ── clearLiveData ─────────────────────────────────────────────────────
   const clearLiveData = useCallback(async () => {
     await dbPut(null)
     lsClear()
+    lsClearProcessed()
     setRawCaps(null)
     setRawErp(null)
     setLiveEmployees(null)
     setLiveRecords(null)
+    setProcessedRecords(null)
+    setProcessedAt(null)
     setLastUploadedAt(null)
   }, [])
 
   return (
     <AttendanceSourceContext.Provider value={{
-      employees:      liveEmployees ?? EMPLOYEES,
-      rawRecords:     liveRecords   ?? ALL_RECORDS,
+      employees:          liveEmployees ?? EMPLOYEES,
+      rawRecords:         liveRecords   ?? ALL_RECORDS,
+      processedRecords,
+      processedAt,
       isLiveData,
       isLoading,
+      isProcessing,
       lastUploadedAt,
       setRawData,
       clearLiveData,
+      recomputeProcessed,
     }}>
       {children}
     </AttendanceSourceContext.Provider>
