@@ -79,6 +79,9 @@ export default function FastDashboard() {
   const [activeTab,         setActiveTab]        = useState<'all' | 'employee' | 'leader'>('all')
   const [gridPage,          setGridPage]         = useState(0)
   const [openSections, setOpenSections] = useState<Set<Section>>(new Set())
+  function toggleSection(s: Section) {
+    setOpenSections(prev => { const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n })
+  }
   const [tableColVisibility] = useState<Record<string, boolean>>({
     normalTags: true, anomalyTags: true, leaveSource: true,
     gasWorkAMins: true, breakH: true, gasWorkBMins: true,
@@ -263,6 +266,28 @@ export default function FastDashboard() {
   const activeMetrics = activeTab === 'all' ? metrics : activeTab === 'employee' ? employeeMetrics : leaderMetrics
   const activeTotal   = activeTab === 'all' ? total   : activeTab === 'employee' ? employeeTotal   : leaderTotal
 
+  function fmt(h: number): string {
+    if (h === 0) return '—'
+    const m = Math.round(h * 60)
+    return `${Math.floor(m / 60)}h${m % 60 > 0 ? ` ${m % 60}m` : ''}`
+  }
+
+  const deptLabel = selectedBUs.length === 1 ? selectedBUs[0] : selectedBUs.length > 1 ? `${selectedBUs.length}개 본부` : '전체'
+
+  const cardStats = useMemo(() => {
+    if (!activeMetrics.length) return null
+    const n = activeTotal.headcount || 1
+    const topTotal     = activeMetrics.reduce((a, b) => a.totalHours > b.totalHours ? a : b)
+    const topOt        = activeMetrics.reduce((a, b) => a.otHours    > b.otHours    ? a : b)
+    const topAnomalies = activeMetrics.reduce((a, b) => a.anomalies  > b.anomalies  ? a : b)
+    return {
+      avgTotal: activeTotal.totalHours / n,
+      avgOt:    activeTotal.otHours    / n,
+      otRatio:  activeTotal.totalHours > 0 ? (activeTotal.otHours / activeTotal.totalHours) * 100 : 0,
+      topTotal, topOt, topAnomalies,
+    }
+  }, [activeMetrics, activeTotal])
+
   const divisionList = useMemo(
     () => sortByDivisionOrder([...new Set(baseEmployees.map(e => e.division).filter(Boolean))]),
     [baseEmployees],
@@ -305,49 +330,115 @@ export default function FastDashboard() {
           <span className="text-xs text-gray-400">{bizDays}영업일</span>
         </div>
 
-        {/* KPI 카드 */}
-        {activeMetrics.length > 0 && (() => {
-          const n      = activeTotal.headcount || 1
-          const topTotal     = activeMetrics.reduce((a, b) => a.totalHours > b.totalHours ? a : b)
-          const topOt        = activeMetrics.reduce((a, b) => a.otHours    > b.otHours    ? a : b)
-          const topAnomalies = activeMetrics.reduce((a, b) => a.anomalies  > b.anomalies  ? a : b)
-          const avgTotal = activeTotal.totalHours / n
-          const avgOt    = activeTotal.otHours    / n
-          const otRatio  = activeTotal.totalHours > 0 ? (activeTotal.otHours / activeTotal.totalHours) * 100 : 0
-          const fmt = (h: number) => h === 0 ? '—' : `${Math.floor(h)}h${Math.round((h % 1) * 60) > 0 ? ` ${Math.round((h % 1) * 60)}m` : ''}`
-          return (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                { label: '인당 평균 근무',  value: fmt(avgTotal),                   sub: `최다: ${topTotal.division}`     },
-                { label: '인당 평균 연장',  value: fmt(avgOt),                      sub: `${otRatio.toFixed(1)}% 비중`   },
-                { label: '이상치 최다 본부', value: topAnomalies.division,           sub: `${topAnomalies.anomalies}건`   },
-                { label: '연장 최다 본부',  value: topOt.division,                  sub: fmt(topOt.otHours)              },
-              ].map(c => (
-                <div key={c.label} className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
-                  <div className="text-[10px] text-gray-400 mb-1">{c.label}</div>
-                  <div className="text-sm font-semibold text-gray-800 truncate">{c.value}</div>
-                  <div className="text-[11px] text-gray-400 mt-0.5">{c.sub}</div>
-                </div>
-              ))}
+        {/* KPI 카드 3개 — 원본 admin과 동일 */}
+        <div className="grid grid-cols-3 gap-4">
+
+          {/* Card 1 — 총 근로시간 */}
+          <div className={`bg-white rounded-xl border p-4 transition-colors ${openSections.has('total') ? 'border-blue-300 ring-1 ring-blue-200' : 'border-gray-200'}`}>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs font-medium text-gray-500">총 근로시간</p>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium truncate max-w-[72px]">{deptLabel}</span>
             </div>
-          )
-        })()}
+            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">{fmt(activeTotal.totalHours)}</p>
+            <div className="mt-2 space-y-0.5">
+              <p className="text-xs text-gray-400 flex items-center gap-1">
+                1인 평균
+                <span className={`font-medium tabular-nums ${cardStats && cardStats.avgTotal > HR_THRESHOLDS.totalAmberH ? 'text-amber-600' : 'text-gray-600'}`}>
+                  {cardStats ? fmt(cardStats.avgTotal) : '—'}
+                </span>
+              </p>
+              {cardStats && <p className="text-xs text-gray-400 truncate">최다 <span className="text-blue-600 font-medium">{cardStats.topTotal.division}</span></p>}
+            </div>
+            <button onClick={() => toggleSection('total')} className="mt-2.5 text-xs text-blue-500 hover:text-blue-700 font-medium transition-colors">
+              📊 지표 분석 {openSections.has('total') ? '▴' : '▾'}
+            </button>
+          </div>
 
-        {/* MetricDeepDive 토글 카드 */}
-        <MetricDeepDive
-          openSections={openSections}
-          onToggle={s => setOpenSections(p => { const n = new Set(p); n.has(s) ? n.delete(s) : n.add(s); return n })}
-          metrics={activeMetrics}
-          total={activeTotal}
-          processedRecords={scopedRecords}
-          employees={activeEmployees}
-          approvedKeys={approvedKeys}
-          riskThresholds={HR_THRESHOLDS}
-          selectedBUs={selectedBUs}
-          onBUsChange={setSelectedBUs}
-        />
+          {/* Card 2 — 연장근로 */}
+          <div className={`bg-white rounded-xl border p-4 transition-colors ${openSections.has('overtime') ? 'border-amber-300 ring-1 ring-amber-200' : 'border-gray-200'}`}>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs font-medium text-gray-500">연장근로</p>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium truncate max-w-[72px]">{deptLabel}</span>
+            </div>
+            <p className="text-2xl font-bold text-amber-500 mt-1 tabular-nums">{fmt(activeTotal.otHours)}</p>
+            <div className="mt-2 space-y-0.5">
+              <p className="text-xs text-gray-400 flex items-center gap-1 flex-wrap">
+                1인 평균
+                <span className={`font-medium tabular-nums ${cardStats && cardStats.avgOt > HR_THRESHOLDS.otAmberH ? 'text-amber-600' : 'text-gray-600'}`}>
+                  {cardStats ? fmt(cardStats.avgOt) : '—'}
+                </span>
+                <span className="text-gray-300">·</span>
+                <span className="tabular-nums text-gray-400">{cardStats ? cardStats.otRatio.toFixed(1) : 0}%</span>
+              </p>
+              {cardStats && <p className="text-xs text-gray-400 truncate">최다 <span className="text-amber-600 font-medium">{cardStats.topOt.division}</span></p>}
+            </div>
+            <button onClick={() => toggleSection('overtime')} className="mt-2.5 text-xs text-amber-500 hover:text-amber-700 font-medium transition-colors">
+              📊 지표 분석 {openSections.has('overtime') ? '▴' : '▾'}
+            </button>
+          </div>
 
-        {/* Tab bar */}
+          {/* Card 3 — 이상치 */}
+          <div className={`rounded-xl border p-4 transition-colors ${
+            activeTotal.anomalies > 0
+              ? openSections.has('anomaly') ? 'bg-red-50 border-red-400 ring-1 ring-red-200' : 'bg-red-50 border-red-200'
+              : openSections.has('anomaly') ? 'bg-white border-red-300 ring-1 ring-red-200' : 'bg-white border-gray-200'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs font-medium text-gray-500">이상치</p>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium truncate max-w-[72px]">{deptLabel}</span>
+            </div>
+            <p className={`text-2xl font-bold mt-1 tabular-nums ${activeTotal.anomalies > 0 ? 'text-red-600' : 'text-gray-900'}`}>
+              {activeTotal.anomalies}건
+            </p>
+            <div className="mt-2 space-y-0.5">
+              <p className="text-xs text-gray-400">
+                평균 <span className="text-gray-600 font-medium tabular-nums">
+                  {activeTotal.headcount > 0 ? (activeTotal.anomalies / activeTotal.headcount).toFixed(1) : 0}건/인
+                </span>
+              </p>
+              {cardStats && cardStats.topAnomalies.anomalies > 0
+                ? <p className="text-xs text-gray-400 truncate">최다 <span className="text-red-600 font-medium">{cardStats.topAnomalies.division}</span></p>
+                : <p className="text-xs text-gray-400">이상치 없음</p>
+              }
+            </div>
+            <button onClick={() => toggleSection('anomaly')} className="mt-2.5 text-xs text-red-500 hover:text-red-700 font-medium transition-colors">
+              📊 지표 분석 {openSections.has('anomaly') ? '▴' : '▾'}
+            </button>
+          </div>
+
+        </div>
+
+      </div>
+
+      {/* ── MetricDeepDive 펼침 영역 ── */}
+      {openSections.size > 0 && (
+        <div className="shrink-0 px-6 pb-4">
+          {selectedBUs.length >= 1 && (
+            <div className="flex items-center gap-2 mb-3">
+              <button onClick={() => setSelectedBUs([])}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full border bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 transition-colors">
+                {selectedBUs.length === 1 ? `필터됨: ${selectedBUs[0]}` : `비교 중: ${selectedBUs.length}개 본부`}
+                <span className="opacity-60">✕</span>
+              </button>
+            </div>
+          )}
+          <MetricDeepDive
+            openSections={openSections}
+            onToggle={toggleSection}
+            metrics={activeMetrics}
+            total={activeTotal}
+            processedRecords={scopedRecords}
+            employees={activeEmployees}
+            approvedKeys={approvedKeys}
+            riskThresholds={HR_THRESHOLDS}
+            selectedBUs={selectedBUs}
+            onBUsChange={setSelectedBUs}
+          />
+        </div>
+      )}
+
+      {/* ── Tab bar ── */}
+      <div className="shrink-0 px-6 py-2.5 bg-white border-b border-gray-100">
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit text-sm">
           {([
             { key: 'all'      as const, label: '전체',   count: total.headcount         },
