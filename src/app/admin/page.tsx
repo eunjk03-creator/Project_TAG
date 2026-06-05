@@ -117,6 +117,8 @@ export default function AdminDashboard() {
   const [selectedBUs,         setSelectedBUs]         = useState<string[]>([])
   const [selectedRank,        setSelectedRank]        = useState<string | null>(null)
   const [gridFading,  setGridFading]  = useState(false)
+  const [gridPage,    setGridPage]    = useState(0)
+  const GRID_PAGE_SIZE = 40
   const [riskView,    setRiskView]    = useState<RiskView>('hr')
   const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader'>('all')
   const [showExactTime, setShowExactTime] = useState(false)
@@ -154,6 +156,9 @@ export default function AdminDashboard() {
     const t = setTimeout(() => setGridFading(false), 60)
     return () => clearTimeout(t)
   }, [selectedBUs, selectedRank])
+
+  // Reset grid page when filters change
+  useEffect(() => { setGridPage(0) }, [search, selectedDivisions, selectedBUs, activeTab, dateRange])
 
   // Close multi-select dropdowns on outside click
   useEffect(() => {
@@ -659,6 +664,13 @@ export default function AdminDashboard() {
     }
     return result
   }, [filteredRankedEmployees, searchQuery, selectedDivisions])
+
+  // ── Grid pagination ──────────────────────────────────────────────────────
+  const gridTotalPages = Math.ceil(searchFilteredEmployees.length / GRID_PAGE_SIZE)
+  const gridEmployees  = useMemo(
+    () => searchFilteredEmployees.slice(gridPage * GRID_PAGE_SIZE, (gridPage + 1) * GRID_PAGE_SIZE),
+    [searchFilteredEmployees, gridPage, GRID_PAGE_SIZE],
+  )
 
   // ── Modal helpers ─────────────────────────────────────────────────────────
   const modalEmployee = useMemo(
@@ -1338,23 +1350,43 @@ export default function AdminDashboard() {
         {view === 'grid' && (
           <div
             ref={gridRef}
-            className={`shrink-0 max-w-full flex flex-col px-6 pb-6 transition-opacity duration-300 ease-in-out ${gridFading ? 'opacity-0' : 'opacity-100'}`}
+            className={`shrink-0 max-w-full flex flex-col transition-opacity duration-300 ease-in-out ${gridFading ? 'opacity-0' : 'opacity-100'}`}
             style={{ minHeight: 'calc(100vh - 340px)' }}
           >
-            <EmployeeCalendarGrid
-              key={selectedBUs.join(',')}
-              employees={searchFilteredEmployees}
-              records={scopedRecords}
-              dates={gridDates}
-              onNameClick={openDrawer}
-              onCellClick={handleCellClick}
-              approvedKeys={approvedKeys}
-              topRiskIds={topRiskIds}
-              riskMode={selectedBUs.length === 1}
-              riskThresholds={riskThresholds}
-              showExactTime={showExactTime}
-              companyHolidays={policy.companyHolidays}
-            />
+            {/* 페이지네이션 컨트롤 */}
+            {gridTotalPages > 1 && (
+              <div className="px-6 py-2 border-b border-gray-100 flex items-center gap-3 text-xs text-gray-500 bg-white shrink-0">
+                <span>{gridPage * GRID_PAGE_SIZE + 1}–{Math.min((gridPage + 1) * GRID_PAGE_SIZE, searchFilteredEmployees.length)} / {searchFilteredEmployees.length}명</span>
+                <div className="flex items-center gap-1 ml-auto">
+                  <button disabled={gridPage === 0} onClick={() => setGridPage(p => p - 1)}
+                    className="px-2.5 py-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-50 transition-colors">← 이전</button>
+                  {Array.from({ length: gridTotalPages }, (_, i) => (
+                    <button key={i} onClick={() => setGridPage(i)}
+                      className={`w-7 h-7 rounded text-center transition-colors ${gridPage === i ? 'bg-gray-900 text-white' : 'hover:bg-gray-100 text-gray-600'}`}>
+                      {i + 1}
+                    </button>
+                  ))}
+                  <button disabled={gridPage >= gridTotalPages - 1} onClick={() => setGridPage(p => p + 1)}
+                    className="px-2.5 py-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-50 transition-colors">다음 →</button>
+                </div>
+              </div>
+            )}
+            <div className="px-6 pb-6 pt-3">
+              <EmployeeCalendarGrid
+                key={`${selectedBUs.join(',')}-${gridPage}`}
+                employees={gridEmployees}
+                records={scopedRecords}
+                dates={gridDates}
+                onNameClick={openDrawer}
+                onCellClick={handleCellClick}
+                approvedKeys={approvedKeys}
+                topRiskIds={topRiskIds}
+                riskMode={selectedBUs.length === 1}
+                riskThresholds={riskThresholds}
+                showExactTime={showExactTime}
+                companyHolidays={policy.companyHolidays}
+              />
+            </div>
           </div>
         )}
 
