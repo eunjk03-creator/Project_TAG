@@ -143,6 +143,8 @@ type Props = {
   showExactTime?:   boolean
   /** Company-wide holiday dates — shown with teal header; no-record cells treated as non-working */
   companyHolidays?: { date: string; label: string }[]
+  /** Called when the user changes the org filter — lets the parent sync pagination */
+  onOrgFilterChange?: (div: string | null, team: string | null) => void
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -158,6 +160,7 @@ export function EmployeeCalendarGrid({
   riskThresholds = HR_THRESHOLDS,
   showExactTime = false,
   companyHolidays = [],
+  onOrgFilterChange,
 }: Props) {
   const companyHolSet   = useMemo(() => new Set(companyHolidays.map(h => h.date)), [companyHolidays])
   const companyHolLabel = useMemo(() => new Map(companyHolidays.map(h => [h.date, h.label])), [companyHolidays])
@@ -406,7 +409,7 @@ const empStats = useMemo(() => {
             {/* Clear selection */}
             <button
               className={`w-full text-left px-3 py-1.5 flex items-center justify-between hover:bg-gray-50 transition-colors ${!filterDiv ? 'text-blue-600 font-semibold' : 'text-gray-600'}`}
-              onClick={() => { setFilterDiv(null); setFilterTeam(null); setOpenDropdown(null) }}
+              onClick={() => { setFilterDiv(null); setFilterTeam(null); setOpenDropdown(null); onOrgFilterChange?.(null, null) }}
             >
               전체 소속
               {!filterDiv && <span className="text-blue-400 text-[9px]">✓</span>}
@@ -419,7 +422,7 @@ const empStats = useMemo(() => {
               <button
                 key={div}
                 className={`w-full text-left px-3 py-1.5 flex items-center justify-between hover:bg-gray-50 transition-colors ${filterDiv === div && !filterTeam ? 'text-blue-600 font-semibold bg-blue-50/60' : 'text-gray-600'}`}
-                onClick={() => { setFilterDiv(div); setFilterTeam(null) }}
+                onClick={() => { setFilterDiv(div); setFilterTeam(null); onOrgFilterChange?.(div, null) }}
               >
                 {div}
                 {filterDiv === div && !filterTeam && <span className="text-blue-400 text-[9px]">✓</span>}
@@ -435,7 +438,7 @@ const empStats = useMemo(() => {
                   <button
                     key={team}
                     className={`w-full text-left px-3 py-1.5 flex items-center justify-between hover:bg-gray-50 transition-colors ${filterTeam === team ? 'text-blue-600 font-semibold bg-blue-50/60' : 'text-gray-600'}`}
-                    onClick={() => { setFilterTeam(team); setOpenDropdown(null) }}
+                    onClick={() => { setFilterTeam(team); setOpenDropdown(null); onOrgFilterChange?.(filterDiv, team) }}
                   >
                     {team}
                     {filterTeam === team && <span className="text-blue-400 text-[9px]">✓</span>}

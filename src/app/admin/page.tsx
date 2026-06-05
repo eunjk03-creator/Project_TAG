@@ -135,6 +135,7 @@ export default function AdminDashboard() {
   })
   const [selectedDivisions,  setSelectedDivisions]  = useState<string[]>([])
   const [selectedStatuses,   setSelectedStatuses]   = useState<string[]>([])
+  const [gridFilterTeam,     setGridFilterTeam]     = useState<string | null>(null)
   const [divisionOpen,       setDivisionOpen]       = useState(false)
   const [statusOpen,         setStatusOpen]         = useState(false)
   const gridRef        = useRef<HTMLDivElement>(null)
@@ -158,7 +159,7 @@ export default function AdminDashboard() {
   }, [selectedBUs, selectedRank])
 
   // Reset grid page when filters change
-  useEffect(() => { setGridPage(0) }, [search, selectedDivisions, selectedBUs, activeTab, dateRange])
+  useEffect(() => { setGridPage(0) }, [search, selectedDivisions, gridFilterTeam, selectedBUs, activeTab, dateRange])
 
   // Close multi-select dropdowns on outside click
   useEffect(() => {
@@ -645,7 +646,7 @@ export default function AdminDashboard() {
     return { normal, abnormal, regular, overtime, offsite, holidayWork, late, early, shortWork, missing }
   }, [tabPreStatusRecords, approvedKeys])
 
-  // Grid-view: filter displayed employees by search + division
+  // Grid-view: filter displayed employees by search + division + team
   const searchFilteredEmployees = useMemo(() => {
     let result = filteredRankedEmployees
     if (searchQuery) {
@@ -662,8 +663,11 @@ export default function AdminDashboard() {
     if (selectedDivisions.length > 0) {
       result = result.filter(e => selectedDivisions.includes(e.division ?? ''))
     }
+    if (gridFilterTeam) {
+      result = result.filter(e => e.team === gridFilterTeam)
+    }
     return result
-  }, [filteredRankedEmployees, searchQuery, selectedDivisions])
+  }, [filteredRankedEmployees, searchQuery, selectedDivisions, gridFilterTeam])
 
   // ── Grid pagination ──────────────────────────────────────────────────────
   const gridTotalPages = Math.ceil(searchFilteredEmployees.length / GRID_PAGE_SIZE)
@@ -1321,58 +1325,8 @@ export default function AdminDashboard() {
 
         {/* ── Grid view ── */}
         {view === 'grid' && (
-          <div className="px-6 pt-1 pb-2 shrink-0 flex items-center gap-2 flex-wrap">
-            {/* 본부 필터 */}
-            <div className="relative" ref={divDropRef}>
-              <button
-                onClick={() => { setDivisionOpen(p => !p); setStatusOpen(false) }}
-                className={`flex items-center gap-1.5 py-2 pl-3 pr-2.5 text-sm border rounded-lg bg-white shadow-sm transition-colors ${
-                  selectedDivisions.length > 0 ? 'border-blue-400 text-blue-700' : 'border-gray-200 text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                <span>
-                  {selectedDivisions.length === 0 ? '본부 전체'
-                    : selectedDivisions.length === 1 ? selectedDivisions[0]
-                    : `${selectedDivisions[0]} 외 ${selectedDivisions.length - 1}`}
-                </span>
-                {selectedDivisions.length > 0 && (
-                  <span className="ml-0.5 min-w-[18px] h-[18px] flex items-center justify-center text-[10px] font-bold bg-blue-600 text-white rounded-full px-1">
-                    {selectedDivisions.length}
-                  </span>
-                )}
-                <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${divisionOpen ? 'rotate-180' : ''}`}
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              {divisionOpen && (
-                <div className="absolute top-full mt-1 left-0 z-30 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[160px]">
-                  {divisionList.map(d => (
-                    <label key={d} className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-gray-50 cursor-pointer">
-                      <input type="checkbox"
-                        checked={selectedDivisions.includes(d)}
-                        onChange={() => setSelectedDivisions(prev =>
-                          prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]
-                        )}
-                        className="accent-blue-600 w-3.5 h-3.5 shrink-0 cursor-pointer"
-                      />
-                      <span className="text-sm text-gray-700">{d}</span>
-                    </label>
-                  ))}
-                  {selectedDivisions.length > 0 && (
-                    <div className="border-t border-gray-100 mt-1 pt-1">
-                      <button onClick={() => setSelectedDivisions([])}
-                        className="w-full px-3 py-1.5 text-xs text-gray-400 hover:text-gray-600 text-left">
-                        초기화
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* 검색 */}
-            <div className="relative max-w-sm flex-1">
+          <div className="px-6 pt-1 pb-2 shrink-0">
+            <div className="relative max-w-sm">
               <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
                 fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -1432,6 +1386,10 @@ export default function AdminDashboard() {
                 riskThresholds={riskThresholds}
                 showExactTime={showExactTime}
                 companyHolidays={policy.companyHolidays}
+                onOrgFilterChange={(div, team) => {
+                  setSelectedDivisions(div ? [div] : [])
+                  setGridFilterTeam(team)
+                }}
               />
             </div>
           </div>
