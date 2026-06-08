@@ -117,8 +117,10 @@ function ymd(year: number, month: string, day: string): string {
  * start and end are identical for single-date messages.
  */
 function extractDateRange(text: string, year: number): { start: string; end: string } | null {
-  // Priority 1: explicit range  "MM/DD[-~]MM/DD"
-  const explicit = text.match(/(\d{1,2})\/(\d{1,2})\s*[-~]\s*(\d{1,2})\/(\d{1,2})/)
+  // Priority 1: explicit range  "MM/DD(요일)[-~]MM/DD(요일)"  (요일 괄호 선택)
+  const explicit = text.match(
+    /(\d{1,2})\/(\d{1,2})(?:\([가-힣]\))?\s*[-~]\s*(\d{1,2})\/(\d{1,2})(?:\([가-힣]\))?/,
+  )
   if (explicit) {
     const start = ymd(year, explicit[1], explicit[2])
     const end   = ymd(year, explicit[3], explicit[4])
