@@ -356,14 +356,13 @@ function buildLeaveMap(
     const category = String(r['근태구분'] ?? '').trim()
     if (category === '시간') continue
 
-    const startDate = normalizeDate(r['시작일'])
-    if (!startDate) continue
-    const endDate = normalizeDate(r['종료일'] ?? '') || startDate
+    // 컬럼명 fuzzy 매칭 (공백/전각문자 차이 대응)
+    const startKey = Object.keys(r).find(k => k.replace(/\s+/g, '') === '시작일') ?? '시작일'
+    const endKey   = Object.keys(r).find(k => k.replace(/\s+/g, '') === '종료일') ?? '종료일'
 
-    // 🔍 임시 디버그 — ERP 휴가 매핑 확인
-    if (typeof window !== 'undefined' && (r['성명'] ?? '').includes('배영언')) {
-      console.log(`[DEBUG ERP 배영언] compositeKey="${compositeKey}" code="${code}" start="${startDate}" end="${endDate}"`)
-    }
+    const startDate = normalizeDate(r[startKey])
+    if (!startDate) continue
+    const endDate = normalizeDate(r[endKey] ?? '') || startDate
 
     const dk       = `${compositeKey}||${code}||${startDate}||${endDate}`
     const existing = dedupMap.get(dk)
@@ -386,9 +385,11 @@ function buildLeaveMap(
       continue
     }
 
-    const startDate = normalizeDate(r['시작일'])
+    const startKey2 = Object.keys(r).find(k => k.replace(/\s+/g, '') === '시작일') ?? '시작일'
+    const endKey2   = Object.keys(r).find(k => k.replace(/\s+/g, '') === '종료일') ?? '종료일'
+    const startDate = normalizeDate(r[startKey2])
     if (!startDate) continue
-    const endDate = normalizeDate(r['종료일'] ?? '') || startDate
+    const endDate = normalizeDate(r[endKey2] ?? '') || startDate
 
     // Directly read the '일수' column — single source of truth for leave amount.
     // Scan all keys normalised to '일수' (handles invisible chars / wrapped headers).
@@ -413,12 +414,11 @@ function buildLeaveMap(
 
     const isUnpaid = code.includes('무급')
 
-    // ── Diagnostic: log every processed ERP leave row (dev only) ─────────
-    if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
+    // 다일 연차(2일 이상)인 경우 프로덕션에서도 로그 출력
+    if (typeof window !== 'undefined' && startDate !== endDate) {
       console.log(
-        `[TAG] ERP leave row: 성명="${r['성명'] ?? ''}" 코드="${code}" 시작="${startDate}" 종료="${endDate}"`,
-        `일수key="${iljuKey}" 일수_raw="${iljuStr}" 일수_parsed=${iljuRaw}`,
-        `effectiveType="${effectiveType}" perDayAmount=${perDayAmount} → compositeKey="${compositeKey}"`,
+        `[TAG ERP 다일연차] "${r['성명'] ?? ''}" 코드="${code}" ${startDate}~${endDate}`,
+        `일수=${iljuRaw} type="${effectiveType}" compositeKey="${compositeKey}"`,
       )
     }
 
