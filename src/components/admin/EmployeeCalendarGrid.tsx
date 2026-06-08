@@ -145,6 +145,8 @@ type Props = {
   companyHolidays?: { date: string; label: string }[]
   /** Called when the user changes the org filter — lets the parent sync pagination */
   onOrgFilterChange?: (div: string | null, team: string | null) => void
+  /** Called when user clicks an empty cell (no record) or weekend cell to manually add attendance */
+  onEmptyCellClick?: (employeeId: string, date: string) => void
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -161,6 +163,7 @@ export function EmployeeCalendarGrid({
   showExactTime = false,
   companyHolidays = [],
   onOrgFilterChange,
+  onEmptyCellClick,
 }: Props) {
   const companyHolSet   = useMemo(() => new Set(companyHolidays.map(h => h.date)), [companyHolidays])
   const companyHolLabel = useMemo(() => new Map(companyHolidays.map(h => [h.date, h.label])), [companyHolidays])
@@ -790,9 +793,21 @@ const empStats = useMemo(() => {
                               </button>
                             )
                           ) : isWknd ? (
-                            <span className="text-slate-200 text-[10px] select-none">·</span>
+                            onEmptyCellClick ? (
+                              <button onClick={() => onEmptyCellClick(emp.id, date)}
+                                className="w-full h-5 flex items-center justify-center group">
+                                <span className="text-slate-200 text-[10px] group-hover:hidden select-none">·</span>
+                                <span className="hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full bg-blue-100 text-blue-500 text-[10px] font-bold">+</span>
+                              </button>
+                            ) : <span className="text-slate-200 text-[10px] select-none">·</span>
                           ) : (
-                            <span className="text-gray-200 text-[10px] select-none">—</span>
+                            onEmptyCellClick ? (
+                              <button onClick={() => onEmptyCellClick(emp.id, date)}
+                                className="w-full h-5 flex items-center justify-center group">
+                                <span className="text-gray-200 text-[10px] group-hover:hidden select-none">—</span>
+                                <span className="hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full bg-blue-100 text-blue-500 text-[10px] font-bold">+</span>
+                              </button>
+                            ) : <span className="text-gray-200 text-[10px] select-none">—</span>
                           )}
                         </td>
                       )

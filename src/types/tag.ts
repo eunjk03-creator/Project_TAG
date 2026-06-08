@@ -272,6 +272,8 @@ export type RecordOverride = {
   erpOtApplied: boolean | null  // null = not overridden; true/false = explicit admin override
   erpLeaveType: string          // '없음' | '연차' | '반차'
   editHistory:  EditHistoryEntry[]
+  memo?:        string
+  reasonLabel?: string
 }
 
 // ── CSV raw row shapes ─────────────────────────────────────────────────────

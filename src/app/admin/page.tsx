@@ -14,6 +14,8 @@ import { DateRangePicker } from '@/components/admin/DateRangePicker'
 import { MetricDeepDive } from '@/components/admin/MetricDeepDive'
 import type { Section } from '@/components/admin/MetricDeepDive'
 import { CsvUploader } from '@/components/admin/CsvUploader'
+import { ManualEntryModal } from '@/components/admin/ManualEntryModal'
+import type { ManualEntryPayload } from '@/components/admin/ManualEntryModal'
 import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
 import {
   computeWorkA, computeWorkB, computeBreakH, computeFinalWork, computeStatusN,
@@ -109,6 +111,7 @@ export default function AdminDashboard() {
   const [isMounted,           setIsMounted]           = useState(false)
   const [snapshotUrl,         setSnapshotUrl]         = useState<string | null>(null)
   const [isCreatingSnapshot,  setIsCreatingSnapshot]  = useState(false)
+  const [manualCell,          setManualCell]          = useState<{ employeeId: string; date: string } | null>(null)
   const [noteMap,             setNoteMap]             = useState<Map<string, string>>(new Map())
   const [view,                setView]                = useState<View>('grid')
   const [search,              setSearch]              = useState('')
@@ -216,8 +219,7 @@ export default function AdminDashboard() {
 
   // ── Data pipeline ─────────────────────────────────────────────────────────
   const overriddenRawRecords = useMemo(() => {
-    if (Object.keys(recordOverrides).length === 0) return baseRecords
-    return baseRecords.map(r => {
+    const mapped = baseRecords.map(r => {
       const ov = recordOverrides[`${r.employeeId}_${r.date}`]
       if (!ov) return r
       return {
@@ -227,7 +229,34 @@ export default function AdminDashboard() {
         erpOtApplied: ov.erpOtApplied !== null ? ov.erpOtApplied : r.erpOtApplied,
       }
     })
-  }, [recordOverrides, baseRecords])
+
+    // Add synthetic records for manual entries (overrides with no base CAPS record)
+    const baseKeys = new Set(baseRecords.map(r => `${r.employeeId}_${r.date}`))
+    for (const [key, ov] of Object.entries(recordOverrides)) {
+      if (baseKeys.has(key) || (!ov.clockIn && !ov.clockOut)) continue
+      // key = "${employeeId}_${date}", date is always 10 chars (YYYY-MM-DD)
+      const date  = key.slice(-10)
+      const empId = key.slice(0, -(10 + 1))
+      const dow   = new Date(date + 'T12:00').getDay()
+      const isHol = (policy.companyHolidays ?? []).some(h => h.date === date)
+      const dayType = isHol ? 'HOLIDAY' as const : (dow === 0 || dow === 6) ? 'WEEKEND' as const : 'WEEKDAY' as const
+      const leaveTypeMap: Record<string, import('@/types/tag').ErpLeaveType> = {
+        '재택근무': '재택근무', '출장': '출장',
+      }
+      mapped.push({
+        employeeId:        empId,
+        date,
+        dayType,
+        dayLabel:          '수기',
+        clockIn:           ov.clockIn  ?? null,
+        clockOut:          ov.clockOut ?? null,
+        erpOtApplied:      false,
+        leaveType:         ov.erpLeaveType ? (leaveTypeMap[ov.erpLeaveType] ?? null) : null,
+        verificationNote:  [ov.memo ? `수기 입력: ${ov.memo}` : '수기 입력'],
+      })
+    }
+    return mapped
+  }, [recordOverrides, baseRecords, policy.companyHolidays])
 
   // ── Hardcoded defaults — applied by raw masked employee ID ──────────────
   // These are always active regardless of what's configured in Settings > 예외 규칙.
@@ -691,6 +720,39 @@ export default function AdminDashboard() {
 
   function handleCellClick(employeeId: string, date: string) {
     setModalCell({ employeeId, date })
+  }
+
+  function handleManualSave(payload: ManualEntryPayload) {
+    if (!manualCell) return
+    const { employeeId, date } = manualCell
+    const key = `${employeeId}_${date}`
+    const next = {
+      ...recordOverrides,
+      [key]: {
+        clockIn:      payload.clockIn,
+        clockOut:     payload.clockOut,
+        erpOtApplied: null,
+        erpLeaveType: payload.attendanceType === '재택근무' ? '재택근무'
+                    : payload.attendanceType === '출장'    ? '출장'
+                    : null,
+        memo:         payload.memo || undefined,
+        editHistory:  [],
+        reasonLabel:  `수기 입력 (${payload.attendanceType})`,
+      },
+    }
+    setRecordOverrides(next as typeof recordOverrides)
+    saveOverride(employeeId, date)
+    setManualCell(null)
+  }
+
+  function handleManualDelete() {
+    if (!manualCell) return
+    const { employeeId, date } = manualCell
+    const key = `${employeeId}_${date}`
+    const next = { ...recordOverrides }
+    delete next[key]
+    setRecordOverrides(next)
+    setManualCell(null)
   }
 
   function handleModalSave(payload: SavePayload) {
@@ -1390,6 +1452,7 @@ export default function AdminDashboard() {
                   setSelectedDivisions(div ? [div] : [])
                   setGridFilterTeam(team)
                 }}
+                onEmptyCellClick={(empId, date) => setManualCell({ employeeId: empId, date })}
               />
             </div>
           </div>
@@ -1439,6 +1502,27 @@ export default function AdminDashboard() {
         />
       )}
 
+      {/* ── Manual Entry Modal ── */}
+      {manualCell && (() => {
+        const emp = baseEmployees.find(e => e.id === manualCell.employeeId) ?? null
+        if (!emp) return null
+        const ov = recordOverrides[`${manualCell.employeeId}_${manualCell.date}`]
+        return (
+          <ManualEntryModal
+            employee={emp}
+            date={manualCell.date}
+            initial={ov ? {
+              clockIn:        ov.clockIn  ?? undefined,
+              clockOut:       ov.clockOut ?? undefined,
+              attendanceType: ov.reasonLabel?.replace('수기 입력 (', '').replace(')', '') ?? '기타',
+              memo:           ov.memo,
+            } : undefined}
+            onClose={() => setManualCell(null)}
+            onSave={handleManualSave}
+            onDelete={ov ? handleManualDelete : undefined}
+          />
+        )
+      })()}
 
     </div>
   )
