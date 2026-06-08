@@ -139,6 +139,7 @@ export default function AdminDashboard() {
   const [selectedDivisions,  setSelectedDivisions]  = useState<string[]>([])
   const [selectedStatuses,   setSelectedStatuses]   = useState<string[]>([])
   const [gridFilterTeam,     setGridFilterTeam]     = useState<string | null>(null)
+  const [gridHoursFilter,    setGridHoursFilter]    = useState<'all' | 'over52' | 'over209'>('all')
   const [divisionOpen,       setDivisionOpen]       = useState(false)
   const [statusOpen,         setStatusOpen]         = useState(false)
   const gridRef        = useRef<HTMLDivElement>(null)
@@ -699,10 +700,14 @@ export default function AdminDashboard() {
   }, [filteredRankedEmployees, searchQuery, selectedDivisions, gridFilterTeam])
 
   // ── Grid pagination ──────────────────────────────────────────────────────
-  const gridTotalPages = Math.ceil(searchFilteredEmployees.length / GRID_PAGE_SIZE)
+  // 52h/209h 필터 활성 시 전체 직원을 그리드에 전달 (필터 후 내부 페이지네이션)
+  const gridTotalPages = gridHoursFilter === 'all'
+    ? Math.ceil(searchFilteredEmployees.length / GRID_PAGE_SIZE) : 1
   const gridEmployees  = useMemo(
-    () => searchFilteredEmployees.slice(gridPage * GRID_PAGE_SIZE, (gridPage + 1) * GRID_PAGE_SIZE),
-    [searchFilteredEmployees, gridPage, GRID_PAGE_SIZE],
+    () => gridHoursFilter === 'all'
+      ? searchFilteredEmployees.slice(gridPage * GRID_PAGE_SIZE, (gridPage + 1) * GRID_PAGE_SIZE)
+      : searchFilteredEmployees,
+    [searchFilteredEmployees, gridPage, GRID_PAGE_SIZE, gridHoursFilter],
   )
 
   // ── Modal helpers ─────────────────────────────────────────────────────────
@@ -1453,6 +1458,7 @@ export default function AdminDashboard() {
                   setGridFilterTeam(team)
                 }}
                 onEmptyCellClick={(empId, date) => setManualCell({ employeeId: empId, date })}
+                onHoursFilterChange={f => { setGridHoursFilter(f); setGridPage(0) }}
               />
             </div>
           </div>

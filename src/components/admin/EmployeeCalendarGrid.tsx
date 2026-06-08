@@ -147,6 +147,8 @@ type Props = {
   onOrgFilterChange?: (div: string | null, team: string | null) => void
   /** Called when user clicks an empty cell (no record) or weekend cell to manually add attendance */
   onEmptyCellClick?: (employeeId: string, date: string) => void
+  /** Called when the hours compliance filter changes, so the parent can adjust pagination */
+  onHoursFilterChange?: (filter: 'all' | 'over52' | 'over209') => void
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -164,6 +166,7 @@ export function EmployeeCalendarGrid({
   companyHolidays = [],
   onOrgFilterChange,
   onEmptyCellClick,
+  onHoursFilterChange,
 }: Props) {
   const companyHolSet   = useMemo(() => new Set(companyHolidays.map(h => h.date)), [companyHolidays])
   const companyHolLabel = useMemo(() => new Map(companyHolidays.map(h => [h.date, h.label])), [companyHolidays])
@@ -425,7 +428,7 @@ const empStats = useMemo(() => {
                 className={`w-full text-left px-3 py-1.5 flex items-center justify-between hover:bg-gray-50 transition-colors ${
                   hoursFilter === key ? 'text-red-600 font-semibold bg-red-50/60' : 'text-gray-600'
                 }`}
-                onClick={() => { setHoursFilter(key); setOpenDropdown(null) }}
+                onClick={() => { setHoursFilter(key); onHoursFilterChange?.(key); setOpenDropdown(null) }}
               >
                 <span className="flex flex-col gap-px">
                   <span>{label}</span>
@@ -504,7 +507,7 @@ const empStats = useMemo(() => {
               ({filteredEmployees.length}명)
             </span>
             <button
-              onClick={() => setHoursFilter('all')}
+              onClick={() => { setHoursFilter('all'); onHoursFilterChange?.('all') }}
               className="ml-auto text-[11px] text-red-400 hover:text-red-600 font-medium transition-colors"
             >
               필터 해제 ✕
