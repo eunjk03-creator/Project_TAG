@@ -1363,22 +1363,7 @@ export default function AdminDashboard() {
               </button>
             )}
 
-            {/* Export — pushed to far right */}
-            <button onClick={handleExport}
-              className="ml-auto flex items-center gap-1.5 px-3 py-2 text-xs font-medium
-                text-blue-600 border border-blue-300 rounded-lg bg-white
-                hover:bg-blue-50 active:scale-95 transition-all shadow-sm">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              엑셀 내보내기
-              {isAnyFilterActive && (
-                <span className="ml-1 px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-semibold text-[10px]">
-                  {tabFilteredRecords.length}건
-                </span>
-              )}
-            </button>
+            <div className="ml-auto" />
           </div>
 
           {isAnyFilterActive && (
@@ -1477,6 +1462,18 @@ export default function AdminDashboard() {
               noteMap={noteMap}
               onNoteChange={handleNoteChange}
               otExemptIds={otExemptIds}
+              onExport={filtered => {
+                const fmt6 = (d: string) => d.replace(/-/g, '').slice(2)
+                const filename = `근태결과_${fmt6(dateRange.from)}-${fmt6(dateRange.to)}.xlsx`
+                const ALL_DETAIL_IDS = [
+                  'division','empId','name','date','clockIn','clockOut',
+                  'leaveAmt','leaveType','leaveSource','breakH',
+                  'finalWorkH','attendanceStatus','normalTags','anomalyTags','systemOtH',
+                  'payrollOtH','payrollNightH','erpOtApplied',
+                ]
+                const visibleColIds = new Set(ALL_DETAIL_IDS.filter(id => tableColVisibility[id] !== false))
+                exportXlsx(filtered, baseEmployees, filename, visibleColIds)
+              }}
             />
 
           </div>

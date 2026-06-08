@@ -58,6 +58,8 @@ export interface Props {
   noteMap?:                 Map<string, string>
   onNoteChange?:            (employeeId: string, date: string, note: string) => void
   otExemptIds?:             Set<string>
+  /** 엑셀 내보내기 — 테이블 내부 필터 적용된 records를 전달 */
+  onExport?:                (filteredRecords: ProcessedRecord[]) => void
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -395,6 +397,7 @@ export function AttendanceResultTable({
   onRowClick, onNameClick,
   noteMap, onNoteChange,
   otExemptIds,
+  onExport,
 }: Props) {
   const [showHolidayWork,  setShowHolidayWork]  = useState(false)
   const [showOver52h,      setShowOver52h]      = useState(false)
@@ -779,6 +782,24 @@ export function AttendanceResultTable({
         <span className="text-xs text-gray-400 tabular-nums">
           {filteredCount < totalCount ? `${filteredCount} / ${totalCount}건` : `${totalCount}건`}
         </span>
+
+        {/* 엑셀 내보내기 — 테이블 내부 필터 적용된 데이터만 */}
+        {onExport && (
+          <button
+            onClick={() => {
+              const filtered = table.getFilteredRowModel().rows.map(r => r.original.record)
+              onExport(filtered)
+            }}
+            className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 flex items-center gap-1.5 transition-colors"
+            title="현재 필터 적용된 데이터만 내보내기"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            </svg>
+            엑셀 ({filteredCount}건)
+          </button>
+        )}
 
         {/* 열 설정 — optional column selector */}
         <div className="relative">
