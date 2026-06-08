@@ -579,25 +579,21 @@ export function parseAttendanceData(
   const DUAL_AFFIL_PREFIX = 'E26010101_'
   const dualAffilStage = new Map<string, RawRecord>() // key = "compositeKey|date"
 
-  // 🔍 임시: leaveMap에서 배영언 키 확인
+  // ── ERP 파싱 결과 요약 (항상 콘솔에 표시) ───────────────────────────────
   if (typeof window !== 'undefined') {
-    const byKeys = [...leaveMap.keys()].filter(k => k.includes('배영언'))
-    console.log(`[DEBUG leaveMap 배영언] ${byKeys.length}건:`, byKeys)
-  }
-
-  // ── Debug: confirm map sizes in browser console ──────────────────────────
-  if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
     console.log(
-      '[TAG] leaveMap', leaveMap.size, 'keys |',
-      'otMap', otMap.size, 'keys |',
-      'employees', employees.length, '|',
-      'caps rows', capsData.length,
+      `[TAG] ERP 파싱 완료 — 휴가 맵 ${leaveMap.size}건 | 연장 맵 ${otMap.size}건 | 직원 ${employees.length}명 | CAPS ${capsData.length}행 | ERP ${erpData.length}행`,
     )
-    // Sample a few keys from each map for visual confirmation
-    const lSample = [...leaveMap.keys()].slice(0, 3)
-    const oSample = [...otMap.keys()].slice(0, 3)
-    if (lSample.length) console.log('[TAG] leaveMap sample keys:', lSample)
-    if (oSample.length) console.log('[TAG] otMap sample keys:', oSample)
+    if (leaveMap.size === 0 && erpData.length > 0) {
+      console.warn('[TAG] ⚠ ERP 파일은 있는데 휴가 맵이 0건 — 근태코드·승인상태·컬럼명 확인 필요')
+      const firstRow = erpData[0] as unknown as Record<string, string>
+      console.warn('[TAG] ERP 첫 행 컬럼명:', Object.keys(firstRow))
+      console.warn('[TAG] ERP 첫 행 값:', firstRow)
+    }
+    if (leaveMap.size > 0) {
+      const sample = [...leaveMap.keys()].slice(0, 3)
+      console.log('[TAG] 휴가 맵 샘플 키:', sample)
+    }
   }
 
   for (const row of capsData) {
