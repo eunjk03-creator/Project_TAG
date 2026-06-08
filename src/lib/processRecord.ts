@@ -409,9 +409,13 @@ export function processRecord(
       const rawInMins = parseTime(clockIn)
       const inMins    = Math.max(rawInMins, flexStartMins)
       const outMins   = parseTime(clockOut)
+      const rawElapsed    = outMins - inMins
       const lunchDeducted = outMins > lunchEndMins && inMins < lunchStartMins
-      const breakMins = lunchDeducted ? (lunchEndMins - lunchStartMins) : 0
-      const elapsed   = Math.max(0, outMins - inMins - breakMins)
+      const breakMins     = rawElapsed >= 10 * 60 ? 120
+        : rawElapsed >= 8 * 60 ? 60
+        : rawElapsed >= 4 * 60 ? 30
+        : 0
+      const elapsed       = Math.max(0, rawElapsed - breakMins)
       return applySlack({
         ...base,
         effectiveClockIn: fmtMins(inMins),
