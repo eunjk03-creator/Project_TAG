@@ -11,6 +11,7 @@ import {
 import type { SlackException } from '@/utils/slackApi'
 import { fetchSlackMessages, parseSlackExceptions } from '@/utils/slackApi'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
+import { usePolicy } from '@/context/PolicyContext'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -79,7 +80,8 @@ function loadLS<T>(key: string, fallback: T): T {
 const SlackContext = createContext<SlackContextValue | null>(null)
 
 export function SlackProvider({ children }: { children: ReactNode }) {
-  const { employees } = useAttendanceSource()
+  const { employees, recomputeProcessed, isLiveData } = useAttendanceSource()
+  const { policy } = usePolicy()
 
   const [config,      setConfigState] = useState<SlackConfig>(
     () => {
@@ -186,6 +188,11 @@ export function SlackProvider({ children }: { children: ReactNode }) {
       setSyncedRange(range)
       localStorage.setItem(LS_LAST_SYNC,    JSON.stringify(ts))
       localStorage.setItem(LS_SYNCED_RANGE, JSON.stringify(range))
+
+      // 슬랙 동기화 후 자동 재계산 (슬랙 데이터가 반영되도록)
+      if (isLiveData) {
+        recomputeProcessed().catch(() => {})
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
