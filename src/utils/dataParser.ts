@@ -378,7 +378,13 @@ function buildLeaveMap(
     const code = String(r['근태코드'] ?? '').normalize('NFKC').trim()
 
     const leaveType = ERP_LEAVE_TYPE_MAP[code]
-    if (!leaveType) continue  // code not in leave whitelist — silently skip
+    if (!leaveType) {
+      // 휴가 맵에 없는 코드 — 콘솔에 기록해서 확인 가능하게
+      if (typeof window !== 'undefined') {
+        console.warn(`[TAG ERP] 미인식 근태코드 스킵: "${code}" (${r['성명'] ?? ''}, ${normalizeDate(r['시작일'])})`)
+      }
+      continue
+    }
 
     const startDate = normalizeDate(r['시작일'])
     if (!startDate) continue
