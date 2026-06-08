@@ -140,6 +140,8 @@ export default function AdminDashboard() {
   const [selectedStatuses,   setSelectedStatuses]   = useState<string[]>([])
   const [gridFilterTeam,     setGridFilterTeam]     = useState<string | null>(null)
   const [gridHoursFilter,    setGridHoursFilter]    = useState<'all' | 'over52' | 'over209'>('all')
+  const [gridSortKey,        setGridSortKey]        = useState<'name' | 'ot' | 'night' | 'holiday' | 'anomaly'>('name')
+  const [gridSortDir,        setGridSortDir]        = useState<'asc' | 'desc' | 'none'>('none')
   const [divisionOpen,       setDivisionOpen]       = useState(false)
   const [statusOpen,         setStatusOpen]         = useState(false)
   const gridRef        = useRef<HTMLDivElement>(null)
@@ -163,7 +165,7 @@ export default function AdminDashboard() {
   }, [selectedBUs, selectedRank])
 
   // Reset grid page when filters change
-  useEffect(() => { setGridPage(0) }, [search, selectedDivisions, gridFilterTeam, selectedBUs, activeTab, dateRange])
+  useEffect(() => { setGridPage(0) }, [search, selectedDivisions, gridFilterTeam, selectedBUs, activeTab, dateRange, gridSortKey, gridSortDir])
 
   // Close multi-select dropdowns on outside click
   useEffect(() => {
@@ -699,15 +701,44 @@ export default function AdminDashboard() {
     return result
   }, [filteredRankedEmployees, searchQuery, selectedDivisions, gridFilterTeam])
 
+  // ── Grid: parent-level sort (applied before pagination so order is correct across pages) ──
+  const gridEmpStats = useMemo(() => {
+    const s: Record<string, { ot: number; night: number; holiday: number; anomalies: number }> = {}
+    for (const r of allProcessed) {
+      if (!s[r.employeeId]) s[r.employeeId] = { ot: 0, night: 0, holiday: 0, anomalies: 0 }
+      s[r.employeeId].ot       += r.overtimeHours
+      s[r.employeeId].night    += r.nightHours
+      s[r.employeeId].holiday  += r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0
+      if (r.flag !== null && !approvedKeys.has(`${r.employeeId}_${r.date}`)) s[r.employeeId].anomalies++
+    }
+    return s
+  }, [allProcessed, approvedKeys])
+
+  const sortedFilteredEmployees = useMemo(() => {
+    if (gridSortDir === 'none') return searchFilteredEmployees
+    return [...searchFilteredEmployees].sort((a, b) => {
+      let cmp = 0
+      if (gridSortKey === 'name') {
+        cmp = a.name.localeCompare(b.name, 'ko')
+      } else {
+        const sa = gridEmpStats[a.id] ?? { ot: 0, night: 0, holiday: 0, anomalies: 0 }
+        const sb = gridEmpStats[b.id] ?? { ot: 0, night: 0, holiday: 0, anomalies: 0 }
+        const field = gridSortKey === 'anomaly' ? 'anomalies' : gridSortKey
+        cmp = (sa[field as keyof typeof sa] as number) - (sb[field as keyof typeof sb] as number)
+      }
+      return gridSortDir === 'asc' ? cmp : -cmp
+    })
+  }, [searchFilteredEmployees, gridSortKey, gridSortDir, gridEmpStats])
+
   // ── Grid pagination ──────────────────────────────────────────────────────
   // 52h/209h 필터 활성 시 전체 직원을 그리드에 전달 (필터 후 내부 페이지네이션)
   const gridTotalPages = gridHoursFilter === 'all'
-    ? Math.ceil(searchFilteredEmployees.length / GRID_PAGE_SIZE) : 1
+    ? Math.ceil(sortedFilteredEmployees.length / GRID_PAGE_SIZE) : 1
   const gridEmployees  = useMemo(
     () => gridHoursFilter === 'all'
-      ? searchFilteredEmployees.slice(gridPage * GRID_PAGE_SIZE, (gridPage + 1) * GRID_PAGE_SIZE)
-      : searchFilteredEmployees,
-    [searchFilteredEmployees, gridPage, GRID_PAGE_SIZE, gridHoursFilter],
+      ? sortedFilteredEmployees.slice(gridPage * GRID_PAGE_SIZE, (gridPage + 1) * GRID_PAGE_SIZE)
+      : sortedFilteredEmployees,
+    [sortedFilteredEmployees, gridPage, GRID_PAGE_SIZE, gridHoursFilter],
   )
 
   // ── Modal helpers ─────────────────────────────────────────────────────────
@@ -1444,6 +1475,7 @@ export default function AdminDashboard() {
                 }}
                 onEmptyCellClick={(empId, date) => setManualCell({ employeeId: empId, date })}
                 onHoursFilterChange={f => { setGridHoursFilter(f); setGridPage(0) }}
+                onSortChange={(key, dir) => { setGridSortKey(key); setGridSortDir(dir); setGridPage(0) }}
               />
             </div>
           </div>

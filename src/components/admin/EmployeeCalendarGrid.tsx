@@ -149,6 +149,8 @@ type Props = {
   onEmptyCellClick?: (employeeId: string, date: string) => void
   /** Called when the hours compliance filter changes, so the parent can adjust pagination */
   onHoursFilterChange?: (filter: 'all' | 'over52' | 'over209') => void
+  /** Called when sort changes — parent should re-sort all employees before slicing to page */
+  onSortChange?: (key: 'name' | 'ot' | 'night' | 'holiday' | 'anomaly', dir: 'asc' | 'desc' | 'none') => void
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -167,6 +169,7 @@ export function EmployeeCalendarGrid({
   onOrgFilterChange,
   onEmptyCellClick,
   onHoursFilterChange,
+  onSortChange,
 }: Props) {
   const companyHolSet   = useMemo(() => new Set(companyHolidays.map(h => h.date)), [companyHolidays])
   const companyHolLabel = useMemo(() => new Map(companyHolidays.map(h => [h.date, h.label])), [companyHolidays])
@@ -180,10 +183,14 @@ export function EmployeeCalendarGrid({
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
-      setSortDir(d => d === 'none' ? (key === 'name' ? 'asc' : 'desc') : d === 'asc' ? 'desc' : 'asc')
+      const nextDir: SortDir = sortDir === 'none' ? (key === 'name' ? 'asc' : 'desc') : sortDir === 'asc' ? 'desc' : 'asc'
+      setSortDir(nextDir)
+      onSortChange?.(key, nextDir)
     } else {
+      const nextDir: SortDir = key === 'name' ? 'asc' : 'desc'
       setSortKey(key)
-      setSortDir(key === 'name' ? 'asc' : 'desc')
+      setSortDir(nextDir)
+      onSortChange?.(key, nextDir)
     }
   }
   const [openDropdown, setOpenDropdown] = useState<'org' | 'total' | null>(null)
