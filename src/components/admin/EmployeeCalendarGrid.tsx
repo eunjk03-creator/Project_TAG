@@ -299,15 +299,54 @@ const empStats = useMemo(() => {
   return stats
 }, [employees, records, approvedKeys])
 
-  // Hours compliance filter — thresholds are explicit (52 / 209), not auto from date range
+  // Hours compliance filter
+  // - 52h: 주간 단위로 나눠서 어느 주든 52h 초과하면 표시 (주 52시간 법정 한도)
+  // - 209h: 기간 전체 합계가 209h 이상이면 표시 (월 209h 한도)
   const filteredEmployees = useMemo(() => {
     if (hoursFilter === 'all') return displayEmployees
-    const threshold = hoursFilter === 'over52' ? 52 : 209
+
+    if (hoursFilter === 'over209') {
+      return displayEmployees.filter(e => {
+        const s = empStats[e.id]
+        return (showExactTime ? (s?.rawTotal ?? 0) : (s?.total ?? 0)) >= 209
+      })
+    }
+
+    // over52: 주별 집계 — 어느 한 주라도 52h 초과 시 표시
+    const recsByEmp = new Map<string, ProcessedRecord[]>()
+    for (const r of records) {
+      const bucket = recsByEmp.get(r.employeeId)
+      if (bucket) bucket.push(r)
+      else recsByEmp.set(r.employeeId, [r])
+    }
+
+    function weekKey(dateStr: string): string {
+      const d = new Date(dateStr + 'T12:00')
+      const dow  = d.getDay()
+      const back = dow === 0 ? 6 : dow - 1
+      d.setDate(d.getDate() - back)
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+    }
+
     return displayEmployees.filter(e => {
-      const s = empStats[e.id]
-      return (showExactTime ? (s?.rawTotal ?? 0) : (s?.total ?? 0)) >= threshold
+      const empRecs = recsByEmp.get(e.id) ?? []
+      const weekTotals: Record<string, number> = {}
+      for (const r of empRecs) {
+        const leaveAmt   = r.erpLeaveAmount ?? 0
+        const effectiveIn = r.effectiveClockIn ?? r.clockIn
+        const wAMins     = Math.round(computeWorkA(effectiveIn, r.clockOut) * 60)
+        const ciMins     = effectiveIn ? parseTimeToMins(effectiveIn) : null
+        const coMins     = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
+        const brkMins    = computeDisplayBreakMins(wAMins, ciMins, coMins, r.leaveType)
+        const credit     = r.isUnpaidLeave ? 0 : leaveAmt * 8
+        const finalH     = Math.max(0, (wAMins - brkMins) / 60 + credit)
+        const holiH      = r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0
+        const wk         = weekKey(r.date)
+        weekTotals[wk]   = (weekTotals[wk] ?? 0) + finalH + holiH
+      }
+      return Object.values(weekTotals).some(h => h >= 52)
     })
-  }, [displayEmployees, hoursFilter, empStats, showExactTime])
+  }, [displayEmployees, hoursFilter, empStats, showExactTime, records])
 
   // Sort after stats are available
   const sortedEmployees = useMemo(() => {
