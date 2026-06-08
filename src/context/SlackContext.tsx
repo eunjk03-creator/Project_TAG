@@ -102,7 +102,7 @@ export function SlackProvider({ children }: { children: ReactNode }) {
       .then((rows: SlackException[]) => {
         if (rows.length > 0) {
           setExceptions(rows)
-          localStorage.setItem(LS_EXCEPTIONS, JSON.stringify(rows))
+          try { localStorage.setItem(LS_EXCEPTIONS, JSON.stringify(rows)) } catch { localStorage.removeItem(LS_EXCEPTIONS) }
         }
       })
       .catch(() => {})
@@ -163,8 +163,12 @@ export function SlackProvider({ children }: { children: ReactNode }) {
       const parsed = parseSlackExceptions(messages, employees, year)
 
       setExceptions(parsed)
-      localStorage.setItem(LS_EXCEPTIONS, JSON.stringify(parsed))
-      console.log(`[TAG Slack] localStorage 저장 완료: ${parsed.length}건 예외 규칙`)
+      try {
+        localStorage.setItem(LS_EXCEPTIONS, JSON.stringify(parsed))
+      } catch {
+        // localStorage 용량 초과 시 무시 — DB에서 로드됨
+        localStorage.removeItem(LS_EXCEPTIONS)
+      }
 
       // DB에 저장 (다른 사용자와 공유)
       fetch('/api/slack/exceptions', {
