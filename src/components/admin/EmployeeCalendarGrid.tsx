@@ -343,9 +343,12 @@ const empStats = useMemo(() => {
         const brkMins    = computeDisplayBreakMins(wAMins, ciMins, coMins, r.leaveType)
         const credit     = r.isUnpaidLeave ? 0 : leaveAmt * 8
         const finalH     = Math.max(0, (wAMins - brkMins) / 60 + credit)
-        const holiH      = r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0
-        const wk         = weekKey(r.date)
-        weekTotals[wk]   = (weekTotals[wk] ?? 0) + finalH + holiH
+        // empStats와 동일 로직: 평일 or 휴일근무 → finalH, 그 외 비평일 → holidayHours
+        const addH = r.dayType === 'WEEKDAY' ? finalH
+          : r.finalStatus === '휴일근무' ? finalH
+          : (r.holidayHours ?? 0)
+        const wk = weekKey(r.date)
+        weekTotals[wk] = (weekTotals[wk] ?? 0) + addH
       }
       return Object.values(weekTotals).some(h => h >= 52)
     })
