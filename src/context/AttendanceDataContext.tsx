@@ -17,6 +17,8 @@ type AttendanceDataContextType = {
   resolutions:        Record<string, ResolutionData>
   setResolutions:     Dispatch<SetStateAction<Record<string, ResolutionData>>>
   saveOverride:       (employeeId: string, workDate: string) => void
+  deletedKeys:        Set<string>
+  deleteRecord:       (employeeId: string, workDate: string) => void
 }
 
 const AttendanceDataContext = createContext<AttendanceDataContextType>({
@@ -25,11 +27,14 @@ const AttendanceDataContext = createContext<AttendanceDataContextType>({
   resolutions:        {},
   setResolutions:     () => {},
   saveOverride:       () => {},
+  deletedKeys:        new Set(),
+  deleteRecord:       () => {},
 })
 
 export function AttendanceDataProvider({ children }: { children: ReactNode }) {
   const [recordOverrides, setRecordOverrides] = useState<Record<string, RecordOverride>>({})
   const [resolutions,     setResolutions]     = useState<Record<string, ResolutionData>>({})
+  const [deletedKeys,     setDeletedKeys]     = useState<Set<string>>(new Set())
   const [loaded, setLoaded] = useState(false)
 
   // ── 초기 로드: DB에서 저장된 수정 이력 복원 ────────────────────────────
@@ -46,8 +51,15 @@ export function AttendanceDataProvider({ children }: { children: ReactNode }) {
         const newOverrides: Record<string, RecordOverride> = {}
         const newResolutions: Record<string, ResolutionData> = {}
 
+        const newDeleted = new Set<string>()
         for (const row of rows) {
           const key = `${row.employeeId}_${row.workDate}`
+
+          // 삭제 마킹된 레코드 분리
+          if (row.reasonLabel === '__DELETED__') {
+            newDeleted.add(key)
+            continue
+          }
 
           // recordOverrides 복원 (시간/ERP 수정값)
           if (row.clockIn !== null || row.clockOut !== null ||
@@ -69,6 +81,7 @@ export function AttendanceDataProvider({ children }: { children: ReactNode }) {
             }
           }
         }
+        setDeletedKeys(newDeleted)
 
         setRecordOverrides(newOverrides)
         setResolutions(newResolutions)
@@ -110,9 +123,29 @@ export function AttendanceDataProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const deleteRecord = useCallback((employeeId: string, workDate: string) => {
+    const key = `${employeeId}_${workDate}`
+    setDeletedKeys(prev => new Set([...prev, key]))
+    fetch('/api/attendance-overrides', {
+      method:  'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employeeId,
+        workDate,
+        reasonLabel:  '__DELETED__',
+        memo:         null,
+        clockIn:      null,
+        clockOut:     null,
+        erpOtApplied: null,
+        erpLeaveType: null,
+        editHistory:  [],
+      }),
+    }).catch(() => {})
+  }, [])
+
   return (
     <AttendanceDataContext.Provider
-      value={{ recordOverrides, setRecordOverrides, resolutions, setResolutions, saveOverride }}
+      value={{ recordOverrides, setRecordOverrides, resolutions, setResolutions, saveOverride, deletedKeys, deleteRecord }}
     >
       {loaded ? children : null}
     </AttendanceDataContext.Provider>

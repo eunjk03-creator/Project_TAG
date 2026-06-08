@@ -100,7 +100,7 @@ export default function AdminDashboard() {
   const { policy } = usePolicy()
   const { openDrawer, exceptions, excludeFromOtIds, employeeAttrMap, exceptionRules } = useEmployeeExceptions()
   const { dateRange, setDateRange } = useDateRange()
-  const { recordOverrides, setRecordOverrides, resolutions, setResolutions, saveOverride } = useAttendanceData()
+  const { recordOverrides, setRecordOverrides, resolutions, setResolutions, saveOverride, deletedKeys, deleteRecord } = useAttendanceData()
   const {
     employees: baseEmployees, rawRecords: baseRecords, isLiveData,
     processedRecords: serverProcessed, isProcessing: isServerProcessing,
@@ -375,8 +375,11 @@ export default function AdminDashboard() {
 
 
   const scopedRecords = useMemo(
-    () => allProcessed.filter(r => scopedEmployeeIds.has(r.employeeId)),
-    [allProcessed, scopedEmployeeIds],
+    () => allProcessed.filter(r =>
+      scopedEmployeeIds.has(r.employeeId) &&
+      !deletedKeys.has(`${r.employeeId}_${r.date}`)
+    ),
+    [allProcessed, scopedEmployeeIds, deletedKeys],
   )
 
   const approvedKeys = useMemo(
@@ -781,13 +784,13 @@ export default function AdminDashboard() {
     setManualCell(null)
   }
 
-  function handleManualDelete() {
-    if (!manualCell) return
-    const { employeeId, date } = manualCell
+  function handleDeleteRecord(employeeId: string, date: string) {
+    deleteRecord(employeeId, date)
+    // override/resolution 클라이언트 state도 정리
     const key = `${employeeId}_${date}`
-    const next = { ...recordOverrides }
-    delete next[key]
-    setRecordOverrides(next)
+    setRecordOverrides(prev => { const n = { ...prev }; delete n[key]; return n })
+    setResolutions(prev => { const n = { ...prev }; delete n[key]; return n })
+    setModalCell(null)
     setManualCell(null)
   }
 
@@ -1493,6 +1496,7 @@ export default function AdminDashboard() {
               onNameClick={openDrawer}
               noteMap={noteMap}
               onNoteChange={handleNoteChange}
+              onDeleteRecord={handleDeleteRecord}
               otExemptIds={otExemptIds}
               onExport={filtered => {
                 const fmt6 = (d: string) => d.replace(/-/g, '').slice(2)
@@ -1534,6 +1538,7 @@ export default function AdminDashboard() {
           showExactTime={showExactTime}
           onClose={() => setModalCell(null)}
           onSave={handleModalSave}
+          onDelete={() => handleDeleteRecord(modalCell.employeeId, modalCell.date)}
         />
       )}
 
@@ -1554,7 +1559,7 @@ export default function AdminDashboard() {
             } : undefined}
             onClose={() => setManualCell(null)}
             onSave={handleManualSave}
-            onDelete={ov ? handleManualDelete : undefined}
+            onDelete={() => handleDeleteRecord(manualCell.employeeId, manualCell.date)}
           />
         )
       })()}

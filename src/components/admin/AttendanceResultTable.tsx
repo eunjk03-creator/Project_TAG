@@ -57,6 +57,7 @@ export interface Props {
   onNameClick?:             (employeeId: string) => void
   noteMap?:                 Map<string, string>
   onNoteChange?:            (employeeId: string, date: string, note: string) => void
+  onDeleteRecord?:          (employeeId: string, date: string) => void
   otExemptIds?:             Set<string>
   /** 엑셀 내보내기 — 테이블 내부 필터 적용된 records를 전달 */
   onExport?:                (filteredRecords: ProcessedRecord[]) => void
@@ -396,6 +397,7 @@ export function AttendanceResultTable({
   columnVisibility, onColumnVisibilityChange,
   onRowClick, onNameClick,
   noteMap, onNoteChange,
+  onDeleteRecord,
   otExemptIds,
   onExport,
 }: Props) {
@@ -889,6 +891,7 @@ export function AttendanceResultTable({
           <thead className="sticky top-0 z-20">
             {table.getHeaderGroups().map(hg => (
               <tr key={hg.id} className="bg-gray-50 border-b border-gray-200">
+                {onDeleteRecord && <th className="w-8 px-1" />}
                 {hg.headers.map(header => {
                   const canFilter    = FILTERABLE.has(header.column.id)
                   const isFiltered   = header.column.getIsFiltered()
@@ -989,6 +992,19 @@ export function AttendanceResultTable({
                     onClick={() => onRowClick?.(r.employeeId, r.date)}
                     className={`${rowBg} border-b border-gray-100 last:border-0 hover:bg-blue-50/30 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
                   >
+                    {onDeleteRecord && (
+                      <td className="px-1 py-2 text-center w-8" onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={() => onDeleteRecord(r.employeeId, r.date)}
+                          className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                          title="삭제"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </td>
+                    )}
                     {row.getVisibleCells().map(cell => (
                       <td
                         key={cell.id}

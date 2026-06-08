@@ -172,9 +172,10 @@ type Props = {
   showExactTime?:       boolean
   onClose:              () => void
   onSave:               (payload: SavePayload) => void
+  onDelete?:            () => void
 }
 
-export function DailyDetailModal({ employee, record, policy, initialEditHistory, initialApproved, initialDecision, initialErpLeaveType, showExactTime = false, onClose, onSave }: Props) {
+export function DailyDetailModal({ employee, record, policy, initialEditHistory, initialApproved, initialDecision, initialErpLeaveType, showExactTime = false, onClose, onSave, onDelete }: Props) {
   // ── Audit / approval state ────────────────────────────────────────────
   const [editHistory, setEditHistory] = useState<EditHistoryEntry[]>(initialEditHistory ?? [])
   const isApproved = initialApproved ?? false
@@ -825,6 +826,14 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
             )}
           </p>
           <div className="flex items-center gap-2 shrink-0">
+            {onDelete && (
+              <button
+                onClick={onDelete}
+                className="px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 active:scale-95 transition-all"
+              >
+                삭제
+              </button>
+            )}
             <button
               onClick={onClose}
               className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 active:scale-95 transition-all"
