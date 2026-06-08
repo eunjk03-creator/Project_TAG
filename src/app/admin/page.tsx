@@ -1457,7 +1457,7 @@ export default function AdminDashboard() {
             )}
             <div className="px-6 pb-6 pt-3">
               <EmployeeCalendarGrid
-                key={`${selectedBUs.join(',')}-${gridPage}`}
+                key={selectedBUs.join(',')}
                 employees={gridEmployees}
                 records={scopedRecords}
                 dates={gridDates}
