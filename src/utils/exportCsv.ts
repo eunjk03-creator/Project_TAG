@@ -159,11 +159,12 @@ function buildDetailRowData(
   const workAMins     = Math.round(workA * 60)
   const ciMins        = (r.effectiveClockIn ?? r.clockIn) ? parseTimeToMins((r.effectiveClockIn ?? r.clockIn)!) : null
   const coMins        = r.clockOut ? parseTimeToMins(r.clockOut) : null
-  const breakMins     = computeDisplayBreakMins(workAMins, ciMins, coMins, r.leaveType)
+  const isHoliday     = r.dayType !== 'WEEKDAY'
+  const breakMins     = isHoliday ? r.breakMinutes : computeDisplayBreakMins(workAMins, ciMins, coMins, r.leaveType)
   const breakHours    = breakMins / 60
   const workBMins     = Math.max(0, workAMins - breakMins)
   const leaveCredit   = r.isUnpaidLeave ? 0 : leaveAmt * 8
-  const finalWork     = Math.max(0, workBMins / 60 + leaveCredit)
+  const finalWork     = isHoliday ? r.holidayHours : Math.max(0, workBMins / 60 + leaveCredit)
 
   // 테이블과 동일한 태그 로직
   const anomalyTags: string[] = []

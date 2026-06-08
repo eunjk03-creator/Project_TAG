@@ -458,11 +458,12 @@ export function AttendanceResultTable({
       const gasWorkAMins     = Math.round(workA * 60)
       const clockInMins      = effectiveIn  ? parseTimeToMins(effectiveIn)  : null
       const clockOutMins     = r.clockOut   ? parseTimeToMins(r.clockOut)   : null
-      const displayBreakMins = computeDisplayBreakMins(gasWorkAMins, clockInMins, clockOutMins, r.leaveType)
+      const isHoliday        = r.dayType !== 'WEEKDAY'
+      const displayBreakMins = isHoliday ? r.breakMinutes : computeDisplayBreakMins(gasWorkAMins, clockInMins, clockOutMins, r.leaveType)
       const gasWorkBMins     = Math.max(0, gasWorkAMins - displayBreakMins)
       // 최종근무 = 근로B + 연차 크레딧 (leaveAmt × 8h, 무급은 0)
       const leaveCredit = r.isUnpaidLeave ? 0 : leaveAmt * 8
-      const finalWorkH  = Math.max(0, gasWorkBMins / 60 + leaveCredit)
+      const finalWorkH  = isHoliday ? r.holidayHours : Math.max(0, gasWorkBMins / 60 + leaveCredit)
       // 연차정보: ERP 미신청 여부를 기준으로 판단 (erpLeaveAmount는 Slack 주입 시 덮어써지므로 사용 불가)
       // ERP 미신청 note 있음 → Slack / leaveType 있고 note 없음 → ERP / 없음 → 빈칸
       const isSlackInjected = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
