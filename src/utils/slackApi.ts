@@ -69,10 +69,11 @@ const DEPT_KEYWORD_MAP: { keywords: string[]; division: string }[] = [
  * e.g. "HMR" is preferred over the shorter "HM" alias.
  */
 function detectDivisionFromText(text: string): string | null {
+  const textLower = text.toLowerCase()
   for (const { keywords, division } of DEPT_KEYWORD_MAP) {
     // Sort descending by length so longer aliases match before shorter ones
     const sorted = [...keywords].sort((a, b) => b.length - a.length)
-    if (sorted.some(kw => text.includes(kw))) return division
+    if (sorted.some(kw => textLower.includes(kw.toLowerCase()))) return division
   }
   return null
 }
@@ -407,10 +408,15 @@ export function parseSlackExceptions(
           ambiguousCount++
           const rangeStr = range.start === range.end ? range.start : `${range.start}~${range.end}`
           const candidateInfo = group.map(m => `${m.emp.name}(${m.emp.division})`).join(', ')
+          // Extract any unregistered subteam IDs from this message to help the user configure mappings
+          const unknownSubteams = extractSubteamIds(text).filter(id => !slackGroupMap?.[id])
           console.warn(
             `[TAG Slack] ⚠ 동명이인 충돌 — ${group.length}명 (${rangeStr}): ${candidateInfo}\n` +
             `  부서 컨텍스트로도 구분 불가 (deptMatches=${deptMatches.length}). 스킵.\n` +
-            `  메시지: "${text.slice(0, 100)}"`,
+            `  메시지: "${text.slice(0, 100)}"` +
+            (unknownSubteams.length > 0
+              ? `\n  💡 미등록 Subteam ID: [${unknownSubteams.join(', ')}] → 설정 > 슬랙 연동 > 동명이인 부서 구분에 등록하세요.`
+              : ''),
           )
         }
       }
