@@ -162,7 +162,7 @@ export function SlackProvider({ children }: { children: ReactNode }) {
       const messages = await fetchSlackMessages(config.token, config.channelId, oldest, latest)
       console.log(`[TAG Slack] API 응답: ${messages.length}건 메시지 수신 (bot/join 제외)`)
 
-      const parsed = parseSlackExceptions(messages, employees, year)
+      const parsed = parseSlackExceptions(messages, employees, year, policy.slackGroupMap)
 
       setExceptions(parsed)
       try {

@@ -237,10 +237,23 @@ const CLS_PRIORITY: Record<SlackExcType, number> = {
 
 const DEFAULT_OOO_CLS: { type: SlackExcType; note: string } = { type: 'outside', note: '외근·행사' }
 
+/**
+ * Extract all Slack subteam IDs from a message text.
+ * Matches both <subteam^ID> and <!subteam^ID|label> formats.
+ */
+function extractSubteamIds(text: string): string[] {
+  const ids: string[] = []
+  for (const m of text.matchAll(/<[!]?subteam\^([A-Z0-9]+)(?:\|[^>]*)?>(?!\S)/gi)) {
+    ids.push(m[1])
+  }
+  return ids
+}
+
 export function parseSlackExceptions(
   messages:  SlackMessage[],
   employees: Employee[],
   year:      number,
+  slackGroupMap?: Record<string, string>,
 ): SlackException[] {
   // Pre-build per-employee regex (only once per parse)
   const employeePatterns = employees.map(e => ({
@@ -339,8 +352,21 @@ export function parseSlackExceptions(
           results.push({ empId: emp.id, empName: emp.name, date, type: effectiveCls.type, note: effectiveCls.note, rawText: text })
         }
       } else {
-        // 동명이인: three-tier dept disambiguation
+        // 동명이인: four-tier dept disambiguation
         let deptMatches = group
+
+        // Tier 0: Slack subteam/usergroup ID → division (e.g. <subteam^S0GQJ67UBA9> = @beauty = 뷰티사업부문)
+        if (slackGroupMap && Object.keys(slackGroupMap).length > 0) {
+          const subteamIds = extractSubteamIds(text)
+          for (const id of subteamIds) {
+            const div = slackGroupMap[id]
+            if (div) {
+              const filtered = group.filter(({ emp }) => emp.division.includes(div))
+              if (filtered.length === 1) { deptMatches = filtered; break }
+              if (filtered.length > 0)   { deptMatches = filtered }
+            }
+          }
+        }
 
         // Tier 1: 이름 인근 컨텍스트에서 부서코드 탐색 — "최우정(PE_OD)" 형태 처리
         // 이름 매칭 위치 ±30자 안에 부서코드가 있으면 해당 부서 직원으로 좁힘

@@ -18,6 +18,8 @@ export interface PolicySettings {
   holidayRate: number
   holidayExcessRate: number
   companyHolidays: CompanyHoliday[]
+  /** Slack subteam/usergroup ID → division name. Resolves <subteam^ID> mentions in Slack messages for 동명이인 disambiguation. */
+  slackGroupMap?: Record<string, string>
 }
 
 export const DEFAULT_POLICY: PolicySettings = {
@@ -35,6 +37,7 @@ export const DEFAULT_POLICY: PolicySettings = {
   holidayRate: 1.5,
   holidayExcessRate: 2.0,
   companyHolidays: [],
+  slackGroupMap: {},
 }
 
 export type DayType = 'WEEKDAY' | 'WEEKEND' | 'HOLIDAY'

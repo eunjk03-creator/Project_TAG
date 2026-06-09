@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useSlack, type SlackConfig } from '@/context/SlackContext'
+import { usePolicy } from '@/context/PolicyContext'
 
 export function SlackIntegrationTab() {
   const {
@@ -9,13 +10,30 @@ export function SlackIntegrationTab() {
     isLoading, lastSynced, syncedRange, error,
     fetchAndParse, clearExceptions,
   } = useSlack()
+  const { policy, setPolicy } = usePolicy()
 
   const [draft, setDraft] = useState<SlackConfig>({ ...config })
+  const [groupIdInput,  setGroupIdInput]  = useState('')
+  const [groupDivInput, setGroupDivInput] = useState('')
 
   const isDirty = JSON.stringify(draft) !== JSON.stringify(config)
 
   function patch(partial: Partial<SlackConfig>) {
     setDraft(prev => ({ ...prev, ...partial }))
+  }
+
+  function addGroupMapping() {
+    const id  = groupIdInput.trim()
+    const div = groupDivInput.trim()
+    if (!id || !div) return
+    setPolicy({ ...policy, slackGroupMap: { ...(policy.slackGroupMap ?? {}), [id]: div } })
+    setGroupIdInput(''); setGroupDivInput('')
+  }
+
+  function removeGroupMapping(id: string) {
+    const next = { ...(policy.slackGroupMap ?? {}) }
+    delete next[id]
+    setPolicy({ ...policy, slackGroupMap: next })
   }
 
   function handleSync() {
@@ -174,6 +192,80 @@ export function SlackIntegrationTab() {
           <p className="px-5 pb-4 text-xs text-blue-500">
             메시지를 페이지 단위로 가져오는 중입니다. 기간이 길수록 더 오래 걸릴 수 있습니다.
           </p>
+        )}
+      </div>
+
+      {/* ── Slack Group Map (동명이인 부서 구분) ── */}
+      <div>
+        <h2 className="text-base font-semibold text-gray-800">동명이인 부서 구분</h2>
+        <p className="text-xs text-gray-400 mt-1">
+          Slack 메시지의 <code className="bg-gray-100 px-1 rounded text-[11px]">@그룹멘션</code>이
+          {' '}<code className="bg-gray-100 px-1 rounded text-[11px]">&lt;subteam^ID&gt;</code> 형식으로 변환됩니다.
+          아래에 ID → 부서명 매핑을 등록하면 동명이인 구분에 활용됩니다.
+        </p>
+        <p className="text-[11px] text-blue-500 mt-1">
+          콘솔 경고 예시: <code>부서 컨텍스트로도 구분 불가 (deptMatches=0)</code> → 메시지에서 subteam ID 복사 후 등록
+        </p>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+        {/* Add row */}
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <label className="block text-[11px] text-gray-400 mb-1">Subteam ID</label>
+            <input
+              type="text"
+              placeholder="예: S0GQJ67UBA9"
+              value={groupIdInput}
+              onChange={e => setGroupIdInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addGroupMapping()}
+              className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg
+                focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+            />
+          </div>
+          <div className="flex-1">
+            <label className="block text-[11px] text-gray-400 mb-1">부서명 (Employee.division 포함 문자열)</label>
+            <input
+              type="text"
+              placeholder="예: 뷰티사업부문"
+              value={groupDivInput}
+              onChange={e => setGroupDivInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addGroupMapping()}
+              className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg
+                focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <button
+            onClick={addGroupMapping}
+            disabled={!groupIdInput.trim() || !groupDivInput.trim()}
+            className="px-4 py-1.5 text-sm font-semibold bg-blue-600 text-white rounded-lg
+              hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            추가
+          </button>
+        </div>
+
+        {/* Existing mappings */}
+        {Object.keys(policy.slackGroupMap ?? {}).length === 0 ? (
+          <p className="text-xs text-gray-300 text-center py-3">등록된 매핑이 없습니다.</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {Object.entries(policy.slackGroupMap ?? {}).map(([id, div]) => (
+              <li key={id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-3">
+                  <code className="text-xs font-mono text-blue-700 bg-blue-50 px-2 py-0.5 rounded">{id}</code>
+                  <span className="text-gray-400 text-xs">→</span>
+                  <span className="text-xs font-medium text-gray-700">{div}</span>
+                </div>
+                <button
+                  onClick={() => removeGroupMapping(id)}
+                  className="text-xs text-red-400 hover:text-red-600 transition-colors"
+                >
+                  삭제
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
