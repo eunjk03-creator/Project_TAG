@@ -17,6 +17,7 @@ import { CsvUploader } from '@/components/admin/CsvUploader'
 import { ManualEntryModal } from '@/components/admin/ManualEntryModal'
 import type { ManualEntryPayload } from '@/components/admin/ManualEntryModal'
 import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
+import { SummaryTab }            from '@/components/admin/SummaryTab'
 import {
   computeWorkA, computeWorkB, computeBreakH, computeFinalWork, computeStatusN,
 } from '@/utils/attendanceCalc'
@@ -94,7 +95,7 @@ function detectMonthRange(records: { date: string }[]): { from: string; to: stri
   return { from: `${top[0]}-01`, to: `${top[0]}-${String(last).padStart(2, '0')}` }
 }
 
-type View = 'grid' | 'table'
+type View = 'grid' | 'table' | 'summary'
 
 export default function AdminDashboard() {
   const { policy } = usePolicy()
@@ -919,6 +920,10 @@ export default function AdminDashboard() {
               className={`px-3 py-1.5 rounded-md transition-colors ${view === 'table' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
               테이블
             </button>
+            <button onClick={() => setView('summary')}
+              className={`px-3 py-1.5 rounded-md transition-colors ${view === 'summary' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+              현황
+            </button>
           </div>
         </div>
       </div>
@@ -1481,6 +1486,18 @@ export default function AdminDashboard() {
                 onSortChange={(key, dir) => { setGridSortKey(key); setGridSortDir(dir); setGridPage(0) }}
               />
             </div>
+          </div>
+        )}
+
+        {/* ── Summary view ── */}
+        {view === 'summary' && (
+          <div className="flex-1 min-h-0 overflow-auto">
+            <SummaryTab
+              records={scopedRecords}
+              employees={scopedEmployees}
+              dateFrom={dateRange.from}
+              dateTo={dateRange.to}
+            />
           </div>
         )}
 
