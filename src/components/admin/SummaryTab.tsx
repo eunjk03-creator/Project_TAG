@@ -1,6 +1,7 @@
 'use client'
 import { useMemo, useState } from 'react'
 import type { ProcessedRecord, Employee } from '@/types/tag'
+import { DIVISION_ORDER } from '@/data/orgChart'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -116,7 +117,14 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
 
     // Sort rows by division; build names per div
     const rows = [...divMap.values()]
-      .sort((a, b) => a.division.localeCompare(b.division))
+      .sort((a, b) => {
+        const ai = DIVISION_ORDER.indexOf(a.division)
+        const bi = DIVISION_ORDER.indexOf(b.division)
+        if (ai === -1 && bi === -1) return a.division.localeCompare(b.division, 'ko')
+        if (ai === -1) return 1
+        if (bi === -1) return -1
+        return ai - bi
+      })
       .map(row => ({
         ...row,
         names: [...row.empIds]
@@ -161,7 +169,14 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
       else                row.withHoliday.push(name)
     }
 
-    const rows = [...divMap.values()].sort((a, b) => a.division.localeCompare(b.division))
+    const rows = [...divMap.values()].sort((a, b) => {
+      const ai = DIVISION_ORDER.indexOf(a.division)
+      const bi = DIVISION_ORDER.indexOf(b.division)
+      if (ai === -1 && bi === -1) return a.division.localeCompare(b.division, 'ko')
+      if (ai === -1) return 1
+      if (bi === -1) return -1
+      return ai - bi
+    })
     return {
       rows,
       totalNo:   rows.reduce((s, r) => s + r.noHoliday.length,   0),
