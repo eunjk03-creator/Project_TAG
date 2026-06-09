@@ -435,15 +435,31 @@ function buildLeaveMap(
       )
     }
 
-    // 마스킹 불일치 대응: 같은 이름의 모든 compositeKey에 저장
+    // 마스킹 불일치 대응: 같은 이름의 compositeKey 중 동일인(마스킹 변형)만 포함.
+    // compositeKey = "{rawId}_{name}". rawId끼리 비교 시, 한쪽이 * 이고 다른 쪽이 숫자면
+    // 마스킹 처리된 동일인으로 판단. 완전히 다른 rawId 접두어이면 동명이인 → 제외.
     const rowName2 = normalizeName(String(r['성명'] ?? '').trim())
-    const allKeysForName = nameToAllKeys.get(rowName2) ?? [compositeKey]
+    const resolvedRawId = compositeKey.split('_')[0]
+    const candidateKeys = nameToAllKeys.get(rowName2) ?? [compositeKey]
+    const targetKeys = candidateKeys.filter(ck => {
+      const cRawId = ck.split('_')[0]
+      if (cRawId === resolvedRawId) return true
+      if (cRawId.length !== resolvedRawId.length) return false
+      // 두 rawId가 마스킹 차이만 있는 동일인인지 확인 (예: E24010202 vs E240*0202)
+      for (let i = 0; i < cRawId.length; i++) {
+        const a = cRawId[i], b = resolvedRawId[i]
+        if (a === b) continue
+        if ((a === '*' && /\d/.test(b)) || (b === '*' && /\d/.test(a))) continue
+        return false  // 다른 문자 → 다른 사람
+      }
+      return true
+    })
 
     let cur = startDate
     while (cur <= endDate) {
       const { dayType: curDayType } = getDayInfo(cur, companyHolsMap)
       if (curDayType === 'WEEKDAY') {
-        for (const cKey of allKeysForName) {
+        for (const cKey of targetKeys) {
           const k          = key(cKey, cur)
           const existing   = accumMap.get(k)
           const prevAmount = existing?.amount ?? 0
