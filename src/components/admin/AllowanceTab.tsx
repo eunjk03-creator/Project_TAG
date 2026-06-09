@@ -169,10 +169,15 @@ export function AllowanceTab() {
   const holidayColSpan = expanded.has('holiday')  ? months.length + 1 : 1
   const lateColSpan    = expanded.has('late')     ? months.length + 1 : 1
 
+  const halfLabel = half === 'H1' ? '상반기' : '하반기'
+
   const BADGE_LEADER = 'text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200'
 
   // Track division groups for visual separation
   let lastDivision = ''
+
+  // Total colspan for empty state
+  const totalCols = 4 + 1 + 1 + otColSpan + 1 + holidayColSpan + lateColSpan
 
   return (
     <div className="flex flex-col gap-4">
@@ -209,66 +214,75 @@ export function AllowanceTab() {
       <div className="overflow-auto rounded-xl border border-gray-200 bg-white">
         <table className="text-xs w-full border-collapse">
           <thead>
-            {/* ── Row 1: main section headers ── */}
+            {/* ── Row 1: section labels ── */}
             <tr className="bg-gray-50 border-b border-gray-200">
               {/* Fixed columns — rowSpan=2 */}
               <th rowSpan={2} className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[80px]">이름</th>
               <th rowSpan={2} className="text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[90px]">부서</th>
               <th rowSpan={2} className="text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[70px]">직책</th>
-              <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[110px]">통상시급</th>
+              <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[110px]">통상시급<br /><span className="text-[10px] font-normal text-gray-400">(선택)</span></th>
 
-              {/* OT section header */}
+              {/* 연장+휴일 합계 수당 — rowSpan=2 */}
+              <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-900 bg-gray-100 border-r border-gray-300 whitespace-nowrap min-w-[120px]">
+                {halfLabel}<br />연장+휴일수당
+              </th>
+
+              {/* 연장근무수당 — rowSpan=2 */}
+              <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-blue-700 bg-blue-50 border-r border-blue-200 whitespace-nowrap min-w-[110px]">
+                {halfLabel}<br />연장근무수당
+              </th>
+
+              {/* 연장근로시간 section — collapsible */}
               <th
                 colSpan={otColSpan}
                 onClick={() => toggleSection('ot')}
-                className="cursor-pointer px-3 py-2.5 font-semibold text-blue-700 bg-blue-50 border-r border-blue-200 text-center whitespace-nowrap select-none hover:bg-blue-100 transition-colors"
+                className="cursor-pointer px-3 py-2.5 font-semibold text-blue-600 bg-blue-50/60 border-r border-blue-200 text-center whitespace-nowrap select-none hover:bg-blue-100 transition-colors"
               >
-                연장근로 {expanded.has('ot') ? '▼' : '▶'}
+                {halfLabel} 연장근로시간 {expanded.has('ot') ? '▼' : '▶'}
               </th>
 
-              {/* OT allowance — rowSpan=2 */}
-              <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-blue-700 bg-blue-50 border-r border-blue-200 whitespace-nowrap min-w-[110px]">연장수당</th>
+              {/* 휴일근무수당 — rowSpan=2 */}
+              <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-amber-700 bg-amber-50 border-r border-amber-200 whitespace-nowrap min-w-[110px]">
+                {halfLabel}<br />휴일근무수당
+              </th>
 
-              {/* Holiday section header */}
+              {/* 휴일근로시간 section — collapsible */}
               <th
                 colSpan={holidayColSpan}
                 onClick={() => toggleSection('holiday')}
-                className="cursor-pointer px-3 py-2.5 font-semibold text-amber-700 bg-amber-50 border-r border-amber-200 text-center whitespace-nowrap select-none hover:bg-amber-100 transition-colors"
+                className="cursor-pointer px-3 py-2.5 font-semibold text-amber-600 bg-amber-50/60 border-r border-amber-200 text-center whitespace-nowrap select-none hover:bg-amber-100 transition-colors"
               >
-                휴일근로 {expanded.has('holiday') ? '▼' : '▶'}
+                {halfLabel} 휴일근로시간 {expanded.has('holiday') ? '▼' : '▶'}
               </th>
 
-              {/* Holiday allowance — rowSpan=2 */}
-              <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-amber-700 bg-amber-50 border-r border-amber-200 whitespace-nowrap min-w-[110px]">휴일수당</th>
-
-              {/* Late section header */}
+              {/* 지각 section — collapsible */}
               <th
                 colSpan={lateColSpan}
                 onClick={() => toggleSection('late')}
-                className="cursor-pointer px-3 py-2.5 font-semibold text-red-700 bg-red-50 text-center whitespace-nowrap select-none hover:bg-red-100 transition-colors"
+                className="cursor-pointer px-3 py-2.5 font-semibold text-red-600 bg-red-50/60 text-center whitespace-nowrap select-none hover:bg-red-100 transition-colors"
               >
-                지각 {expanded.has('late') ? '▼' : '▶'}
+                {halfLabel} 지각 {expanded.has('late') ? '▼' : '▶'}
               </th>
             </tr>
 
-            {/* ── Row 2: sub-column headers ── */}
+            {/* ── Row 2: sub-column labels ── */}
             <tr className="bg-gray-50 border-b border-gray-200">
-              {/* OT sub-columns */}
-              <th className="px-3 py-2 font-medium text-blue-600 bg-blue-50 border-r border-blue-100 text-center whitespace-nowrap min-w-[70px]">총시간</th>
+              {/* 연장근로시간 sub-columns */}
+              <th className="px-3 py-2 font-medium text-blue-600 bg-blue-50/60 border-r border-blue-100 text-center whitespace-nowrap min-w-[70px]">총시간</th>
               {expanded.has('ot') && months.map(mm => (
-                <th key={mm} className="px-2 py-2 font-medium text-blue-500 bg-blue-50 border-r border-blue-100 text-center whitespace-nowrap min-w-[60px]">{monthLabels[mm]}</th>
+                <th key={`ot-${mm}`} className="px-2 py-2 font-medium text-blue-500 bg-blue-50/40 border-r border-blue-100 text-center whitespace-nowrap min-w-[56px]">{monthLabels[mm]}</th>
               ))}
 
-              {/* Holiday sub-columns */}
-              <th className="px-3 py-2 font-medium text-amber-600 bg-amber-50 border-r border-amber-100 text-center whitespace-nowrap min-w-[70px]">총시간</th>
+              {/* 휴일근로시간 sub-columns */}
+              <th className="px-3 py-2 font-medium text-amber-600 bg-amber-50/60 border-r border-amber-100 text-center whitespace-nowrap min-w-[70px]">총시간</th>
               {expanded.has('holiday') && months.map(mm => (
-                <th key={mm} className="px-2 py-2 font-medium text-amber-500 bg-amber-50 border-r border-amber-100 text-center whitespace-nowrap min-w-[60px]">{monthLabels[mm]}</th>
+                <th key={`hol-${mm}`} className="px-2 py-2 font-medium text-amber-500 bg-amber-50/40 border-r border-amber-100 text-center whitespace-nowrap min-w-[56px]">{monthLabels[mm]}</th>
               ))}
 
-              {/* Late sub-columns */}
-              <th className="px-3 py-2 font-medium text-red-600 bg-red-50 border-r border-red-100 text-center whitespace-nowrap min-w-[60px]">총횟수</th>
+              {/* 지각 sub-columns */}
+              <th className="px-3 py-2 font-medium text-red-600 bg-red-50/60 border-r border-red-100 text-center whitespace-nowrap min-w-[56px]">총횟수</th>
               {expanded.has('late') && months.map(mm => (
-                <th key={mm} className="px-2 py-2 font-medium text-red-500 bg-red-50 border-r border-red-100 text-center whitespace-nowrap min-w-[50px]">{monthLabels[mm]}</th>
+                <th key={`late-${mm}`} className="px-2 py-2 font-medium text-red-500 bg-red-50/40 border-r border-red-100 text-center whitespace-nowrap min-w-[48px]">{monthLabels[mm]}</th>
               ))}
             </tr>
           </thead>
@@ -276,21 +290,17 @@ export function AllowanceTab() {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td
-                  colSpan={4 + otColSpan + 1 + holidayColSpan + 1 + lateColSpan}
-                  className="px-6 py-10 text-center text-gray-400"
-                >
+                <td colSpan={totalCols} className="px-6 py-10 text-center text-gray-400">
                   데이터가 없습니다. CSV를 업로드하면 집계됩니다.
                 </td>
               </tr>
             ) : rows.map((row) => {
               const { emp, otByMonth, holidayByMonth, lateByMonth, totalOt, totalHoliday, totalLate, isLeader } = row
-              const rateRaw = hourlyRates[emp.id]
-              const rate    = rateRaw ? parseFloat(rateRaw.replace(/,/g, '')) : 0
+              const rate             = parseFloat(hourlyRates[emp.id] ?? '0') || 0
               const otAllowance      = rate > 0 ? totalOt      * rate : 0
               const holidayAllowance = rate > 0 ? totalHoliday * rate : 0
+              const totalAllowance   = otAllowance + holidayAllowance
 
-              // Division group separator
               const isDivisionStart = emp.division !== lastDivision
               lastDivision = emp.division
 
@@ -319,12 +329,12 @@ export function AllowanceTab() {
                     </div>
                   </td>
 
-                  {/* 직책 */}
+                  {/* 직책명 */}
                   <td className="px-3 py-2 border-r border-gray-100 text-gray-600 whitespace-nowrap">
                     {emp.jobTitle ?? '—'}
                   </td>
 
-                  {/* 통상시급 */}
+                  {/* 통상시급 입력 */}
                   <td className="px-2 py-1.5 border-r border-gray-100">
                     <input
                       type="number"
@@ -337,45 +347,50 @@ export function AllowanceTab() {
                     />
                   </td>
 
-                  {/* OT 총시간 */}
-                  <td className="px-3 py-2 border-r border-blue-100 text-center text-blue-700 font-medium tabular-nums bg-blue-50/30 whitespace-nowrap">
+                  {/* 연장+휴일 합산 수당 */}
+                  <td className="px-3 py-2 border-r border-gray-300 text-right font-bold text-gray-900 bg-gray-50 tabular-nums whitespace-nowrap">
+                    {fmtW(totalAllowance)}
+                  </td>
+
+                  {/* 연장근무수당 */}
+                  <td className="px-3 py-2 border-r border-blue-200 text-right font-semibold text-blue-700 bg-blue-50/40 tabular-nums whitespace-nowrap">
+                    {fmtW(otAllowance)}
+                  </td>
+
+                  {/* 연장근로시간 총 */}
+                  <td className="px-3 py-2 border-r border-blue-100 text-center text-blue-700 font-medium tabular-nums bg-blue-50/20 whitespace-nowrap">
                     {fmtH(totalOt)}
                   </td>
-                  {/* OT 월별 */}
+                  {/* 연장근로시간 월별 */}
                   {expanded.has('ot') && months.map(mm => (
-                    <td key={mm} className="px-2 py-2 border-r border-blue-100 text-center text-blue-600 tabular-nums bg-blue-50/20 whitespace-nowrap">
+                    <td key={`ot-${mm}`} className="px-2 py-2 border-r border-blue-100 text-center text-blue-600 tabular-nums bg-blue-50/10 whitespace-nowrap">
                       {fmtH(otByMonth[mm] ?? 0)}
                     </td>
                   ))}
 
-                  {/* 연장수당 */}
-                  <td className="px-3 py-2 border-r border-blue-100 text-right font-semibold text-blue-700 bg-blue-50/40 tabular-nums whitespace-nowrap">
-                    {fmtW(otAllowance)}
+                  {/* 휴일근무수당 */}
+                  <td className="px-3 py-2 border-r border-amber-200 text-right font-semibold text-amber-700 bg-amber-50/40 tabular-nums whitespace-nowrap">
+                    {fmtW(holidayAllowance)}
                   </td>
 
-                  {/* Holiday 총시간 */}
-                  <td className="px-3 py-2 border-r border-amber-100 text-center text-amber-700 font-medium tabular-nums bg-amber-50/30 whitespace-nowrap">
+                  {/* 휴일근로시간 총 */}
+                  <td className="px-3 py-2 border-r border-amber-100 text-center text-amber-700 font-medium tabular-nums bg-amber-50/20 whitespace-nowrap">
                     {fmtH(totalHoliday)}
                   </td>
-                  {/* Holiday 월별 */}
+                  {/* 휴일근로시간 월별 */}
                   {expanded.has('holiday') && months.map(mm => (
-                    <td key={mm} className="px-2 py-2 border-r border-amber-100 text-center text-amber-600 tabular-nums bg-amber-50/20 whitespace-nowrap">
+                    <td key={`hol-${mm}`} className="px-2 py-2 border-r border-amber-100 text-center text-amber-600 tabular-nums bg-amber-50/10 whitespace-nowrap">
                       {fmtH(holidayByMonth[mm] ?? 0)}
                     </td>
                   ))}
 
-                  {/* 휴일수당 */}
-                  <td className="px-3 py-2 border-r border-amber-100 text-right font-semibold text-amber-700 bg-amber-50/40 tabular-nums whitespace-nowrap">
-                    {fmtW(holidayAllowance)}
-                  </td>
-
-                  {/* Late 총횟수 */}
-                  <td className="px-3 py-2 border-r border-red-100 text-center text-red-700 font-medium tabular-nums bg-red-50/30 whitespace-nowrap">
+                  {/* 지각 총횟수 */}
+                  <td className="px-3 py-2 border-r border-red-100 text-center text-red-700 font-medium tabular-nums bg-red-50/20 whitespace-nowrap">
                     {totalLate > 0 ? `${totalLate}회` : '—'}
                   </td>
-                  {/* Late 월별 */}
+                  {/* 지각 월별 */}
                   {expanded.has('late') && months.map(mm => (
-                    <td key={mm} className="px-2 py-2 border-r border-red-100 text-center text-red-600 tabular-nums bg-red-50/20 whitespace-nowrap">
+                    <td key={`late-${mm}`} className="px-2 py-2 border-r border-red-100 text-center text-red-600 tabular-nums bg-red-50/10 whitespace-nowrap">
                       {(lateByMonth[mm] ?? 0) > 0 ? `${lateByMonth[mm]}회` : '—'}
                     </td>
                   ))}
@@ -389,8 +404,7 @@ export function AllowanceTab() {
       {/* ── Footnote ── */}
       <p className="text-[11px] text-gray-400">
         * 통상시급은 페이지 새로고침 시 초기화됩니다.
-        연장수당 = 연장근로시간 × 통상시급, 휴일수당 = 휴일근로시간 × 통상시급.
-        직책자(직책 뱃지)는 30분 절사 없이 rawOvertimeMinutes 기준으로 집계됩니다.
+        수당 = 시간 × 통상시급. 직책자(직책 뱃지)는 rawOvertimeMinutes 기준(절사 없음)으로 연장근로 집계.
       </p>
     </div>
   )
