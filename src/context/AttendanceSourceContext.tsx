@@ -326,14 +326,28 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
   }, [])
 
   // ── Re-parse rawRecords when policy changes (raw CSV in memory) ────────
-  const mountedRef = useRef(false)
+  // Also auto-recompute processed data if live DB data exists (e.g. after adding company holidays)
+  const mountedRef     = useRef(false)
+  const isLiveDataRef  = useRef(false)
+  useEffect(() => { isLiveDataRef.current = liveEmployees !== null }, [liveEmployees])
+
   useEffect(() => {
     if (!mountedRef.current) { mountedRef.current = true; return }
-    if (!rawCaps || !rawErp) return
-    const { employees, rawRecords } = parseAttendanceData(rawCaps, rawErp, policy)
-    const normalized = normalizeDivisions(employees)
-    setLiveEmployees(normalized)
-    setLiveRecords(rawRecords)
+
+    if (rawCaps && rawErp) {
+      const { employees, rawRecords } = parseAttendanceData(rawCaps, rawErp, policy)
+      const normalized = normalizeDivisions(employees)
+      setLiveEmployees(normalized)
+      setLiveRecords(rawRecords)
+    }
+
+    if (isLiveDataRef.current) {
+      setIsProcessing(true)
+      apiCompute(policy)
+        .then(async pt => { if (pt) await loadProcessedFromDB() })
+        .catch(console.error)
+        .finally(() => setIsProcessing(false))
+    }
   }, [policy]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── recomputeProcessed: trigger server-side computation ───────────────
