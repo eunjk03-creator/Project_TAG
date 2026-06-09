@@ -184,6 +184,87 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
     }
   }, [scopedRecords, empMap, selectedWeek])
 
+  // ── 공통: 부서 정렬 헬퍼 ─────────────────────────────────────────────────
+
+  function divSort<T extends { division: string }>(arr: T[]): T[] {
+    return [...arr].sort((a, b) => {
+      const ai = DIVISION_ORDER.indexOf(a.division)
+      const bi = DIVISION_ORDER.indexOf(b.division)
+      if (ai === -1 && bi === -1) return a.division.localeCompare(b.division, 'ko')
+      if (ai === -1) return 1
+      if (bi === -1) return -1
+      return ai - bi
+    })
+  }
+
+  // ── 섹션 3: 부서별 이상치 현황 (총합계 10건 이상) ───────────────────────
+
+  type AnomalyCounts = {
+    late: number; early: number; shortage: number; notag: number; mixed: number; total: number
+  }
+
+  function flagToCategory(flag: string): keyof Omit<AnomalyCounts, 'total'> {
+    if (flag === 'LATE')               return 'late'
+    if (flag === 'EARLY_DEPARTURE')    return 'early'
+    if (flag === 'ATTENDANCE_ANOMALY') return 'shortage'
+    if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') return 'notag'
+    return 'mixed' // LATE_AND_EARLY_DEPARTURE, LATE_AND_ANOMALY
+  }
+
+  const divAnomalyData = useMemo(() => {
+    type DivRow = AnomalyCounts & { division: string }
+    const divMap = new Map<string, DivRow>()
+
+    for (const r of scopedRecords) {
+      if (!r.flag) continue
+      const div = empMap.get(r.employeeId)?.division ?? '—'
+      if (!divMap.has(div)) divMap.set(div, { division: div, late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 })
+      const row = divMap.get(div)!
+      row[flagToCategory(r.flag)]++
+      row.total++
+    }
+
+    const rows = divSort([...divMap.values()]).filter(r => r.total >= 10)
+    const totals = rows.reduce<AnomalyCounts>(
+      (s, r) => ({ late: s.late + r.late, early: s.early + r.early, shortage: s.shortage + r.shortage, notag: s.notag + r.notag, mixed: s.mixed + r.mixed, total: s.total + r.total }),
+      { late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 },
+    )
+    return { rows, totals }
+  }, [scopedRecords, empMap])
+
+  // ── 섹션 4: 개인별 근태이상 3건 이상 ────────────────────────────────────
+
+  const empAnomalyData = useMemo(() => {
+    type EmpRow = AnomalyCounts & { division: string; name: string }
+    const empMap2 = new Map<string, EmpRow>()
+
+    for (const r of scopedRecords) {
+      if (!r.flag) continue
+      const emp  = empMap.get(r.employeeId)
+      const div  = emp?.division ?? '—'
+      const name = emp?.name ?? r.employeeId
+      const key  = r.employeeId
+      if (!empMap2.has(key)) empMap2.set(key, { division: div, name, late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 })
+      const row = empMap2.get(key)!
+      row[flagToCategory(r.flag)]++
+      row.total++
+    }
+
+    const rows = divSort(
+      [...empMap2.values()]
+        .filter(r => r.total >= 3)
+        .sort((a, b) => {
+          const di = DIVISION_ORDER.indexOf(a.division) - DIVISION_ORDER.indexOf(b.division)
+          return di !== 0 ? di : a.name.localeCompare(b.name, 'ko')
+        }),
+    )
+    const totals = rows.reduce<AnomalyCounts>(
+      (s, r) => ({ late: s.late + r.late, early: s.early + r.early, shortage: s.shortage + r.shortage, notag: s.notag + r.notag, mixed: s.mixed + r.mixed, total: s.total + r.total }),
+      { late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 },
+    )
+    return { rows, totals }
+  }, [scopedRecords, empMap])
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -339,6 +420,122 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
           )}
         </section>
       )}
+
+      {/* ── 섹션3: 부서별 이상치 현황 (주간, 10건 이상) ── */}
+      <section>
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">
+          부서별 이상치 현황
+          {selectedWeek && (
+            <span className="ml-2 text-xs font-normal text-gray-400">{selectedWeek.range}</span>
+          )}
+        </h3>
+        <p className="text-xs text-gray-400 mb-3">이상치 합계 10건 이상 부서만 표시</p>
+
+        {divAnomalyData.rows.length === 0 ? (
+          <div className="text-sm text-gray-400 py-8 text-center rounded-xl border border-dashed border-gray-200">
+            이상치 10건 이상 부서가 없습니다
+          </div>
+        ) : (
+          <div className="overflow-auto rounded-xl border border-gray-200">
+            <table className="text-xs w-full border-collapse">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-gray-600">
+                  <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">부서</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">지각</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">조기퇴근</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">근무시간 미달</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">미태깅</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">혼합</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap text-blue-700">총합계</th>
+                </tr>
+              </thead>
+              <tbody>
+                {divAnomalyData.rows.map((row, i) => (
+                  <tr key={row.division}
+                    className={`border-b border-gray-100 last:border-0 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}
+                  >
+                    <td className="px-3 py-2 font-medium text-gray-700 whitespace-nowrap">{row.division}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{row.late || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{row.early || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{row.shortage || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{row.notag || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{row.mixed || '—'}</td>
+                    <td className="px-3 py-2 text-center font-semibold text-blue-700">{row.total}</td>
+                  </tr>
+                ))}
+                <tr className="bg-gray-100 border-t-2 border-gray-300 font-semibold text-gray-700">
+                  <td className="px-3 py-2">합계</td>
+                  <td className="px-3 py-2 text-center">{divAnomalyData.totals.late || '—'}</td>
+                  <td className="px-3 py-2 text-center">{divAnomalyData.totals.early || '—'}</td>
+                  <td className="px-3 py-2 text-center">{divAnomalyData.totals.shortage || '—'}</td>
+                  <td className="px-3 py-2 text-center">{divAnomalyData.totals.notag || '—'}</td>
+                  <td className="px-3 py-2 text-center">{divAnomalyData.totals.mixed || '—'}</td>
+                  <td className="px-3 py-2 text-center text-blue-700">{divAnomalyData.totals.total}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ── 섹션4: 개인별 근태이상 3건 이상 ── */}
+      <section>
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">
+          개인별 근태이상
+          {selectedWeek && (
+            <span className="ml-2 text-xs font-normal text-gray-400">{selectedWeek.range}</span>
+          )}
+        </h3>
+        <p className="text-xs text-gray-400 mb-3">이상치 합계 3건 이상 대상자만 표시</p>
+
+        {empAnomalyData.rows.length === 0 ? (
+          <div className="text-sm text-gray-400 py-8 text-center rounded-xl border border-dashed border-gray-200">
+            이상치 3건 이상 대상자가 없습니다
+          </div>
+        ) : (
+          <div className="overflow-auto rounded-xl border border-gray-200">
+            <table className="text-xs w-full border-collapse">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-gray-600">
+                  <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">부서</th>
+                  <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">이름</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">지각</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">조기퇴근</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">근무시간 미달</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">미태깅</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">혼합</th>
+                  <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap text-blue-700">총합계</th>
+                </tr>
+              </thead>
+              <tbody>
+                {empAnomalyData.rows.map((row, i) => (
+                  <tr key={`${row.division}-${row.name}`}
+                    className={`border-b border-gray-100 last:border-0 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}
+                  >
+                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{row.division}</td>
+                    <td className="px-3 py-2 font-medium text-gray-700 whitespace-nowrap">{row.name}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{row.late || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{row.early || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{row.shortage || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{row.notag || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{row.mixed || '—'}</td>
+                    <td className="px-3 py-2 text-center font-semibold text-blue-700">{row.total}</td>
+                  </tr>
+                ))}
+                <tr className="bg-gray-100 border-t-2 border-gray-300 font-semibold text-gray-700">
+                  <td className="px-3 py-2" colSpan={2}>합계</td>
+                  <td className="px-3 py-2 text-center">{empAnomalyData.totals.late || '—'}</td>
+                  <td className="px-3 py-2 text-center">{empAnomalyData.totals.early || '—'}</td>
+                  <td className="px-3 py-2 text-center">{empAnomalyData.totals.shortage || '—'}</td>
+                  <td className="px-3 py-2 text-center">{empAnomalyData.totals.notag || '—'}</td>
+                  <td className="px-3 py-2 text-center">{empAnomalyData.totals.mixed || '—'}</td>
+                  <td className="px-3 py-2 text-center text-blue-700">{empAnomalyData.totals.total}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
     </div>
   )
