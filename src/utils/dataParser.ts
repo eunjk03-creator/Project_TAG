@@ -74,6 +74,19 @@ function isValidEmpId(rawId: string): boolean {
   return /^E[\d*]{8,}$/.test(rawId)
 }
 
+/**
+ * Extracts the hire date from a raw employee ID in EYYMMDDSEQ format.
+ * Returns 'YYYY-MM-DD' or null when the ID is masked/unrecognisable.
+ * Example: 'E26060101' → '2026-06-01'
+ * Only applies when all digits are present (no masking asterisks).
+ */
+function hireDateFromRawId(rawId: string): string | null {
+  const m = rawId.match(/^E(\d{2})(\d{2})(\d{2})\d+$/)
+  if (!m) return null
+  const [, yy, mm, dd] = m
+  return `20${yy}-${mm}-${dd}`
+}
+
 // ── ID normalisation ──────────────────────────────────────────────────────
 
 function normalizeId(raw: string | null | undefined): string {
@@ -628,6 +641,12 @@ export function parseAttendanceData(
     // CAPS dates: "2026/05/01" → replace "/" → "2026-05-01"
     const normDate = normalizeDate(r['근무일자'])
     if (!normDate) { skippedCount++; continue }
+
+    // Skip records that fall before the employee's hire date.
+    // Hire date is encoded in rawId: E{YY}{MM}{DD}{SEQ} → 20YY-MM-DD.
+    // Masked IDs (asterisks) return null → no filtering applied.
+    const hireDate = hireDateFromRawId(rawId)
+    if (hireDate && normDate < hireDate) { skippedCount++; continue }
 
     const lookupKey = key(compositeKey, normDate)
 
