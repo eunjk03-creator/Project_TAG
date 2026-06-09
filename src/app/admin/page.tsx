@@ -953,31 +953,6 @@ export default function AdminDashboard() {
 
         <div className="ml-auto flex items-center gap-3 shrink-0">
 
-          {/* Time view mode toggle */}
-          <div className="flex items-center gap-1.5 text-[11px]">
-            <span className="text-gray-400 whitespace-nowrap">시간 기준</span>
-            <div className="flex items-center bg-gray-100 rounded-lg p-0.5 font-medium">
-              <button
-                onClick={() => setShowExactTime(false)}
-                className={`px-2.5 py-1 rounded-md transition-all ${
-                  !showExactTime ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                }`}
-                title="급여 계산 기준 시간 (30분 단위 절사)"
-              >
-                인정 시간
-              </button>
-              <button
-                onClick={() => setShowExactTime(true)}
-                className={`px-2.5 py-1 rounded-md transition-all ${
-                  showExactTime ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                }`}
-                title="태그 기록 기준 실제 근무 시간 (절사 없음)"
-              >
-                실제 값
-              </button>
-            </div>
-          </div>
-
         </div>
       </div>
 
@@ -1396,8 +1371,8 @@ export default function AdminDashboard() {
 
         {/* ── Grid view ── */}
         {view === 'grid' && (
-          <div className="px-6 pt-1 pb-2 shrink-0">
-            <div className="relative max-w-sm">
+          <div className="px-6 pt-1 pb-2 shrink-0 flex items-center gap-3">
+            <div className="relative max-w-sm flex-1">
               <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
                 fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -1416,6 +1391,31 @@ export default function AdminDashboard() {
                   ✕
                 </button>
               )}
+            </div>
+
+            {/* 시간 기준 토글 — 그리드 전용 */}
+            <div className="flex items-center gap-1.5 text-[11px] shrink-0">
+              <span className="text-gray-400 whitespace-nowrap">시간 기준</span>
+              <div className="flex items-center bg-gray-100 rounded-lg p-0.5 font-medium">
+                <button
+                  onClick={() => setShowExactTime(false)}
+                  className={`px-2.5 py-1 rounded-md transition-all ${
+                    !showExactTime ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                  title="급여 계산 기준 시간 (30분 단위 절사)"
+                >
+                  인정 시간
+                </button>
+                <button
+                  onClick={() => setShowExactTime(true)}
+                  className={`px-2.5 py-1 rounded-md transition-all ${
+                    showExactTime ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                  title="태그 기록 기준 실제 근무 시간 (절사 없음)"
+                >
+                  실제 값
+                </button>
+              </div>
             </div>
           </div>
         )}
