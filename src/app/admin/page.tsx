@@ -110,10 +110,10 @@ export default function AdminDashboard() {
   } = useAttendanceSource()
   const { slackNoteMap } = useSlack()
 
-  const [isMounted,           setIsMounted]           = useState(false)
-  const [snapshotUrl,         setSnapshotUrl]         = useState<string | null>(null)
-  const [isCreatingSnapshot,  setIsCreatingSnapshot]  = useState(false)
-  const [manualCell,          setManualCell]          = useState<{ employeeId: string; date: string } | null>(null)
+  const [isMounted,             setIsMounted]             = useState(false)
+  const [manualCell,            setManualCell]            = useState<{ employeeId: string; date: string } | null>(null)
+  const [tableSelectedKeys,     setTableSelectedKeys]     = useState<Set<string>>(new Set())
+  const [tableViewSelected,     setTableViewSelected]     = useState(false)
   const [noteMap,             setNoteMap]             = useState<Map<string, string>>(new Map())
   const [view,                setView]                = useState<View>('grid')
   const [search,              setSearch]              = useState('')
@@ -1008,56 +1008,6 @@ export default function AdminDashboard() {
             </button>
           )}
 
-          {/* Share snapshot */}
-          <div className="ml-auto flex items-center gap-2">
-            {snapshotUrl ? (
-              <>
-                <input readOnly value={`${window.location.origin}${snapshotUrl}`}
-                  className="text-xs border border-gray-200 rounded px-2 py-1 w-72 bg-white text-gray-700 focus:outline-none" />
-                <button
-                  onClick={() => { navigator.clipboard.writeText(`${window.location.origin}${snapshotUrl}`); setSnapshotUrl(null) }}
-                  className="text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors whitespace-nowrap">
-                  복사 후 닫기
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={async () => {
-                  setIsCreatingSnapshot(true)
-                  try {
-                    const res = await fetch('/api/snapshots', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        leaderIds:          [...leaderIdSet],
-                        globalExclusionIds: [...globalExclusionIds],
-                        otExemptIds:        [...otExemptIds],
-                        companyHolidays:    policy.companyHolidays ?? [],
-                      }),
-                    })
-                    const { url } = await res.json()
-                    if (url) setSnapshotUrl(url)
-                  } finally {
-                    setIsCreatingSnapshot(false)
-                  }
-                }}
-                disabled={isCreatingSnapshot}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 whitespace-nowrap"
-              >
-                {isCreatingSnapshot ? (
-                  <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                  </svg>
-                ) : (
-                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
-                  </svg>
-                )}
-                이 화면 공유
-              </button>
-            )}
-          </div>
         </div>
       )}
 
@@ -1534,8 +1484,49 @@ export default function AdminDashboard() {
         {/* ── Table view ── */}
         {view === 'table' && (
           <div className="flex-1 min-h-0 overflow-auto px-6 pb-6 space-y-4">
+
+            {/* Selection action bar */}
+            {tableSelectedKeys.size > 0 && (
+              <div className="flex items-center gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+                <span className="text-blue-700 font-medium tabular-nums">선택 {tableSelectedKeys.size}건</span>
+                <div className="flex items-center gap-2 ml-auto">
+                  <button
+                    onClick={() => setTableViewSelected(v => !v)}
+                    className={`px-3 py-1 rounded-md text-xs font-medium border transition-colors ${
+                      tableViewSelected
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-blue-700 border-blue-300 hover:bg-blue-50'
+                    }`}
+                  >
+                    {tableViewSelected ? '전체 보기' : '선택만 보기'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      for (const key of tableSelectedKeys) {
+                        const [empId, date] = key.split('_')
+                        handleDeleteRecord(empId, date)
+                      }
+                      setTableSelectedKeys(new Set())
+                      setTableViewSelected(false)
+                    }}
+                    className="px-3 py-1 rounded-md text-xs font-medium border border-red-300 bg-white text-red-600 hover:bg-red-50 transition-colors"
+                  >
+                    삭제
+                  </button>
+                  <button
+                    onClick={() => { setTableSelectedKeys(new Set()); setTableViewSelected(false) }}
+                    className="px-3 py-1 rounded-md text-xs font-medium border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
+                  >
+                    선택 해제
+                  </button>
+                </div>
+              </div>
+            )}
+
             <AttendanceResultTable
-              records={tabFilteredRecords}
+              records={tableViewSelected
+                ? tabFilteredRecords.filter(r => tableSelectedKeys.has(`${r.employeeId}_${r.date}`))
+                : tabFilteredRecords}
               employees={baseEmployees}
               columnVisibility={tableColVisibility}
               onColumnVisibilityChange={setTableColVisibility}
@@ -1543,8 +1534,9 @@ export default function AdminDashboard() {
               onNameClick={openDrawer}
               noteMap={noteMap}
               onNoteChange={handleNoteChange}
-              onDeleteRecord={handleDeleteRecord}
               otExemptIds={otExemptIds}
+              selectedKeys={tableSelectedKeys}
+              onSelectionChange={setTableSelectedKeys}
               onExport={filtered => {
                 const fmt6 = (d: string) => d.replace(/-/g, '').slice(2)
                 const filename = `근태결과_${fmt6(dateRange.from)}-${fmt6(dateRange.to)}.xlsx`

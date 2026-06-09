@@ -58,6 +58,8 @@ export interface Props {
   noteMap?:                 Map<string, string>
   onNoteChange?:            (employeeId: string, date: string, note: string) => void
   onDeleteRecord?:          (employeeId: string, date: string) => void
+  selectedKeys?:            Set<string>
+  onSelectionChange?:       (keys: Set<string>) => void
   otExemptIds?:             Set<string>
   /** 엑셀 내보내기 — 테이블 내부 필터 적용된 records를 전달 */
   onExport?:                (filteredRecords: ProcessedRecord[]) => void
@@ -398,6 +400,7 @@ export function AttendanceResultTable({
   onRowClick, onNameClick,
   noteMap, onNoteChange,
   onDeleteRecord,
+  selectedKeys, onSelectionChange,
   otExemptIds,
   onExport,
 }: Props) {
@@ -885,6 +888,29 @@ export function AttendanceResultTable({
         className="overflow-auto"
         style={{ maxHeight: 'calc(100vh - 270px)', minHeight: 200 }}
       >
+        {/* Selection helpers (computed once per render outside header/row loops) */}
+        {(() => {
+          const visibleRows   = table.getRowModel().rows
+          const visibleKeys   = visibleRows.map(row => `${row.original.record.employeeId}_${row.original.record.date}`)
+          const allSelected   = onSelectionChange != null && visibleKeys.length > 0 && visibleKeys.every(k => selectedKeys?.has(k))
+          const someSelected  = !allSelected && visibleKeys.some(k => selectedKeys?.has(k))
+
+          function toggleAll() {
+            if (!onSelectionChange) return
+            const next = new Set(selectedKeys ?? [])
+            if (allSelected) visibleKeys.forEach(k => next.delete(k))
+            else             visibleKeys.forEach(k => next.add(k))
+            onSelectionChange(next)
+          }
+
+          function toggleRow(key: string) {
+            if (!onSelectionChange) return
+            const next = new Set(selectedKeys ?? [])
+            next.has(key) ? next.delete(key) : next.add(key)
+            onSelectionChange(next)
+          }
+
+          return (
         <table
           className="text-xs border-collapse"
           style={{ width: table.getCenterTotalSize(), minWidth: '100%' }}
@@ -892,7 +918,17 @@ export function AttendanceResultTable({
           <thead className="sticky top-0 z-20">
             {table.getHeaderGroups().map(hg => (
               <tr key={hg.id} className="bg-gray-50 border-b border-gray-200">
-                {onDeleteRecord && <th className="w-8 px-1" />}
+                {onSelectionChange && (
+                  <th className="w-8 px-2 text-center sticky left-0 bg-gray-50 z-10">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={el => { if (el) el.indeterminate = someSelected }}
+                      onChange={toggleAll}
+                      className="w-3.5 h-3.5 cursor-pointer"
+                    />
+                  </th>
+                )}
                 {hg.headers.map(header => {
                   const canFilter    = FILTERABLE.has(header.column.id)
                   const isFiltered   = header.column.getIsFiltered()
@@ -993,17 +1029,14 @@ export function AttendanceResultTable({
                     onClick={() => onRowClick?.(r.employeeId, r.date)}
                     className={`${rowBg} border-b border-gray-100 last:border-0 hover:bg-blue-50/30 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
                   >
-                    {onDeleteRecord && (
-                      <td className="px-1 py-2 text-center w-8" onClick={e => e.stopPropagation()}>
-                        <button
-                          onClick={() => onDeleteRecord(r.employeeId, r.date)}
-                          className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                          title="삭제"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
+                    {onSelectionChange && (
+                      <td className="px-2 py-2 text-center w-8 sticky left-0 bg-inherit" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedKeys?.has(`${r.employeeId}_${r.date}`) ?? false}
+                          onChange={() => toggleRow(`${r.employeeId}_${r.date}`)}
+                          className="w-3.5 h-3.5 cursor-pointer"
+                        />
                       </td>
                     )}
                     {row.getVisibleCells().map(cell => (
@@ -1021,6 +1054,8 @@ export function AttendanceResultTable({
             )}
           </tbody>
         </table>
+        )
+      })()}
       </div>
 
       {/* ── Pagination ────────────────────────────────────────────────────── */}
