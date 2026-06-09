@@ -374,13 +374,27 @@ export default function AdminDashboard() {
     })
   }, [serverProcessed, clientProcessed, dateRange.from, dateRange.to, recordOverrides, policy, otExemptIds, slackNoteMap, finalAttrMap])
 
+  // Build hire-date map from employee rawId (format E{YY}{MM}{DD}{SEQ} → 20YY-MM-DD).
+  // Used to exclude records before an employee's hire date even when cached data predates this fix.
+  const hireDateMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const e of baseEmployees) {
+      if (!e.rawId) continue
+      const m = e.rawId.match(/^E(\d{2})(\d{2})(\d{2})\d+$/)
+      if (m) map.set(e.id, `20${m[1]}-${m[2]}-${m[3]}`)
+    }
+    return map
+  }, [baseEmployees])
 
   const scopedRecords = useMemo(
-    () => allProcessed.filter(r =>
-      scopedEmployeeIds.has(r.employeeId) &&
-      !deletedKeys.has(`${r.employeeId}_${r.date}`)
-    ),
-    [allProcessed, scopedEmployeeIds, deletedKeys],
+    () => allProcessed.filter(r => {
+      if (!scopedEmployeeIds.has(r.employeeId)) return false
+      if (deletedKeys.has(`${r.employeeId}_${r.date}`)) return false
+      const hd = hireDateMap.get(r.employeeId)
+      if (hd && r.date < hd) return false
+      return true
+    }),
+    [allProcessed, scopedEmployeeIds, deletedKeys, hireDateMap],
   )
 
   const approvedKeys = useMemo(
