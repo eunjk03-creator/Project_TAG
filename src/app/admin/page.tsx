@@ -18,6 +18,7 @@ import { ManualEntryModal } from '@/components/admin/ManualEntryModal'
 import type { ManualEntryPayload } from '@/components/admin/ManualEntryModal'
 import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
 import { SummaryTab }            from '@/components/admin/SummaryTab'
+import { AllowanceTab }          from '@/components/admin/AllowanceTab'
 import {
   computeWorkA, computeWorkB, computeBreakH, computeFinalWork, computeStatusN,
 } from '@/utils/attendanceCalc'
@@ -124,7 +125,7 @@ export default function AdminDashboard() {
   const [gridPage,    setGridPage]    = useState(0)
   const GRID_PAGE_SIZE = 40
   const [riskView,    setRiskView]    = useState<RiskView>('hr')
-  const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader'>('all')
+  const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader' | 'allowance'>('all')
   const [showExactTime, setShowExactTime] = useState(false)
   const [tableColVisibility, setTableColVisibility] = useState<Record<string, boolean>>({
     normalTags:    true,
@@ -920,7 +921,7 @@ export default function AdminDashboard() {
         <div className="shrink-0">
           <h1 className="text-base font-bold text-gray-900">근태 현황</h1>
           <p className="text-xs text-gray-400">
-            {activeTab === 'all' ? '전체' : activeTab === 'employee' ? '사원' : '직책자'} · {activeTotal.headcount}명
+            {activeTab === 'all' ? '전체' : activeTab === 'employee' ? '사원' : activeTab === 'leader' ? '직책자' : '수당 집계'}{activeTab !== 'allowance' ? ` · ${activeTotal.headcount}명` : ''}
           </p>
         </div>
 
@@ -1056,13 +1057,14 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* ── All / Employee / Leader 3-way tab bar ── */}
+      {/* ── All / Employee / Leader / Allowance tab bar ── */}
       <div className="px-6 py-2.5 bg-white border-b border-gray-100 shrink-0">
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit text-sm">
           {([
-            { key: 'all'      as const, label: '전체 근태 현황',   count: total.headcount         },
-            { key: 'employee' as const, label: '사원 근태 현황',   count: employeeTotal.headcount },
-            { key: 'leader'   as const, label: '직책자 근태 현황', count: leaderTotal.headcount   },
+            { key: 'all'       as const, label: '전체 근태 현황',   count: total.headcount         as number | null },
+            { key: 'employee'  as const, label: '사원 근태 현황',   count: employeeTotal.headcount as number | null },
+            { key: 'leader'    as const, label: '직책자 근태 현황', count: leaderTotal.headcount   as number | null },
+            { key: 'allowance' as const, label: '수당 집계',        count: null                                     },
           ]).map(({ key, label, count }) => (
             <button key={key} onClick={() => setActiveTab(key)}
               className={`px-4 py-1.5 rounded-md font-medium transition-all whitespace-nowrap flex items-center gap-1.5 ${
@@ -1071,11 +1073,13 @@ export default function AdminDashboard() {
                   : 'text-gray-500 hover:text-gray-700'
               }`}>
               {label}
-              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full tabular-nums ${
-                activeTab === key ? 'bg-blue-50 text-blue-600' : 'bg-gray-200 text-gray-500'
-              }`}>
-                {count}
-              </span>
+              {count !== null && (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full tabular-nums ${
+                  activeTab === key ? 'bg-blue-50 text-blue-600' : 'bg-gray-200 text-gray-500'
+                }`}>
+                  {count}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -1084,6 +1088,15 @@ export default function AdminDashboard() {
       {/* ── Main content ── */}
       <div className="min-w-0 flex flex-col">
 
+        {/* ── Allowance tab (replaces KPI + view area entirely) ── */}
+        {activeTab === 'allowance' && (
+          <div className="flex-1 overflow-auto p-6">
+            <AllowanceTab />
+          </div>
+        )}
+
+        {activeTab !== 'allowance' && (
+        <>
         {/* KPI Cards */}
         <div className="px-6 pt-5 pb-4 shrink-0">
           <div className="grid grid-cols-3 gap-4">
@@ -1545,6 +1558,9 @@ export default function AdminDashboard() {
 
           </div>
         )}
+
+        </>
+        )} {/* end activeTab !== 'allowance' */}
 
       </div>
 
