@@ -8,20 +8,17 @@ import type { Employee, ProcessedRecord } from '@/types/tag'
 
 // ── Format helpers (UI only) ──────────────────────────────────────────────
 
+function round2(n: number) { return Math.round(n * 100) / 100 }
+
 function fmtH(h: number): string {
   if (h === 0) return '—'
-  const m = Math.round(h * 60)
-  const hh = Math.floor(m / 60)
-  const mm = m % 60
-  return mm > 0 ? `${hh}h ${mm}m` : `${hh}h`
+  return round2(h).toFixed(2)
 }
 
 function fmtW(amount: number): string {
   if (amount === 0) return '—'
   return `₩ ${Math.round(amount).toLocaleString('ko-KR')}`
 }
-
-function round2(n: number) { return Math.round(n * 100) / 100 }
 
 function colLetter(c: number): string {
   if (c < 26) return String.fromCharCode(65 + c)
@@ -622,30 +619,30 @@ export function AllowanceTab() {
                   <td className="px-3 py-2 border-r border-gray-300 text-right font-bold text-gray-900 bg-gray-50 tabular-nums whitespace-nowrap">{fmtW(totalAllowance)}</td>
 
                   {/* 연장수당 */}
-                  <td className="px-3 py-2 border-r border-blue-200 text-right font-semibold text-blue-700 bg-blue-50/40 tabular-nums whitespace-nowrap">{fmtW(otAllowance)}</td>
+                  <td className="px-3 py-2 border-r border-blue-200 text-right font-semibold text-gray-800 bg-blue-50/40 tabular-nums whitespace-nowrap">{fmtW(otAllowance)}</td>
 
-                  {/* 연장 총시간 */}
+                  {/* 연장 총시간 — 총시간 열만 파란색 유지 */}
                   <td className="px-3 py-2 border-r border-blue-100 text-center text-blue-700 font-medium tabular-nums bg-blue-50/20 whitespace-nowrap">{fmtH(totalOt)}</td>
                   {expanded.has('ot') && months.map(mm => (
-                    <td key={`ot-${mm}`} className="px-2 py-2 border-r border-blue-100 text-center text-blue-600 tabular-nums bg-blue-50/10 whitespace-nowrap">{fmtH(otByMonth[mm] ?? 0)}</td>
+                    <td key={`ot-${mm}`} className="px-2 py-2 border-r border-blue-100 text-center text-gray-700 tabular-nums bg-blue-50/10 whitespace-nowrap">{fmtH(otByMonth[mm] ?? 0)}</td>
                   ))}
 
                   {/* 휴일수당 */}
-                  <td className="px-3 py-2 border-r border-amber-200 text-right font-semibold text-amber-700 bg-amber-50/40 tabular-nums whitespace-nowrap">{fmtW(holidayAllowance)}</td>
+                  <td className="px-3 py-2 border-r border-amber-200 text-right font-semibold text-gray-800 bg-amber-50/40 tabular-nums whitespace-nowrap">{fmtW(holidayAllowance)}</td>
 
-                  {/* 휴일 총시간 */}
+                  {/* 휴일 총시간 — 총시간 열만 주황색 유지 */}
                   <td className="px-3 py-2 border-r border-amber-100 text-center text-amber-700 font-medium tabular-nums bg-amber-50/20 whitespace-nowrap">{fmtH(totalHoliday)}</td>
                   {expanded.has('holiday') && months.map(mm => (
-                    <td key={`hol-${mm}`} className="px-2 py-2 border-r border-amber-100 text-center text-amber-600 tabular-nums bg-amber-50/10 whitespace-nowrap">{fmtH(holidayByMonth[mm] ?? 0)}</td>
+                    <td key={`hol-${mm}`} className="px-2 py-2 border-r border-amber-100 text-center text-gray-700 tabular-nums bg-amber-50/10 whitespace-nowrap">{fmtH(holidayByMonth[mm] ?? 0)}</td>
                   ))}
 
-                  {/* 지각 총횟수 */}
+                  {/* 지각 총횟수 — 총횟수 열만 빨간색 유지 */}
                   <td className="px-3 py-2 border-r border-red-100 text-center text-red-700 font-medium tabular-nums bg-red-50/20 whitespace-nowrap">
-                    {totalLate > 0 ? `${totalLate}회` : '—'}
+                    {totalLate > 0 ? totalLate : '—'}
                   </td>
                   {expanded.has('late') && months.map(mm => (
-                    <td key={`late-${mm}`} className="px-2 py-2 border-r border-red-100 text-center text-red-600 tabular-nums bg-red-50/10 whitespace-nowrap">
-                      {(lateByMonth[mm] ?? 0) > 0 ? `${lateByMonth[mm]}회` : '—'}
+                    <td key={`late-${mm}`} className="px-2 py-2 border-r border-red-100 text-center text-gray-700 tabular-nums bg-red-50/10 whitespace-nowrap">
+                      {(lateByMonth[mm] ?? 0) > 0 ? lateByMonth[mm] : '—'}
                     </td>
                   ))}
                 </tr>
