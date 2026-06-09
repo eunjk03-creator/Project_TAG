@@ -96,7 +96,7 @@ function detectMonthRange(records: { date: string }[]): { from: string; to: stri
   return { from: `${top[0]}-01`, to: `${top[0]}-${String(last).padStart(2, '0')}` }
 }
 
-type View = 'grid' | 'table' | 'summary'
+type View = 'grid' | 'table' | 'summary' | 'allowance'
 
 export default function AdminDashboard() {
   const { policy } = usePolicy()
@@ -125,7 +125,7 @@ export default function AdminDashboard() {
   const [gridPage,    setGridPage]    = useState(0)
   const GRID_PAGE_SIZE = 40
   const [riskView,    setRiskView]    = useState<RiskView>('hr')
-  const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader' | 'allowance'>('all')
+  const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader'>('all')
   const [showExactTime, setShowExactTime] = useState(false)
   const [tableColVisibility, setTableColVisibility] = useState<Record<string, boolean>>({
     normalTags:    true,
@@ -921,7 +921,7 @@ export default function AdminDashboard() {
         <div className="shrink-0">
           <h1 className="text-base font-bold text-gray-900">근태 현황</h1>
           <p className="text-xs text-gray-400">
-            {activeTab === 'all' ? '전체' : activeTab === 'employee' ? '사원' : activeTab === 'leader' ? '직책자' : '수당 집계'}{activeTab !== 'allowance' ? ` · ${activeTotal.headcount}명` : ''}
+            {view === 'allowance' ? '수당 집계' : activeTab === 'all' ? '전체' : activeTab === 'employee' ? '사원' : '직책자'}{view !== 'allowance' ? ` · ${activeTotal.headcount}명` : ''}
           </p>
         </div>
 
@@ -938,6 +938,10 @@ export default function AdminDashboard() {
             <button onClick={() => setView('summary')}
               className={`px-3 py-1.5 rounded-md transition-colors ${view === 'summary' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
               현황
+            </button>
+            <button onClick={() => setView('allowance')}
+              className={`px-3 py-1.5 rounded-md transition-colors ${view === 'allowance' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+              수당집계
             </button>
           </div>
         </div>
@@ -1057,14 +1061,13 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* ── All / Employee / Leader / Allowance tab bar ── */}
-      <div className="px-6 py-2.5 bg-white border-b border-gray-100 shrink-0">
+      {/* ── All / Employee / Leader tab bar (hidden on allowance view) ── */}
+      {view !== 'allowance' && <div className="px-6 py-2.5 bg-white border-b border-gray-100 shrink-0">
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit text-sm">
           {([
-            { key: 'all'       as const, label: '전체 근태 현황',   count: total.headcount         as number | null },
-            { key: 'employee'  as const, label: '사원 근태 현황',   count: employeeTotal.headcount as number | null },
-            { key: 'leader'    as const, label: '직책자 근태 현황', count: leaderTotal.headcount   as number | null },
-            { key: 'allowance' as const, label: '수당 집계',        count: null                                     },
+            { key: 'all'      as const, label: '전체 근태 현황',   count: total.headcount         as number | null },
+            { key: 'employee' as const, label: '사원 근태 현황',   count: employeeTotal.headcount as number | null },
+            { key: 'leader'   as const, label: '직책자 근태 현황', count: leaderTotal.headcount   as number | null },
           ]).map(({ key, label, count }) => (
             <button key={key} onClick={() => setActiveTab(key)}
               className={`px-4 py-1.5 rounded-md font-medium transition-all whitespace-nowrap flex items-center gap-1.5 ${
@@ -1083,19 +1086,19 @@ export default function AdminDashboard() {
             </button>
           ))}
         </div>
-      </div>
+      </div>}
 
       {/* ── Main content ── */}
       <div className="min-w-0 flex flex-col">
 
-        {/* ── Allowance tab (replaces KPI + view area entirely) ── */}
-        {activeTab === 'allowance' && (
+        {/* ── Allowance view ── */}
+        {view === 'allowance' && (
           <div className="flex-1 overflow-auto p-6">
             <AllowanceTab />
           </div>
         )}
 
-        {activeTab !== 'allowance' && (
+        {view !== 'allowance' && (
         <>
         {/* KPI Cards */}
         <div className="px-6 pt-5 pb-4 shrink-0">
@@ -1560,7 +1563,7 @@ export default function AdminDashboard() {
         )}
 
         </>
-        )} {/* end activeTab !== 'allowance' */}
+        )} {/* end view !== 'allowance' */}
 
       </div>
 

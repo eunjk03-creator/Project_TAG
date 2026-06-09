@@ -525,39 +525,39 @@ export function AllowanceTab() {
               <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-900 bg-gray-100 border-r border-gray-300 whitespace-nowrap min-w-[120px]">
                 {halfLabel}<br />연장+휴일수당
               </th>
-              <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-blue-700 bg-blue-50 border-r border-blue-200 whitespace-nowrap min-w-[110px]">
+              <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-700 bg-blue-50 border-r border-blue-200 whitespace-nowrap min-w-[110px]">
                 {halfLabel}<br />연장근무수당
               </th>
               <th colSpan={otColSpan} onClick={() => toggleSection('ot')}
-                className="cursor-pointer px-3 py-2.5 font-semibold text-blue-600 bg-blue-50/60 border-r border-blue-200 text-center whitespace-nowrap select-none hover:bg-blue-100 transition-colors">
+                className="cursor-pointer px-3 py-2.5 font-semibold text-gray-700 bg-blue-50/60 border-r border-blue-200 text-center whitespace-nowrap select-none hover:bg-blue-100 transition-colors">
                 {halfLabel} 연장근로시간 {expanded.has('ot') ? '▼' : '▶'}
               </th>
-              <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-amber-700 bg-amber-50 border-r border-amber-200 whitespace-nowrap min-w-[110px]">
+              <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-700 bg-amber-50 border-r border-amber-200 whitespace-nowrap min-w-[110px]">
                 {halfLabel}<br />휴일근무수당
               </th>
               <th colSpan={holidayColSpan} onClick={() => toggleSection('holiday')}
-                className="cursor-pointer px-3 py-2.5 font-semibold text-amber-600 bg-amber-50/60 border-r border-amber-200 text-center whitespace-nowrap select-none hover:bg-amber-100 transition-colors">
+                className="cursor-pointer px-3 py-2.5 font-semibold text-gray-700 bg-amber-50/60 border-r border-amber-200 text-center whitespace-nowrap select-none hover:bg-amber-100 transition-colors">
                 {halfLabel} 휴일근로시간 {expanded.has('holiday') ? '▼' : '▶'}
               </th>
               <th colSpan={lateColSpan} onClick={() => toggleSection('late')}
-                className="cursor-pointer px-3 py-2.5 font-semibold text-red-600 bg-red-50/60 text-center whitespace-nowrap select-none hover:bg-red-100 transition-colors">
+                className="cursor-pointer px-3 py-2.5 font-semibold text-gray-700 bg-red-50/60 text-center whitespace-nowrap select-none hover:bg-red-100 transition-colors">
                 {halfLabel} 지각 {expanded.has('late') ? '▼' : '▶'}
               </th>
             </tr>
 
             {/* Row 2 */}
             <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="px-3 py-2 font-medium text-blue-600 bg-blue-50/60 border-r border-blue-100 text-center whitespace-nowrap min-w-[70px]">총시간</th>
+              <th className="px-3 py-2 font-medium text-gray-600 bg-blue-50/60 border-r border-blue-100 text-center whitespace-nowrap min-w-[70px]">총시간</th>
               {expanded.has('ot') && months.map(mm => (
-                <th key={`ot-${mm}`} className="px-2 py-2 font-medium text-blue-500 bg-blue-50/40 border-r border-blue-100 text-center whitespace-nowrap min-w-[56px]">{monthLabels[mm]}</th>
+                <th key={`ot-${mm}`} className="px-2 py-2 font-medium text-gray-500 bg-blue-50/40 border-r border-blue-100 text-center whitespace-nowrap min-w-[56px]">{monthLabels[mm]}</th>
               ))}
-              <th className="px-3 py-2 font-medium text-amber-600 bg-amber-50/60 border-r border-amber-100 text-center whitespace-nowrap min-w-[70px]">총시간</th>
+              <th className="px-3 py-2 font-medium text-gray-600 bg-amber-50/60 border-r border-amber-100 text-center whitespace-nowrap min-w-[70px]">총시간</th>
               {expanded.has('holiday') && months.map(mm => (
-                <th key={`hol-${mm}`} className="px-2 py-2 font-medium text-amber-500 bg-amber-50/40 border-r border-amber-100 text-center whitespace-nowrap min-w-[56px]">{monthLabels[mm]}</th>
+                <th key={`hol-${mm}`} className="px-2 py-2 font-medium text-gray-500 bg-amber-50/40 border-r border-amber-100 text-center whitespace-nowrap min-w-[56px]">{monthLabels[mm]}</th>
               ))}
-              <th className="px-3 py-2 font-medium text-red-600 bg-red-50/60 border-r border-red-100 text-center whitespace-nowrap min-w-[56px]">총횟수</th>
+              <th className="px-3 py-2 font-medium text-gray-600 bg-red-50/60 border-r border-red-100 text-center whitespace-nowrap min-w-[56px]">총횟수</th>
               {expanded.has('late') && months.map(mm => (
-                <th key={`late-${mm}`} className="px-2 py-2 font-medium text-red-500 bg-red-50/40 border-r border-red-100 text-center whitespace-nowrap min-w-[48px]">{monthLabels[mm]}</th>
+                <th key={`late-${mm}`} className="px-2 py-2 font-medium text-gray-500 bg-red-50/40 border-r border-red-100 text-center whitespace-nowrap min-w-[48px]">{monthLabels[mm]}</th>
               ))}
             </tr>
           </thead>
