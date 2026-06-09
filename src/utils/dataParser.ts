@@ -8,9 +8,8 @@
  *  • normalizeDate: replace("/"→"-") then regex-extract YYYY-MM-DD
  *    → handles time suffixes, single-digit day/month, all separator variants
  *  • normalizeId: String().trim() only — no further stripping that could change numeric IDs
- *  • COMPOSITE EMPLOYEE KEY: "${maskedEmpId}_${normalizeName(name)}"
- *    → masked IDs (e.g. "E250**1501") are NOT unique; name is required as the 2nd factor
- *    → Employee.id == compositeKey; Employee.rawId == original masked empId for display
+ *  • COMPOSITE EMPLOYEE KEY: "${employeeId}_${normalizeName(name)}"
+ *    → Employee.id == compositeKey; Employee.rawId == original 사원번호 for display
  *  • Leave/OT lookup key: "${compositeEmpKey}_${normDate}" — built from the same composite
  *  • Leave map: built from BOTH ERP files; skips OT-type codes
  *  • OT map: built from ERP-OT file only; matches '연장근로' code OR non-zero 인정시간
@@ -65,20 +64,18 @@ const LEADER_TITLES = ['CEO', 'CSO', 'CFO', '본부장', '팀장', '부문장', 
 const EXCLUDED_DEPTS = new Set(['임원', '장애인 고용', '임시출입(근태)', '더존'])
 
 /**
- * Valid employee ID format: 'E' followed by ≥ 8 digits or masking asterisks.
+ * Valid employee ID format: 'E' followed by ≥ 8 digits.
  * Rejects pure-numeric IDs, very short IDs, and non-E-prefixed entries
  * (e.g. visitor codes, contractor numbers) that occasionally appear in CAPS.
- * Masked IDs like "E250**1501" pass because they match E + 8+ [digit|*] chars.
  */
 function isValidEmpId(rawId: string): boolean {
-  return /^E[\d*]{8,}$/.test(rawId)
+  return /^E\d{8,}$/.test(rawId)
 }
 
 /**
- * Extracts the hire date from a raw employee ID in EYYMMDDSEQ format.
- * Returns 'YYYY-MM-DD' or null when the ID is masked/unrecognisable.
+ * Extracts the hire date from an employee ID in E{YY}{MM}{DD}{SEQ} format.
+ * Returns 'YYYY-MM-DD' or null when the format doesn't match.
  * Example: 'E26060101' → '2026-06-01'
- * Only applies when all digits are present (no masking asterisks).
  */
 function hireDateFromRawId(rawId: string): string | null {
   const m = rawId.match(/^E(\d{2})(\d{2})(\d{2})\d+$/)
@@ -266,24 +263,6 @@ const LEAVE_AMOUNT: Partial<Record<ErpLeaveType, number>> = {
   // '출장', '재택근무' are not time-off deductions — no amount
 }
 
-// ── Name-only fallback index ──────────────────────────────────────────────
-
-/**
- * Builds a normalizedName → employeeId map for resolving ERP rows whose
- * 사원번호 format differs from CAPS (e.g., CAPS masks digits as *, ERP uses
- * the full unmasked ID).  Entries for non-unique names (동명이인) are
- * deliberately removed so they cannot cause a wrong-employee assignment.
- */
-function buildNameOnlyFallback(employeeMap: Map<string, Employee>): Map<string, string> {
-  const m = new Map<string, string>()
-  for (const [empId, emp] of employeeMap) {
-    const n = normalizeName(emp.name)
-    if (m.has(n)) m.delete(n)   // duplicate name — never safe to use as a fallback
-    else          m.set(n, empId)
-  }
-  return m
-}
-
 // ── Leave map ─────────────────────────────────────────────────────────────
 
 /** Returns a numeric priority for ERP approval statuses (higher = more authoritative). */
@@ -321,16 +300,6 @@ function buildLeaveMap(
   companyHolsMap: Map<string, string> = new Map(),
 ): Map<string, { type: ErpLeaveType; amount: number; isUnpaid?: boolean; rawCode: string }> {
   const accumMap = new Map<string, { amount: number; type: ErpLeaveType; isUnpaid?: boolean; rawCode: string }>()
-  const nameOnlyFallback = buildNameOnlyFallback(employeeMap)
-
-  // 이름 → 모든 compositeKey 목록 (마스킹 불일치 대응)
-  // 같은 이름이 다른 사번으로 두 CAPS 파일에 나타날 때 모든 키에 leave 저장
-  const nameToAllKeys = new Map<string, string[]>()
-  for (const [empId, emp] of employeeMap) {
-    const n = normalizeName(emp.name)
-    if (!nameToAllKeys.has(n)) nameToAllKeys.set(n, [])
-    nameToAllKeys.get(n)!.push(empId)
-  }
 
   // ── Diagnostic: log ERP column keys from first row (dev only) ──────────
   if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production' && rows.length > 0) {
@@ -349,15 +318,10 @@ function buildLeaveMap(
     const erpName = normalizeName(r['성명'])
     if (!rawId || !erpName) continue
 
-    let compositeKey = `${rawId}_${erpName}`
+    const compositeKey = `${rawId}_${erpName}`
     if (!employeeMap.has(compositeKey)) {
-      const fallbackId = nameOnlyFallback.get(erpName)
-      if (fallbackId) {
-        compositeKey = fallbackId
-      } else {
-        console.warn(`[TAG] ⚠ ERP 휴가 미매칭: 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음 (동명이인 또는 미등록). 스킵.`)
-        continue
-      }
+      console.warn(`[TAG] ⚠ ERP 휴가 미매칭: 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음. 스킵.`)
+      continue
     }
 
     const status = String(r['승인상태'] ?? '').trim()
@@ -435,38 +399,16 @@ function buildLeaveMap(
       )
     }
 
-    // 마스킹 불일치 대응: 같은 이름의 compositeKey 중 동일인(마스킹 변형)만 포함.
-    // compositeKey = "{rawId}_{name}". rawId끼리 비교 시, 한쪽이 * 이고 다른 쪽이 숫자면
-    // 마스킹 처리된 동일인으로 판단. 완전히 다른 rawId 접두어이면 동명이인 → 제외.
-    const rowName2 = normalizeName(String(r['성명'] ?? '').trim())
-    const resolvedRawId = compositeKey.split('_')[0]
-    const candidateKeys = nameToAllKeys.get(rowName2) ?? [compositeKey]
-    const targetKeys = candidateKeys.filter(ck => {
-      const cRawId = ck.split('_')[0]
-      if (cRawId === resolvedRawId) return true
-      if (cRawId.length !== resolvedRawId.length) return false
-      // 두 rawId가 마스킹 차이만 있는 동일인인지 확인 (예: E24010202 vs E240*0202)
-      for (let i = 0; i < cRawId.length; i++) {
-        const a = cRawId[i], b = resolvedRawId[i]
-        if (a === b) continue
-        if ((a === '*' && /\d/.test(b)) || (b === '*' && /\d/.test(a))) continue
-        return false  // 다른 문자 → 다른 사람
-      }
-      return true
-    })
-
     let cur = startDate
     while (cur <= endDate) {
       const { dayType: curDayType } = getDayInfo(cur, companyHolsMap)
       if (curDayType === 'WEEKDAY') {
-        for (const cKey of targetKeys) {
-          const k          = key(cKey, cur)
-          const existing   = accumMap.get(k)
-          const prevAmount = existing?.amount ?? 0
-          const newAmount  = Math.min(1.0, prevAmount + perDayAmount)
-          const newType: ErpLeaveType = newAmount >= 1.0 ? '연차' : effectiveType
-          accumMap.set(k, { amount: newAmount, type: newType, isUnpaid: (existing?.isUnpaid ?? false) || isUnpaid, rawCode: code })
-        }
+        const k          = key(compositeKey, cur)
+        const existing   = accumMap.get(k)
+        const prevAmount = existing?.amount ?? 0
+        const newAmount  = Math.min(1.0, prevAmount + perDayAmount)
+        const newType: ErpLeaveType = newAmount >= 1.0 ? '연차' : effectiveType
+        accumMap.set(k, { amount: newAmount, type: newType, isUnpaid: (existing?.isUnpaid ?? false) || isUnpaid, rawCode: code })
       }
       if (cur === endDate) break
       cur = addOneDayUTC(cur)
@@ -493,8 +435,6 @@ function buildOtMap(
 ): Map<string, { hours: number; code: string }> {
   const map = new Map<string, { hours: number; code: string }>()
 
-  const nameOnlyFallback = buildNameOnlyFallback(employeeMap)
-
   for (const row of rows) {
     const r = row as unknown as Record<string, string>
 
@@ -502,15 +442,10 @@ function buildOtMap(
     const erpName = normalizeName(r['성명'])
     if (!rawId || !erpName) continue
 
-    let compositeKey = `${rawId}_${erpName}`
+    const compositeKey = `${rawId}_${erpName}`
     if (!employeeMap.has(compositeKey)) {
-      const fallbackId = nameOnlyFallback.get(erpName)
-      if (fallbackId) {
-        compositeKey = fallbackId
-      } else {
-        console.warn(`[TAG] ⚠ ERP 연장근로 미매칭: 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음 (동명이인 또는 미등록). 스킵.`)
-        continue
-      }
+      console.warn(`[TAG] ⚠ ERP 연장근로 미매칭: 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음. 스킵.`)
+      continue
     }
 
     const status = String(r['승인상태'] ?? '').trim()
@@ -550,8 +485,7 @@ function extractEmployees(capsData: CapsRow[]): Employee[] {
     const dept = String(r['부서'] ?? '').trim()
     if (!isValidEmpId(rawId) || EXCLUDED_DEPTS.has(dept)) continue
 
-    // Composite primary key: masked IDs are NOT unique on their own.
-    // "E250**1501_김희" and "E250**1501_이수" are two distinct people.
+    // Composite primary key: employeeId + name → unique per person.
     const compositeKey = `${rawId}_${normalizeName(name)}`
 
     if (seen.has(compositeKey)) continue  // same person appearing in multiple rows — skip
@@ -563,7 +497,7 @@ function extractEmployees(capsData: CapsRow[]): Employee[] {
 
     seen.set(compositeKey, {
       id:    compositeKey,  // canonical unique key used for ALL downstream lookups
-      rawId,               // original masked 사원번호 — display only
+      rawId,               // original 사원번호 — display only
       name,
       division,
       team,
@@ -591,9 +525,6 @@ export function parseAttendanceData(
 ): ParseResult {
   const employees   = extractEmployees(capsData)
   const employeeMap = new Map(employees.map(e => [e.id, e]))
-
-  // 사번 마스킹 불일치 대응: 이름 기반 fallback (동명이인은 제외)
-  const capsFallbackMap = buildNameOnlyFallback(employeeMap)
 
   // Both maps receive the same unified array; each filters internally by 근태코드
   const companyHolsMap = new Map((policy.companyHolidays ?? []).map(h => [h.date, h.label]))
@@ -638,20 +569,11 @@ export function parseAttendanceData(
     const rowDept = String(r['부서'] ?? '').trim()
     if (!isValidEmpId(rawId) || EXCLUDED_DEPTS.has(rowDept)) { skippedCount++; continue }
 
-    // Composite key = masked empId + normalized name.
-    let compositeKey = `${rawId}_${rowName}`
-
-    // 두 CAPS 파일의 사번 마스킹 불일치 대응:
-    // 직접 매칭 실패 시 이름 기반 fallback (동명이인 제외)
+    const compositeKey = `${rawId}_${rowName}`
     if (!employeeMap.has(compositeKey)) {
-      const fallbackId = capsFallbackMap.get(rowName)
-      if (fallbackId) {
-        compositeKey = fallbackId
-      } else {
-        console.warn(`[TAG] ⚠ CAPS 미등록 직원: 사원번호="${rawId}" 이름="${rowName}" → 직원 목록에 없음. 스킵.`)
-        skippedCount++
-        continue
-      }
+      console.warn(`[TAG] ⚠ CAPS 미등록 직원: 사원번호="${rawId}" 이름="${rowName}" → 직원 목록에 없음. 스킵.`)
+      skippedCount++
+      continue
     }
 
     // CAPS dates: "2026/05/01" → replace "/" → "2026-05-01"

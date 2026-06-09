@@ -102,9 +102,9 @@ export type ErpLeaveType =
   | '재택근무'
 
 export interface Employee {
-  /** Composite primary key: "${maskedEmpId}_${normalizeName(name)}" — unique even when masked IDs collide */
+  /** Composite primary key: "${employeeId}_${normalizeName(name)}" */
   id: string
-  /** Original masked 사원번호 from the source file — use for display only, NOT for lookups */
+  /** Original 사원번호 from the source file — use for display only, NOT for lookups */
   rawId?: string
   name: string
   division: string
