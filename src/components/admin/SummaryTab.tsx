@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react'
 import type { ProcessedRecord, Employee } from '@/types/tag'
 import { DIVISION_ORDER } from '@/data/orgChart'
+import { computeWorkA, computeWorkB, computeBreakH, computeFinalWork } from '@/utils/attendanceCalc'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -151,8 +152,15 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
     for (const r of scopedRecords) {
       if (!empAgg.has(r.employeeId)) empAgg.set(r.employeeId, { baseH: 0, holidayH: 0 })
       const a = empAgg.get(r.employeeId)!
-      a.baseH    += r.regularHours + r.overtimeHours
-      a.holidayH += r.holidayHours
+      if (r.dayType === 'WEEKDAY') {
+        // Use same formula as useManagementMetrics.recordHours for consistency with grid display
+        const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
+        const workB      = computeWorkB(workA, r.erpLeaveAmount ?? 0, r.isUnpaidLeave ?? false)
+        const finalWorkH = computeFinalWork(workB, computeBreakH(workB))
+        a.baseH += finalWorkH
+      } else {
+        a.holidayH += r.holidayHours
+      }
     }
 
     type DivRow = { division: string; noHoliday: string[]; withHoliday: string[] }
