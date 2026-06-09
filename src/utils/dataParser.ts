@@ -319,6 +319,18 @@ function buildLeaveMap(
     if (!rawId || !erpName) continue
 
     const compositeKey = `${rawId}_${erpName}`
+
+    // 🔍 이현지 동명이인 ERP 진단 — 매칭 여부와 무관하게 전 건 로그
+    if (typeof window !== 'undefined' && erpName.includes('이현지')) {
+      console.log(
+        `[이현지 ERP Pass1] rawId="${rawId}" compositeKey="${compositeKey}"`,
+        `inMap=${employeeMap.has(compositeKey)}`,
+        `status="${String(r['승인상태'] ?? '').trim()}"`,
+        `code="${String(r['근태코드'] ?? '').normalize('NFKC').trim()}"`,
+        `start="${normalizeDate(r[Object.keys(r).find(k => k.replace(/\s+/g,'') === '시작일') ?? '시작일'])}"`,
+      )
+    }
+
     if (!employeeMap.has(compositeKey)) {
       console.warn(`[TAG] ⚠ ERP 휴가 미매칭: 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음. 스킵.`)
       continue
@@ -593,6 +605,21 @@ export function parseAttendanceData(
       const found = leaveMap.get(lookupKey)
       console.log(`[DEBUG LOOKUP 배영언] rawId="${rawId}" compositeKey="${compositeKey}" lookupKey="${lookupKey}" → leaveEntry=${found ? JSON.stringify(found) : 'undefined'}`)
       console.log(`[DEBUG LOOKUP 배영언] leaveMap 전체 키 중 배영언 포함:`, [...leaveMap.keys()].filter(k => k.includes('배영언')))
+    }
+
+    // 🔍 이현지 동명이인 CAPS 진단 — 날짜별 leave 매칭 결과 전 건 로그
+    if (typeof window !== 'undefined' && rowName.includes('이현지')) {
+      const leaveHit = leaveMap.get(lookupKey)
+      console.log(
+        `[이현지 CAPS] rawId="${rawId}" compositeKey="${compositeKey}" date="${normDate}"`,
+        `lookupKey="${lookupKey}"`,
+        `→ leave=${leaveHit ? JSON.stringify(leaveHit) : 'NONE'}`,
+      )
+      // leaveMap 전체 중 이현지 포함 키 출력 (최초 1회 기준)
+      if (normDate <= '2026-06-01') {
+        const ihjKeys = [...leaveMap.keys()].filter(k => k.includes('이현지'))
+        console.log(`[이현지 leaveMap 전체 키]`, ihjKeys)
+      }
     }
 
     // ── Debug: trace a specific employee ─────────────────────────────────
