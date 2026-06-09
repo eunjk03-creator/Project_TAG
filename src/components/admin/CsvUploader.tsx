@@ -298,7 +298,7 @@ const MAX_CAPS = 5
 
 // ── Main export ───────────────────────────────────────────────────────────
 export function CsvUploader() {
-  const { setRawData, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords } = useAttendanceSource()
+  const { setRawData, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, recomputeProcessed, isProcessing } = useAttendanceSource()
 
   // CAPS: 복수 파일 지원 (최대 MAX_CAPS)
   const capsDataRefs = useRef<(Record<string, string>[] | null)[]>([null])
@@ -452,9 +452,14 @@ export function CsvUploader() {
             DB 저장 중…
           </span>
         )}
-        {!isSaving && result?.ok && (
+        {!isSaving && result?.ok && !dbSaveError && (
           <span className="text-[11px] text-emerald-600 font-medium whitespace-nowrap">
             ✓ 저장 완료{result.skipped > 0 ? ` (${result.skipped}건 스킵)` : ''}
+          </span>
+        )}
+        {!isSaving && result?.ok && dbSaveError && (
+          <span className="text-[11px] text-amber-600 font-medium whitespace-nowrap" title={dbSaveError}>
+            ⚠ 파싱 완료 · DB 저장 실패 (콘솔 확인)
           </span>
         )}
         {result && !result.ok && (
@@ -462,8 +467,24 @@ export function CsvUploader() {
             오류: {result.msg}
           </span>
         )}
+        {isProcessing && !isSaving && (
+          <span className="text-[11px] text-indigo-500 font-medium whitespace-nowrap flex items-center gap-1">
+            <span className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+            처리 중…
+          </span>
+        )}
 
         <div className="ml-auto flex items-center gap-2 shrink-0">
+          {isLiveData && !isDbLoading && (
+            <button
+              onClick={() => recomputeProcessed()}
+              disabled={isProcessing}
+              title="서버에서 근태 데이터를 다시 계산합니다"
+              className="text-[11px] text-gray-400 hover:text-indigo-600 transition-colors font-medium disabled:opacity-40"
+            >
+              재계산
+            </button>
+          )}
           {isLiveData && (
             <button
               onClick={handleClear}

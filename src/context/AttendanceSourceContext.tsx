@@ -17,6 +17,7 @@ interface AttendanceSourceContextValue {
   isLoading:          boolean
   isProcessing:       boolean
   lastUploadedAt:     string | null
+  dbSaveError:        string | null
   setRawData:         (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult>
   clearLiveData:      () => Promise<void>
   recomputeProcessed: () => Promise<void>
@@ -97,15 +98,23 @@ async function dbGet(): Promise<{ data: StoredAttendance | null; updatedAt: stri
 
 async function dbPut(data: StoredAttendance | null): Promise<string | null> {
   try {
+    const body = JSON.stringify({ data })
+    console.log(`[TAG] dbPut: ${(body.length / 1024).toFixed(0)}KB 전송 중 (직원 ${data?.employees?.length ?? 0}명 · 레코드 ${data?.rawRecords?.length ?? 0}건)`)
     const res = await fetch('/api/shared-data/attendance_data', {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ data }),
+      body,
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '응답 없음')
+      console.error(`[TAG] dbPut 실패 HTTP ${res.status}:`, errText.slice(0, 300))
+      return null
+    }
     const json = await res.json() as { ok: boolean; updatedAt: string }
+    console.log(`[TAG] dbPut 성공: ${json.updatedAt}`)
     return json.updatedAt ?? null
-  } catch {
+  } catch (e) {
+    console.error('[TAG] dbPut 예외:', e)
     return null
   }
 }
@@ -149,6 +158,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
   const [isLoading,        setIsLoading]        = useState(true)
   const [isProcessing,     setIsProcessing]     = useState(false)
   const [lastUploadedAt,   setLastUploadedAt]   = useState<string | null>(null)
+  const [dbSaveError,      setDbSaveError]      = useState<string | null>(null)
 
   const isLiveData = liveEmployees !== null
 
@@ -285,11 +295,16 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     setRawErp(erp)
     setLiveEmployees(normalized)
     setLiveRecords(result.rawRecords)
+    setDbSaveError(null)
 
     const ts = await dbPut({ employees: normalized, rawRecords: result.rawRecords })
     if (ts) {
       setLastUploadedAt(ts)
       lsSave({ employees: normalized, rawRecords: result.rawRecords, updatedAt: ts })
+    } else {
+      const msg = `DB 저장 실패 — 브라우저에만 저장됨. 새로고침 시 데이터가 사라질 수 있습니다. (콘솔에서 상세 오류 확인)`
+      setDbSaveError(msg)
+      console.warn('[TAG] setRawData: dbPut 실패. 현재 세션에서만 데이터 유효.')
     }
 
     // Trigger server-side computation (non-blocking)
@@ -297,6 +312,8 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     apiCompute(policy).then(async (processedAt) => {
       if (processedAt) {
         await loadProcessedFromDB()
+      } else {
+        console.warn('[TAG] apiCompute 실패 — 처리 결과가 업데이트되지 않음. 재계산 버튼 클릭 필요.')
       }
     }).catch(console.error).finally(() => setIsProcessing(false))
 
@@ -327,6 +344,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
       isLoading,
       isProcessing,
       lastUploadedAt,
+      dbSaveError,
       setRawData,
       clearLiveData,
       recomputeProcessed,

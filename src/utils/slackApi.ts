@@ -52,7 +52,7 @@ function classifyMessage(text: string): { type: SlackExcType; note: string } | n
 const DEPT_KEYWORD_MAP: { keywords: string[]; division: string }[] = [
   { keywords: ['HM', 'HMR', 'HMR사업부문'],           division: 'HMR사업부문'      },
   { keywords: ['HC', '헬스케어', '헬스케어사업부문'],  division: '헬스케어사업부문'  },
-  { keywords: ['RF', '음료', '음료사업부문'],          division: '음료사업부문'      },
+  { keywords: ['RF', '음료사업부문'],                  division: '음료사업부문'      },
   { keywords: ['신사업', '신사업본부'],                division: '신사업본부'        },
   { keywords: ['BT', '뷰티', '뷰티사업부문'],         division: '뷰티사업부문'      },
   { keywords: ['HQ'],                                  division: 'HQ'               },
