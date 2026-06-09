@@ -6,8 +6,9 @@ import { DEFAULT_POLICY } from '@/types/tag'
 import type { PolicySettings, RawRecord, Employee } from '@/types/tag'
 
 interface StoredAttendance {
-  employees:  Employee[]
-  rawRecords: RawRecord[]
+  employees:   Employee[]
+  rawRecords?: RawRecord[]  // legacy: all records in one row
+  chunkCount?: number        // new: records split across attendance_records_N keys
 }
 
 export async function POST(req: NextRequest) {
@@ -26,7 +27,25 @@ export async function POST(req: NextRequest) {
     }
 
     const stored = rawStore.data as unknown as StoredAttendance
-    const { employees = [], rawRecords = [] } = stored
+    const employees: Employee[] = stored.employees ?? []
+
+    // Support both legacy (rawRecords in one row) and new chunked format
+    let rawRecords: RawRecord[] = []
+    if (stored.rawRecords?.length) {
+      rawRecords = stored.rawRecords
+    } else if (stored.chunkCount != null && stored.chunkCount > 0) {
+      const chunkRows = await Promise.all(
+        Array.from({ length: stored.chunkCount }, (_, i) =>
+          prisma.sharedDataStore.findUnique({ where: { key: `attendance_records_${i}` } })
+            .then(r => {
+              const d = r?.data as unknown as { records?: RawRecord[] } | null
+              return d?.records ?? []
+            })
+            .catch(() => [] as RawRecord[]),
+        ),
+      )
+      rawRecords = chunkRows.flat()
+    }
 
     if (!rawRecords.length) {
       return NextResponse.json({ ok: true, count: 0, processedAt: new Date().toISOString() })

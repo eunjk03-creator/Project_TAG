@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
-const ALLOWED_KEYS = ['caps_data', 'erp_data', 'attendance_data', 'processed_data'] as const
+const STATIC_KEYS = new Set(['caps_data', 'erp_data', 'attendance_data', 'processed_data'])
+
+function isAllowedKey(key: string): boolean {
+  return STATIC_KEYS.has(key) || /^attendance_records_\d+$/.test(key)
+}
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ key: string }> },
 ) {
   const { key } = await params
-  if (!ALLOWED_KEYS.includes(key as typeof ALLOWED_KEYS[number])) {
+  if (!isAllowedKey(key)) {
     return NextResponse.json({ error: 'Invalid key' }, { status: 400 })
   }
 
@@ -23,7 +27,7 @@ export async function PUT(
   { params }: { params: Promise<{ key: string }> },
 ) {
   const { key } = await params
-  if (!ALLOWED_KEYS.includes(key as typeof ALLOWED_KEYS[number])) {
+  if (!isAllowedKey(key)) {
     return NextResponse.json({ error: 'Invalid key' }, { status: 400 })
   }
 

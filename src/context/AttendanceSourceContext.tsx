@@ -31,6 +31,15 @@ interface StoredAttendance {
   rawRecords: RawRecord[]
 }
 
+// attendance_data key stores only employees + chunk metadata (rawRecords split across chunk keys)
+interface AttendanceDataMeta {
+  employees:   Employee[]
+  chunkCount:  number
+  rawRecords?: RawRecord[]  // legacy: old uploads stored records here directly
+}
+
+const CHUNK_SIZE = 4000  // records per chunk — keeps each PUT well under Vercel's 4.5MB limit
+
 interface StoredProcessed {
   processed:   ProcessedRecord[]
   processedAt: string
@@ -90,7 +99,27 @@ async function dbGet(): Promise<{ data: StoredAttendance | null; updatedAt: stri
   try {
     const res = await fetch('/api/shared-data/attendance_data')
     if (!res.ok) return { data: null, updatedAt: null }
-    return res.json()
+    const { data: meta, updatedAt } = await res.json() as { data: AttendanceDataMeta | null; updatedAt: string | null }
+    if (!meta?.employees) return { data: null, updatedAt: null }
+
+    // Legacy: rawRecords stored directly (single chunk upload)
+    if (meta.rawRecords?.length) {
+      return { data: { employees: meta.employees, rawRecords: meta.rawRecords }, updatedAt }
+    }
+
+    // New chunked format
+    const chunkCount = meta.chunkCount ?? 0
+    if (chunkCount === 0) return { data: { employees: meta.employees, rawRecords: [] }, updatedAt }
+
+    const chunkResponses = await Promise.all(
+      Array.from({ length: chunkCount }, (_, i) =>
+        fetch(`/api/shared-data/attendance_records_${i}`)
+          .then(r => r.ok ? r.json() as Promise<{ data: { records: RawRecord[] } | null }> : { data: null })
+          .catch(() => ({ data: null })),
+      ),
+    )
+    const rawRecords = chunkResponses.flatMap(r => r.data?.records ?? [])
+    return { data: { employees: meta.employees, rawRecords }, updatedAt }
   } catch {
     return { data: null, updatedAt: null }
   }
@@ -98,21 +127,57 @@ async function dbGet(): Promise<{ data: StoredAttendance | null; updatedAt: stri
 
 async function dbPut(data: StoredAttendance | null): Promise<string | null> {
   try {
-    const body = JSON.stringify({ data })
-    console.log(`[TAG] dbPut: ${(body.length / 1024).toFixed(0)}KB 전송 중 (직원 ${data?.employees?.length ?? 0}명 · 레코드 ${data?.rawRecords?.length ?? 0}건)`)
-    const res = await fetch('/api/shared-data/attendance_data', {
-      method:  'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body,
+    if (!data) {
+      const res = await fetch('/api/shared-data/attendance_data', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: null }),
+      })
+      if (!res.ok) return null
+      return ((await res.json()) as { updatedAt: string }).updatedAt ?? null
+    }
+
+    const { employees, rawRecords } = data
+    const chunkCount = Math.ceil(rawRecords.length / CHUNK_SIZE)
+    console.log(`[TAG] dbPut: 직원 ${employees.length}명 · 레코드 ${rawRecords.length}건 → ${chunkCount}개 청크 병렬 업로드`)
+
+    // Step 1: write metadata (employees + chunkCount) — always small
+    const metaPayload = JSON.stringify({ data: { employees, chunkCount } })
+    console.log(`[TAG] dbPut meta: ${(metaPayload.length / 1024).toFixed(0)}KB`)
+    const metaRes = await fetch('/api/shared-data/attendance_data', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: metaPayload,
     })
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '응답 없음')
-      console.error(`[TAG] dbPut 실패 HTTP ${res.status}:`, errText.slice(0, 300))
+    if (!metaRes.ok) {
+      const errText = await metaRes.text().catch(() => '응답 없음')
+      console.error(`[TAG] dbPut meta 실패 HTTP ${metaRes.status}:`, errText.slice(0, 300))
       return null
     }
-    const json = await res.json() as { ok: boolean; updatedAt: string }
-    console.log(`[TAG] dbPut 성공: ${json.updatedAt}`)
-    return json.updatedAt ?? null
+    const metaJson = await metaRes.json() as { ok: boolean; updatedAt: string }
+
+    // Step 2: write record chunks in parallel — each ~1MB, under Vercel's 4.5MB limit
+    const chunkResults = await Promise.all(
+      Array.from({ length: chunkCount }, async (_, i) => {
+        const records = rawRecords.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+        const payload = JSON.stringify({ data: { records } })
+        console.log(`[TAG] dbPut chunk ${i}: ${(payload.length / 1024).toFixed(0)}KB (${records.length}건)`)
+        const res = await fetch(`/api/shared-data/attendance_records_${i}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: payload,
+        })
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '응답 없음')
+          console.error(`[TAG] dbPut chunk ${i} 실패 HTTP ${res.status}:`, errText.slice(0, 300))
+          return false
+        }
+        return true
+      }),
+    )
+
+    if (chunkResults.some(ok => !ok)) {
+      console.error('[TAG] dbPut: 일부 청크 저장 실패')
+      return null
+    }
+
+    console.log(`[TAG] dbPut 완료 (${chunkCount}개 청크): ${metaJson.updatedAt}`)
+    return metaJson.updatedAt ?? null
   } catch (e) {
     console.error('[TAG] dbPut 예외:', e)
     return null
