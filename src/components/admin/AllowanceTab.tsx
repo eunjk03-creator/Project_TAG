@@ -1,11 +1,12 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
+import * as XLSX from 'xlsx'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee, ProcessedRecord } from '@/types/tag'
 
-// ── Format helpers ────────────────────────────────────────────────────────
+// ── Format helpers (UI only) ──────────────────────────────────────────────
 
 function fmtH(h: number): string {
   if (h === 0) return '—'
@@ -18,6 +19,121 @@ function fmtH(h: number): string {
 function fmtW(amount: number): string {
   if (amount === 0) return '—'
   return `₩ ${Math.round(amount).toLocaleString('ko-KR')}`
+}
+
+function round2(n: number) { return Math.round(n * 100) / 100 }
+
+function colLetter(c: number): string {
+  if (c < 26) return String.fromCharCode(65 + c)
+  return String.fromCharCode(64 + Math.floor(c / 26)) + String.fromCharCode(65 + (c % 26))
+}
+
+// ── Excel export ──────────────────────────────────────────────────────────
+// Column layout (0-indexed):
+//  0:이름  1:부서  2:통상시급
+//  3:연장+휴일수당(=E+M)  4:연장수당(=F*C)  5:연장총시간  6-11:월별연장(6)
+//  12:휴일수당(=N*C)  13:휴일총시간  14-19:월별휴일(6)
+//  20:지각총횟수  21-26:월별지각(6)
+
+function exportAllowanceExcel(
+  rows: EmpRow[],
+  half: 'H1' | 'H2',
+  months: string[],
+  hourlyRates: Record<string, string>,
+) {
+  const halfLabel = half === 'H1' ? '상반기' : '하반기'
+  const ML: Record<string, string> = {
+    '01':'1월','02':'2월','03':'3월','04':'4월','05':'5월','06':'6월',
+    '07':'7월','08':'8월','09':'9월','10':'10월','11':'11월','12':'12월',
+  }
+
+  const ws: XLSX.WorkSheet = {}
+
+  const s = (v: string): XLSX.CellObject => ({ v, t: 's' })
+  const n = (v: number, z?: string): XLSX.CellObject => z ? { v, t: 'n', z } : { v, t: 'n' }
+  const f = (formula: string, z: string): XLSX.CellObject => ({ f: formula, t: 'n', z })
+
+  // ── Header row 1 ──
+  ws['A1'] = s('이름')
+  ws['B1'] = s('부서')
+  ws['C1'] = s('통상시급')
+  ws['D1'] = s(`${halfLabel} 연장+휴일근무수당`)
+  ws['E1'] = s(`${halfLabel} 연장근무수당`)
+  ws['F1'] = s(`${halfLabel} 연장근로시간`)
+  ws['M1'] = s(`${halfLabel} 휴일근무수당`)
+  ws['N1'] = s(`${halfLabel} 휴일근로시간`)
+  ws['U1'] = s(`${halfLabel} 지각`)
+
+  // ── Header row 2 ──
+  ws['F2'] = s('총 시간')
+  months.forEach((mm, i) => { ws[`${colLetter(6 + i)}2`] = s(ML[mm]) })
+  ws['N2'] = s('총 시간')
+  months.forEach((mm, i) => { ws[`${colLetter(14 + i)}2`] = s(ML[mm]) })
+  ws['U2'] = s('총 횟수')
+  months.forEach((mm, i) => { ws[`${colLetter(21 + i)}2`] = s(ML[mm]) })
+
+  // ── Merges (0-indexed r/c) ──
+  ws['!merges'] = [
+    { s: { r:0, c:0  }, e: { r:1, c:0  } }, // 이름
+    { s: { r:0, c:1  }, e: { r:1, c:1  } }, // 부서
+    { s: { r:0, c:2  }, e: { r:1, c:2  } }, // 통상시급
+    { s: { r:0, c:3  }, e: { r:1, c:3  } }, // 연장+휴일수당
+    { s: { r:0, c:4  }, e: { r:1, c:4  } }, // 연장수당
+    { s: { r:0, c:5  }, e: { r:0, c:11 } }, // 연장근로시간 (총+6months)
+    { s: { r:0, c:12 }, e: { r:1, c:12 } }, // 휴일수당
+    { s: { r:0, c:13 }, e: { r:0, c:19 } }, // 휴일근로시간 (총+6months)
+    { s: { r:0, c:20 }, e: { r:0, c:26 } }, // 지각 (총+6months)
+  ]
+
+  // ── Data rows (Excel row 3 onward) ──
+  rows.forEach((row, idx) => {
+    const R = idx + 3
+    const { emp, otByMonth, holidayByMonth, lateByMonth, totalOt, totalHoliday, totalLate } = row
+    const rate = parseFloat(hourlyRates[emp.id] ?? '0') || 0
+
+    ws[`A${R}`] = s(emp.name)
+    ws[`B${R}`] = s(emp.division + (emp.team !== emp.division ? ` / ${emp.team}` : ''))
+    ws[`C${R}`] = rate > 0 ? n(rate, '#,##0') : s('')
+
+    ws[`D${R}`] = f(`E${R}+M${R}`, '#,##0')
+    ws[`E${R}`] = f(`F${R}*C${R}`, '#,##0')
+    ws[`F${R}`] = n(round2(totalOt), '0.00')
+    months.forEach((mm, i) => {
+      ws[`${colLetter(6 + i)}${R}`] = n(round2(otByMonth[mm] ?? 0), '0.00')
+    })
+
+    ws[`M${R}`] = f(`N${R}*C${R}`, '#,##0')
+    ws[`N${R}`] = n(round2(totalHoliday), '0.00')
+    months.forEach((mm, i) => {
+      ws[`${colLetter(14 + i)}${R}`] = n(round2(holidayByMonth[mm] ?? 0), '0.00')
+    })
+
+    ws[`U${R}`] = n(totalLate)
+    months.forEach((mm, i) => {
+      ws[`${colLetter(21 + i)}${R}`] = n(lateByMonth[mm] ?? 0)
+    })
+  })
+
+  ws['!ref'] = `A1:${colLetter(26)}${rows.length + 2}`
+
+  ws['!cols'] = [
+    { wch: 12 }, // 이름
+    { wch: 20 }, // 부서
+    { wch: 10 }, // 통상시급
+    { wch: 16 }, // 연장+휴일수당
+    { wch: 14 }, // 연장수당
+    { wch: 10 }, // 연장총시간
+    ...months.map(() => ({ wch: 8 })),
+    { wch: 14 }, // 휴일수당
+    { wch: 10 }, // 휴일총시간
+    ...months.map(() => ({ wch: 8 })),
+    { wch: 9 },  // 지각총횟수
+    ...months.map(() => ({ wch: 7 })),
+  ]
+
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, `${halfLabel}수당집계`)
+  XLSX.writeFile(wb, `수당집계_${halfLabel}.xlsx`)
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -44,16 +160,18 @@ export function AllowanceTab() {
   const { processedRecords: serverProcessed, employees } = useAttendanceSource()
   const { employeeAttrMap } = useEmployeeExceptions()
 
-  const [half,            setHalf]           = useState<'H1' | 'H2'>(() =>
+  const [half,         setHalf]        = useState<'H1' | 'H2'>(() =>
     new Date().getMonth() + 1 >= 7 ? 'H2' : 'H1',
   )
-  const [expanded,        setExpanded]       = useState<Set<SectionKey>>(new Set())
-  const [hourlyRates,     setHourlyRates]    = useState<Record<string, string>>({})
-  const [search,          setSearch]         = useState('')
-  const [leaderOnly,      setLeaderOnly]     = useState(false)
-  const [divFilter,       setDivFilter]      = useState('')
-  const [sortKey,         setSortKey]        = useState<SortKey>('default')
-  const [page,            setPage]           = useState(0)
+  const [expanded,     setExpanded]    = useState<Set<SectionKey>>(new Set())
+  const [hourlyRates,  setHourlyRates] = useState<Record<string, string>>({})
+  const [search,       setSearch]      = useState('')
+  const [leaderOnly,   setLeaderOnly]  = useState(false)
+  const [divFilter,    setDivFilter]   = useState('')
+  const [sortKey,      setSortKey]     = useState<SortKey>('default')
+  const [page,         setPage]        = useState(0)
+  const [selectedIds,  setSelectedIds] = useState<Set<string>>(new Set())
+  const [viewSelected, setViewSelected]= useState(false)
 
   const months: string[] = half === 'H1'
     ? ['01', '02', '03', '04', '05', '06']
@@ -65,17 +183,11 @@ export function AllowanceTab() {
   }
 
   function toggleSection(key: SectionKey) {
-    setExpanded(prev => {
-      const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
-      return next
-    })
+    setExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
   }
 
   function toggleSort(col: 'ot' | 'holiday') {
-    setSortKey(prev =>
-      prev === `${col}_desc` ? `${col}_asc` as SortKey : `${col}_desc` as SortKey,
-    )
+    setSortKey(prev => prev === `${col}_desc` ? `${col}_asc` as SortKey : `${col}_desc` as SortKey)
   }
 
   function sortIcon(col: 'ot' | 'holiday') {
@@ -84,17 +196,20 @@ export function AllowanceTab() {
     return '↕'
   }
 
-  // ── Base aggregated rows (expensive — only recompute on data/half change) ──
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+
+  // ── Base aggregated rows ──────────────────────────────────────────────────
   const baseRows = useMemo<EmpRow[]>(() => {
-    const records = serverProcessed ?? []
+    const records  = serverProcessed ?? []
     const monthSet = new Set(months)
 
     const recsByEmp = new Map<string, ProcessedRecord[]>()
     for (const r of records) {
       if (!monthSet.has(r.date.slice(5, 7))) continue
-      const bucket = recsByEmp.get(r.employeeId)
-      if (bucket) bucket.push(r)
-      else recsByEmp.set(r.employeeId, [r])
+      const b = recsByEmp.get(r.employeeId)
+      if (b) { b.push(r) } else { recsByEmp.set(r.employeeId, [r]) }
     }
 
     const result: EmpRow[] = []
@@ -113,8 +228,7 @@ export function AllowanceTab() {
       for (const r of empRecords) {
         const mm = r.date.slice(5, 7)
         if (r.dayType === 'WEEKDAY') {
-          const otH = isLeader ? (r.rawOvertimeMinutes ?? 0) / 60 : r.overtimeHours
-          otByMonth[mm] += otH
+          otByMonth[mm] += isLeader ? (r.rawOvertimeMinutes ?? 0) / 60 : r.overtimeHours
         }
         holidayByMonth[mm] += r.holidayHours
         if (r.flag === 'LATE' || r.flag === 'LATE_AND_EARLY_DEPARTURE' || r.flag === 'LATE_AND_ANOMALY') {
@@ -129,20 +243,16 @@ export function AllowanceTab() {
       result.push({ emp, otByMonth, holidayByMonth, lateByMonth, totalOt, totalHoliday, totalLate, isLeader })
     }
 
-    // Default sort: division order → name
     result.sort((a, b) => {
-      const ai = DIVISION_ORDER.indexOf(a.emp.division)
-      const bi = DIVISION_ORDER.indexOf(b.emp.division)
+      const ai = DIVISION_ORDER.indexOf(a.emp.division), bi = DIVISION_ORDER.indexOf(b.emp.division)
       const dc = ai === -1 && bi === -1 ? a.emp.division.localeCompare(b.emp.division, 'ko')
                : ai === -1 ? 1 : bi === -1 ? -1 : ai - bi
       return dc !== 0 ? dc : a.emp.name.localeCompare(b.emp.name, 'ko')
     })
-
     return result
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverProcessed, employees, employeeAttrMap, half])
 
-  // ── Division list for filter dropdown ────────────────────────────────────
   const divisions = useMemo(() => {
     const divSet = new Set(baseRows.map(r => r.emp.division))
     return [...divSet].sort((a, b) => {
@@ -154,7 +264,6 @@ export function AllowanceTab() {
   // ── Filtered + sorted rows ────────────────────────────────────────────────
   const filteredRows = useMemo(() => {
     let rows = baseRows
-
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       rows = rows.filter(r =>
@@ -163,31 +272,57 @@ export function AllowanceTab() {
         r.emp.team.toLowerCase().includes(q),
       )
     }
-    if (leaderOnly)   rows = rows.filter(r => r.isLeader)
-    if (divFilter)    rows = rows.filter(r => r.emp.division === divFilter)
-
-    if (sortKey === 'ot_desc')      rows = [...rows].sort((a, b) => b.totalOt      - a.totalOt)
-    else if (sortKey === 'ot_asc')  rows = [...rows].sort((a, b) => a.totalOt      - b.totalOt)
+    if (leaderOnly) rows = rows.filter(r => r.isLeader)
+    if (divFilter)  rows = rows.filter(r => r.emp.division === divFilter)
+    if (sortKey === 'ot_desc')          rows = [...rows].sort((a, b) => b.totalOt      - a.totalOt)
+    else if (sortKey === 'ot_asc')      rows = [...rows].sort((a, b) => a.totalOt      - b.totalOt)
     else if (sortKey === 'holiday_desc') rows = [...rows].sort((a, b) => b.totalHoliday - a.totalHoliday)
-    else if (sortKey === 'holiday_asc')  rows = [...rows].sort((a, b) => a.totalHoliday - b.totalHoliday)
-
+    else if (sortKey === 'holiday_asc') rows = [...rows].sort((a, b) => a.totalHoliday - b.totalHoliday)
     return rows
   }, [baseRows, search, leaderOnly, divFilter, sortKey])
 
-  // Reset page on filter/sort/half change
-  useEffect(() => { setPage(0) }, [search, leaderOnly, divFilter, sortKey, half])
+  // viewSelected: bypass all filters and show only selected rows
+  const displayRows = useMemo(() =>
+    viewSelected ? baseRows.filter(r => selectedIds.has(r.emp.id)) : filteredRows,
+  [viewSelected, selectedIds, baseRows, filteredRows])
 
-  const totalPages = Math.ceil(filteredRows.length / PAGE_SIZE)
-  const pagedRows  = filteredRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  useEffect(() => { setPage(0) }, [search, leaderOnly, divFilter, sortKey, half, viewSelected])
 
-  // ── ColSpan helpers ───────────────────────────────────────────────────────
+  const totalPages = Math.ceil(displayRows.length / PAGE_SIZE)
+  const pagedRows  = displayRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+
+  // ── Select-all state (operates on filteredRows) ───────────────────────────
+  const allSelected  = filteredRows.length > 0 && filteredRows.every(r => selectedIds.has(r.emp.id))
+  const someSelected = !allSelected && filteredRows.some(r => selectedIds.has(r.emp.id))
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelectedIds(prev => {
+        const n = new Set(prev); filteredRows.forEach(r => n.delete(r.emp.id)); return n
+      })
+    } else {
+      setSelectedIds(prev => {
+        const n = new Set(prev); filteredRows.forEach(r => n.add(r.emp.id)); return n
+      })
+    }
+  }
+
+  // ── ColSpan ───────────────────────────────────────────────────────────────
   const otColSpan      = expanded.has('ot')      ? months.length + 1 : 1
   const holidayColSpan = expanded.has('holiday')  ? months.length + 1 : 1
   const lateColSpan    = expanded.has('late')     ? months.length + 1 : 1
-  const totalCols      = 3 + 1 + 1 + 1 + otColSpan + 1 + holidayColSpan + lateColSpan
+  const totalCols      = 1 + 3 + 1 + 1 + 1 + otColSpan + 1 + holidayColSpan + lateColSpan // +1 for checkbox
 
-  const halfLabel = half === 'H1' ? '상반기' : '하반기'
+  const halfLabel    = half === 'H1' ? '상반기' : '하반기'
   const BADGE_LEADER = 'text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200'
+
+  // Export target: selected rows if any selected, else all filteredRows
+  function handleExport() {
+    const target = selectedIds.size > 0
+      ? baseRows.filter(r => selectedIds.has(r.emp.id))
+      : filteredRows
+    exportAllowanceExcel(target, half, months, hourlyRates)
+  }
 
   let lastDivision = ''
 
@@ -219,69 +354,78 @@ export function AllowanceTab() {
         {/* 이름·부서 검색 */}
         <div className="relative">
           <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
+            type="text" value={search} onChange={e => setSearch(e.target.value)}
             placeholder="이름·부서 검색"
-            className="pl-7 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg w-40 focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder-gray-300"
+            className="pl-7 pr-6 py-1.5 text-xs border border-gray-200 rounded-lg w-40 focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder-gray-300"
           />
           <svg className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
             <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
           </svg>
-          {search && (
-            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
-          )}
+          {search && <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>}
         </div>
 
         {/* 부서 필터 */}
-        <select
-          value={divFilter}
-          onChange={e => setDivFilter(e.target.value)}
-          className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
-        >
+        <select value={divFilter} onChange={e => setDivFilter(e.target.value)}
+          className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
           <option value="">전체 부서</option>
           {divisions.map(d => <option key={d} value={d}>{d}</option>)}
         </select>
 
         {/* 직책자 필터 */}
-        <button
-          onClick={() => setLeaderOnly(v => !v)}
+        <button onClick={() => setLeaderOnly(v => !v)}
           className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
-            leaderOnly
-              ? 'bg-blue-600 text-white border-blue-600'
-              : 'bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-600'
-          }`}
-        >
+            leaderOnly ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-600'
+          }`}>
           직책자만
         </button>
+
+        {/* 선택 인원 보기 — 선택된 사람 있을 때만 */}
+        {selectedIds.size > 0 && (
+          <button onClick={() => setViewSelected(v => !v)}
+            className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
+              viewSelected
+                ? 'bg-violet-600 text-white border-violet-600'
+                : 'bg-violet-50 text-violet-700 border-violet-300 hover:bg-violet-100'
+            }`}>
+            선택 {selectedIds.size}명만 보기
+          </button>
+        )}
+        {selectedIds.size > 0 && (
+          <button onClick={() => { setSelectedIds(new Set()); setViewSelected(false) }}
+            className="text-[11px] text-gray-400 hover:text-gray-600 px-1">선택 해제</button>
+        )}
 
         {/* 정렬 */}
         <div className="flex items-center gap-1 ml-auto">
           <span className="text-[11px] text-gray-400">정렬</span>
-          <button
-            onClick={() => toggleSort('ot')}
+          <button onClick={() => toggleSort('ot')}
             className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${
               sortKey.startsWith('ot_')
                 ? 'bg-blue-50 text-blue-700 border-blue-300'
                 : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300'
-            }`}
-          >
+            }`}>
             연장 {sortIcon('ot')}
           </button>
-          <button
-            onClick={() => toggleSort('holiday')}
+          <button onClick={() => toggleSort('holiday')}
             className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${
               sortKey.startsWith('holiday_')
                 ? 'bg-amber-50 text-amber-700 border-amber-300'
                 : 'bg-white text-gray-500 border-gray-200 hover:border-amber-300'
-            }`}
-          >
+            }`}>
             휴일 {sortIcon('holiday')}
           </button>
           {sortKey !== 'default' && (
-            <button onClick={() => setSortKey('default')}
-              className="text-[11px] text-gray-400 hover:text-gray-600 px-1">초기화</button>
+            <button onClick={() => setSortKey('default')} className="text-[11px] text-gray-400 hover:text-gray-600 px-1">초기화</button>
           )}
+
+          {/* 엑셀 다운로드 */}
+          <button onClick={handleExport}
+            className="ml-1 flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors font-medium">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path d="M12 15V3m0 12-4-4m4 4 4-4M2 17l.621 2.485A2 2 0 0 0 4.561 21h14.878a2 2 0 0 0 1.94-1.515L22 17" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            {selectedIds.size > 0 ? `선택 ${selectedIds.size}명 Excel` : 'Excel'}
+          </button>
         </div>
       </div>
 
@@ -291,7 +435,17 @@ export function AllowanceTab() {
           <thead>
             {/* Row 1 */}
             <tr className="bg-gray-50 border-b border-gray-200">
-              <th rowSpan={2} className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[100px]">이름</th>
+              {/* 체크박스 */}
+              <th rowSpan={2} className="sticky left-0 z-10 bg-gray-50 px-2 py-2.5 border-r border-gray-200 w-8 text-center">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  ref={el => { if (el) el.indeterminate = someSelected }}
+                  onChange={toggleSelectAll}
+                  className="w-3.5 h-3.5 cursor-pointer"
+                />
+              </th>
+              <th rowSpan={2} className="sticky left-8 z-10 bg-gray-50 text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[100px]">이름</th>
               <th rowSpan={2} className="text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[90px]">부서</th>
               <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[110px]">
                 통상시급<br /><span className="text-[10px] font-normal text-gray-400">(선택)</span>
@@ -302,28 +456,19 @@ export function AllowanceTab() {
               <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-blue-700 bg-blue-50 border-r border-blue-200 whitespace-nowrap min-w-[110px]">
                 {halfLabel}<br />연장근무수당
               </th>
-              <th
-                colSpan={otColSpan}
-                onClick={() => toggleSection('ot')}
-                className="cursor-pointer px-3 py-2.5 font-semibold text-blue-600 bg-blue-50/60 border-r border-blue-200 text-center whitespace-nowrap select-none hover:bg-blue-100 transition-colors"
-              >
+              <th colSpan={otColSpan} onClick={() => toggleSection('ot')}
+                className="cursor-pointer px-3 py-2.5 font-semibold text-blue-600 bg-blue-50/60 border-r border-blue-200 text-center whitespace-nowrap select-none hover:bg-blue-100 transition-colors">
                 {halfLabel} 연장근로시간 {expanded.has('ot') ? '▼' : '▶'}
               </th>
               <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-amber-700 bg-amber-50 border-r border-amber-200 whitespace-nowrap min-w-[110px]">
                 {halfLabel}<br />휴일근무수당
               </th>
-              <th
-                colSpan={holidayColSpan}
-                onClick={() => toggleSection('holiday')}
-                className="cursor-pointer px-3 py-2.5 font-semibold text-amber-600 bg-amber-50/60 border-r border-amber-200 text-center whitespace-nowrap select-none hover:bg-amber-100 transition-colors"
-              >
+              <th colSpan={holidayColSpan} onClick={() => toggleSection('holiday')}
+                className="cursor-pointer px-3 py-2.5 font-semibold text-amber-600 bg-amber-50/60 border-r border-amber-200 text-center whitespace-nowrap select-none hover:bg-amber-100 transition-colors">
                 {halfLabel} 휴일근로시간 {expanded.has('holiday') ? '▼' : '▶'}
               </th>
-              <th
-                colSpan={lateColSpan}
-                onClick={() => toggleSection('late')}
-                className="cursor-pointer px-3 py-2.5 font-semibold text-red-600 bg-red-50/60 text-center whitespace-nowrap select-none hover:bg-red-100 transition-colors"
-              >
+              <th colSpan={lateColSpan} onClick={() => toggleSection('late')}
+                className="cursor-pointer px-3 py-2.5 font-semibold text-red-600 bg-red-50/60 text-center whitespace-nowrap select-none hover:bg-red-100 transition-colors">
                 {halfLabel} 지각 {expanded.has('late') ? '▼' : '▶'}
               </th>
             </tr>
@@ -349,7 +494,7 @@ export function AllowanceTab() {
             {pagedRows.length === 0 ? (
               <tr>
                 <td colSpan={totalCols} className="px-6 py-10 text-center text-gray-400">
-                  {filteredRows.length === 0 && baseRows.length > 0 ? '검색 결과가 없습니다.' : '데이터가 없습니다. CSV를 업로드하면 집계됩니다.'}
+                  {displayRows.length === 0 && baseRows.length > 0 ? '검색 결과가 없습니다.' : '데이터가 없습니다. CSV를 업로드하면 집계됩니다.'}
                 </td>
               </tr>
             ) : pagedRows.map(row => {
@@ -358,18 +503,25 @@ export function AllowanceTab() {
               const otAllowance      = rate > 0 ? totalOt      * rate : 0
               const holidayAllowance = rate > 0 ? totalHoliday * rate : 0
               const totalAllowance   = otAllowance + holidayAllowance
+              const isSelected       = selectedIds.has(emp.id)
 
-              const isDivisionStart = sortKey === 'default' && emp.division !== lastDivision
+              const isDivisionStart = sortKey === 'default' && !viewSelected && emp.division !== lastDivision
               lastDivision = emp.division
 
               return (
                 <tr key={emp.id}
-                  className={`border-b border-gray-100 hover:bg-gray-50 transition-colors ${
-                    isDivisionStart ? 'border-t-2 border-t-gray-200' : ''
-                  }`}
+                  className={`border-b border-gray-100 transition-colors ${
+                    isSelected ? 'bg-violet-50/60' : 'hover:bg-gray-50'
+                  } ${isDivisionStart ? 'border-t-2 border-t-gray-200' : ''}`}
                 >
+                  {/* 체크박스 */}
+                  <td className="sticky left-0 z-10 px-2 py-2 border-r border-gray-100 text-center bg-inherit w-8">
+                    <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(emp.id)}
+                      className="w-3.5 h-3.5 cursor-pointer" />
+                  </td>
+
                   {/* 이름 + 직책 뱃지 */}
-                  <td className="sticky left-0 z-10 bg-white px-3 py-2 border-r border-gray-100 whitespace-nowrap">
+                  <td className="sticky left-8 z-10 bg-inherit px-3 py-2 border-r border-gray-100 whitespace-nowrap">
                     <div className="flex items-center gap-1.5">
                       <span className="font-medium text-gray-900">{emp.name}</span>
                       {isLeader && <span className={BADGE_LEADER}>직책</span>}
@@ -380,16 +532,13 @@ export function AllowanceTab() {
                   <td className="px-3 py-2 border-r border-gray-100 text-gray-600 whitespace-nowrap">
                     <div className="leading-tight">
                       <div>{emp.division}</div>
-                      {emp.team !== emp.division && (
-                        <div className="text-[10px] text-gray-400">{emp.team}</div>
-                      )}
+                      {emp.team !== emp.division && <div className="text-[10px] text-gray-400">{emp.team}</div>}
                     </div>
                   </td>
 
                   {/* 통상시급 */}
                   <td className="px-2 py-1.5 border-r border-gray-100">
-                    <input
-                      type="number" min={0} step={100}
+                    <input type="number" min={0} step={100}
                       value={hourlyRates[emp.id] ?? ''}
                       onChange={e => setHourlyRates(prev => ({ ...prev, [emp.id]: e.target.value }))}
                       placeholder="시급 입력"
@@ -398,38 +547,24 @@ export function AllowanceTab() {
                   </td>
 
                   {/* 연장+휴일 합산 */}
-                  <td className="px-3 py-2 border-r border-gray-300 text-right font-bold text-gray-900 bg-gray-50 tabular-nums whitespace-nowrap">
-                    {fmtW(totalAllowance)}
-                  </td>
+                  <td className="px-3 py-2 border-r border-gray-300 text-right font-bold text-gray-900 bg-gray-50 tabular-nums whitespace-nowrap">{fmtW(totalAllowance)}</td>
 
                   {/* 연장수당 */}
-                  <td className="px-3 py-2 border-r border-blue-200 text-right font-semibold text-blue-700 bg-blue-50/40 tabular-nums whitespace-nowrap">
-                    {fmtW(otAllowance)}
-                  </td>
+                  <td className="px-3 py-2 border-r border-blue-200 text-right font-semibold text-blue-700 bg-blue-50/40 tabular-nums whitespace-nowrap">{fmtW(otAllowance)}</td>
 
                   {/* 연장 총시간 */}
-                  <td className="px-3 py-2 border-r border-blue-100 text-center text-blue-700 font-medium tabular-nums bg-blue-50/20 whitespace-nowrap">
-                    {fmtH(totalOt)}
-                  </td>
+                  <td className="px-3 py-2 border-r border-blue-100 text-center text-blue-700 font-medium tabular-nums bg-blue-50/20 whitespace-nowrap">{fmtH(totalOt)}</td>
                   {expanded.has('ot') && months.map(mm => (
-                    <td key={`ot-${mm}`} className="px-2 py-2 border-r border-blue-100 text-center text-blue-600 tabular-nums bg-blue-50/10 whitespace-nowrap">
-                      {fmtH(otByMonth[mm] ?? 0)}
-                    </td>
+                    <td key={`ot-${mm}`} className="px-2 py-2 border-r border-blue-100 text-center text-blue-600 tabular-nums bg-blue-50/10 whitespace-nowrap">{fmtH(otByMonth[mm] ?? 0)}</td>
                   ))}
 
                   {/* 휴일수당 */}
-                  <td className="px-3 py-2 border-r border-amber-200 text-right font-semibold text-amber-700 bg-amber-50/40 tabular-nums whitespace-nowrap">
-                    {fmtW(holidayAllowance)}
-                  </td>
+                  <td className="px-3 py-2 border-r border-amber-200 text-right font-semibold text-amber-700 bg-amber-50/40 tabular-nums whitespace-nowrap">{fmtW(holidayAllowance)}</td>
 
                   {/* 휴일 총시간 */}
-                  <td className="px-3 py-2 border-r border-amber-100 text-center text-amber-700 font-medium tabular-nums bg-amber-50/20 whitespace-nowrap">
-                    {fmtH(totalHoliday)}
-                  </td>
+                  <td className="px-3 py-2 border-r border-amber-100 text-center text-amber-700 font-medium tabular-nums bg-amber-50/20 whitespace-nowrap">{fmtH(totalHoliday)}</td>
                   {expanded.has('holiday') && months.map(mm => (
-                    <td key={`hol-${mm}`} className="px-2 py-2 border-r border-amber-100 text-center text-amber-600 tabular-nums bg-amber-50/10 whitespace-nowrap">
-                      {fmtH(holidayByMonth[mm] ?? 0)}
-                    </td>
+                    <td key={`hol-${mm}`} className="px-2 py-2 border-r border-amber-100 text-center text-amber-600 tabular-nums bg-amber-50/10 whitespace-nowrap">{fmtH(holidayByMonth[mm] ?? 0)}</td>
                   ))}
 
                   {/* 지각 총횟수 */}
@@ -451,24 +586,18 @@ export function AllowanceTab() {
       {/* ── Pagination ── */}
       {totalPages > 1 && (
         <div className="flex items-center gap-2 text-xs text-gray-500">
-          <span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filteredRows.length)} / {filteredRows.length}명</span>
+          <span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, displayRows.length)} / {displayRows.length}명</span>
           <div className="flex items-center gap-1 ml-auto">
             <button disabled={page === 0} onClick={() => setPage(p => p - 1)}
-              className="px-2.5 py-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-50 transition-colors">
-              ← 이전
-            </button>
+              className="px-2.5 py-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-50 transition-colors">← 이전</button>
             {Array.from({ length: totalPages }, (_, i) => (
               <button key={i} onClick={() => setPage(i)}
-                className={`w-7 h-7 rounded text-center transition-colors ${
-                  page === i ? 'bg-gray-900 text-white' : 'hover:bg-gray-100 text-gray-600'
-                }`}>
+                className={`w-7 h-7 rounded text-center transition-colors ${page === i ? 'bg-gray-900 text-white' : 'hover:bg-gray-100 text-gray-600'}`}>
                 {i + 1}
               </button>
             ))}
             <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}
-              className="px-2.5 py-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-50 transition-colors">
-              다음 →
-            </button>
+              className="px-2.5 py-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-50 transition-colors">다음 →</button>
           </div>
         </div>
       )}
@@ -476,7 +605,8 @@ export function AllowanceTab() {
       {/* ── Footnote ── */}
       <p className="text-[11px] text-gray-400">
         * 통상시급은 페이지 새로고침 시 초기화됩니다.
-        수당 = 시간 × 통상시급. 직책자(직책 뱃지)는 rawOvertimeMinutes 기준(절사 없음)으로 연장근로 집계.
+        수당 = 시간 × 통상시급. Excel 다운로드 시 수당 열에 <code>=시간*통상시급</code> 수식이 포함됩니다.
+        직책자(직책 뱃지)는 rawOvertimeMinutes 기준(절사 없음)으로 연장근로 집계.
       </p>
     </div>
   )
