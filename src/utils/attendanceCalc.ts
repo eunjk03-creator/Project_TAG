@@ -325,3 +325,14 @@ export function computeGasPayOtMins(
   const allowance = leaveDays >= 0.5 ? 300 : leaveDays >= 0.25 ? 480 : 600
   return Math.max(0, Math.floor((workAMins - allowance) / 30) * 30)
 }
+
+// 직책자 연장: 체류시간 - threshold, 30분 절삭 없음
+export function computeLeaderOtMins(
+  rawWorkAMins: number,
+  leaveDays:    number,
+  status:       string | null | undefined,
+): number {
+  if (status?.includes('외근')) return 0
+  const allowance = leaveDays >= 0.5 ? 300 : leaveDays >= 0.25 ? 480 : 600
+  return Math.max(0, rawWorkAMins - allowance)
+}

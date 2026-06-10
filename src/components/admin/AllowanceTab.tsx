@@ -5,6 +5,7 @@ import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee, ProcessedRecord } from '@/types/tag'
+import { computeWorkA, computeLeaderOtMins } from '@/utils/attendanceCalc'
 
 // ── Format helpers (UI only) ──────────────────────────────────────────────
 
@@ -357,8 +358,13 @@ export function AllowanceTab() {
       for (const r of empRecords) {
         const mm = r.date.slice(5, 7)
         if (r.dayType === 'WEEKDAY') {
-          if (isLeader)          otByMonth[mm] += (r.rawOvertimeMinutes ?? 0) / 60  // 직책자: ERP 무관
-          else if (r.erpOtApplied) otByMonth[mm] += r.overtimeHours                // 비직책자: ERP 상신자만
+          if (isLeader) {                                                            // 직책자: 체류-10h 기준, 절삭없음
+            const leaveAmt = r.erpLeaveAmount ?? 0
+            const rawWA    = Math.round(computeWorkA(r.clockIn, r.clockOut) * 60)
+            otByMonth[mm] += computeLeaderOtMins(rawWA, leaveAmt, r.finalStatus) / 60
+          } else if (r.erpOtApplied) {                                             // 비직책자: ERP 상신자만
+            otByMonth[mm] += r.overtimeHours
+          }
         }
         if (r.dayType !== 'WEEKDAY') {
           holidayByMonth[mm] += isLeader ? r.holidayHours : floorTo30(r.holidayHours)
