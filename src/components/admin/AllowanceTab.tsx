@@ -311,7 +311,7 @@ export function AllowanceTab() {
 
       for (const r of empRecords) {
         const mm = r.date.slice(5, 7)
-        if (r.dayType === 'WEEKDAY') {
+        if (r.dayType === 'WEEKDAY' && r.erpOtApplied) {
           otByMonth[mm] += isLeader ? (r.rawOvertimeMinutes ?? 0) / 60 : r.overtimeHours
         }
         holidayByMonth[mm] += r.holidayHours
