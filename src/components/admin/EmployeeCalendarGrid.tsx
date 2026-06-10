@@ -288,7 +288,10 @@ const empStats = useMemo(() => {
     }
     // Night is a PREMIUM OVERLAY — displayed separately, not added to 연장 OT.
     const rawNight   = recs.reduce((s, r) => s + (r.nightHours || 0), 0)
-    const night      = recs.reduce((s, r) => s + floorTo30(r.nightHours || 0), 0)
+    const night      = recs.reduce((s, r) => {
+      const h = r.nightHours || 0
+      return s + (r.isLeader ? h : floorTo30(h))  // 직책자: 절삭없음, 비직책자: 30분 절삭
+    }, 0)
     const rawHoliday = recs.reduce((s, r) => s + (r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0), 0)
     const holiday    = recs.reduce((s, r) => {
       if (r.dayType === 'WEEKDAY') return s
