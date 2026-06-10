@@ -358,17 +358,26 @@ export default function AdminDashboard() {
       r => r.date >= dateRange.from && r.date <= dateRange.to,
     )
 
-    // Apply admin overrides locally — only re-process changed records (O(k), k << n)
-    if (Object.keys(recordOverrides).length === 0) return dateFiltered
+    // company holiday dates added AFTER the server-side compute need local re-processing
+    const compHolDates = new Set((policy.companyHolidays ?? []).map(h => h.date))
+
+    // Apply admin overrides + company-holiday fixup locally
+    const needsAnyReprocess = Object.keys(recordOverrides).length > 0 || compHolDates.size > 0
+    if (!needsAnyReprocess) return dateFiltered
     return dateFiltered.map(r => {
       const ov = recordOverrides[`${r.employeeId}_${r.date}`]
-      if (!ov) return r
+      // Re-process if there's an override, OR if this date is now a company holiday
+      // but the cached record was processed as WEEKDAY (stale flag)
+      const needsHolReprocess = compHolDates.has(r.date) && r.dayType === 'WEEKDAY'
+      if (!ov && !needsHolReprocess) return r
       return processRecord(
         {
           ...r,
-          clockIn:      ov.clockIn      ?? r.clockIn,
-          clockOut:     ov.clockOut     ?? r.clockOut,
-          erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
+          ...(ov ? {
+            clockIn:      ov.clockIn      ?? r.clockIn,
+            clockOut:     ov.clockOut     ?? r.clockOut,
+            erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
+          } : {}),
         },
         policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId),
       )
