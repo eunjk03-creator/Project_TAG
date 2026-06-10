@@ -248,8 +248,6 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
   // ── Handlers ──────────────────────────────────────────────────────────
 
   function handleSave() {
-    if (!finalReason.trim()) return
-
     const origIn     = record.clockIn?.replace(/^\+/, '')  ?? ''
     const origOut    = record.clockOut?.replace(/^\+/, '') ?? ''
     const origErpOt  = record.erpOtApplied ? '신청됨' : record.overtimeHours > 0 ? '미신청' : '해당없음'
@@ -788,7 +786,7 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
               )}
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-                  수정 사유 <span className="text-red-400">*</span>
+                  수정 사유 <span className="text-gray-400 font-normal">(선택)</span>
                 </label>
                 <textarea
                   value={finalReason}
@@ -888,9 +886,6 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
             {hasSaved && (
               <span className="text-emerald-600 font-medium">모든 수정 사항이 실시간으로 반영되었습니다</span>
             )}
-            {!hasSaved && !finalReason.trim() && (
-              <span>수정 사유를 입력하고 저장하세요</span>
-            )}
           </p>
           <div className="flex items-center gap-2 shrink-0">
             {onDelete && (
@@ -909,8 +904,7 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
             </button>
             <button
               onClick={handleSave}
-              disabled={!finalReason.trim()}
-              className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm shadow-blue-200"
+              className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 active:scale-95 transition-all shadow-sm shadow-blue-200"
             >
               저장 및 처리완료
             </button>
