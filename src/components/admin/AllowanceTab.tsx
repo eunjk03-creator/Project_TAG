@@ -103,57 +103,72 @@ function fc(formula: string, s: object, z = '#,##0'): XCell {
 
 function exportAllowanceExcel(
   rows: EmpRow[],
-  half: 'H1' | 'H2',
+  periodLabel: string,
   months: string[],
   hourlyRates: Record<string, string>,
 ) {
-  const halfLabel = half === 'H1' ? '상반기' : '하반기'
   const ML: Record<string, string> = {
     '01':'1월','02':'2월','03':'3월','04':'4월','05':'5월','06':'6월',
     '07':'7월','08':'8월','09':'9월','10':'10월','11':'11월','12':'12월',
   }
 
+  // ── Dynamic column layout (0-indexed, depends on months.length) ──
+  // A(0):소속  B(1):사번  C(2):이름  D(3):통상시급
+  // E(4):연장+휴일수당  F(5):연장+휴일시간  G(6):연장수당  H(7):연장총시간  [I..]:월별연장
+  // []:휴일수당  []:휴일총시간  [..]:월별휴일
+  // []:지각총횟수  [..]:월별지각
+  const nMo      = months.length
+  const C_OTTOT  = 7
+  const C_HOLPAY = 8  + nMo
+  const C_HOLTOT = 9  + nMo
+  const C_LATETOT= 10 + 2 * nMo
+  const C_LAST   = 10 + 3 * nMo
+
+  const L_OTPAY  = colLetter(6)
+  const L_OTTOT  = colLetter(C_OTTOT)
+  const L_HOLPAY = colLetter(C_HOLPAY)
+  const L_HOLTOT = colLetter(C_HOLTOT)
+  const L_LATETOT= colLetter(C_LATETOT)
+
+  const D_totalH = dataStyle('374151', 'F1F5F9', true, 'C')
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ws: Record<string, any> = {}
 
-  // ── Column layout (0-indexed) ──
-  // A(0):소속  B(1):사번  C(2):이름  D(3):통상시급
-  // E(4):연장+휴일수당(=F+N)  F(5):연장수당(=G*D)  G(6):연장총시간  H-M(7-12):월별연장
-  // N(13):휴일수당(=O*D)  O(14):휴일총시간  P-U(15-20):월별휴일
-  // V(21):지각총횟수  W-AB(22-27):월별지각
-
   // ── Header row 1 ──
-  ws['A1'] = sc('소속',                         H.name)
-  ws['B1'] = sc('사번',                         H.name)
-  ws['C1'] = sc('이름',                         H.name)
-  ws['D1'] = sc('통상시급',                     H.name)
-  ws['E1'] = sc(`${halfLabel}\n연장+휴일수당`,  H.summary)
-  ws['F1'] = sc(`${halfLabel}\n연장근무수당`,   H.otPay)
-  ws['G1'] = sc(`${halfLabel} 연장근로시간`,    H.otGroup)
-  ws['N1'] = sc(`${halfLabel}\n휴일근무수당`,   H.holPay)
-  ws['O1'] = sc(`${halfLabel} 휴일근로시간`,    H.holGroup)
-  ws['V1'] = sc(`${halfLabel} 지각`,            H.lateGroup)
+  ws['A1'] = sc('소속',                                 H.name)
+  ws['B1'] = sc('사번',                                 H.name)
+  ws['C1'] = sc('이름',                                 H.name)
+  ws['D1'] = sc('통상시급',                             H.name)
+  ws['E1'] = sc(`${periodLabel}\n연장+휴일수당`,        H.summary)
+  ws['F1'] = sc(`${periodLabel}\n연장+휴일시간`,        H.summary)
+  ws['G1'] = sc(`${periodLabel}\n연장근무수당`,         H.otPay)
+  ws[`${L_OTTOT}1`]  = sc(`${periodLabel} 연장근로시간`, H.otGroup)
+  ws[`${L_HOLPAY}1`] = sc(`${periodLabel}\n휴일근무수당`, H.holPay)
+  ws[`${L_HOLTOT}1`] = sc(`${periodLabel} 휴일근로시간`, H.holGroup)
+  ws[`${L_LATETOT}1`]= sc(`${periodLabel} 지각`,         H.lateGroup)
 
   // ── Header row 2 ──
-  ws['G2'] = sc('총 시간', H.otSub)
-  months.forEach((mm, i) => { ws[`${colLetter(7 + i)}2`] = sc(ML[mm], H.otSub) })
-  ws['O2'] = sc('총 시간', H.holSub)
-  months.forEach((mm, i) => { ws[`${colLetter(15 + i)}2`] = sc(ML[mm], H.holSub) })
-  ws['V2'] = sc('총 횟수', H.lateSub)
-  months.forEach((mm, i) => { ws[`${colLetter(22 + i)}2`] = sc(ML[mm], H.lateSub) })
+  ws[`${L_OTTOT}2`]  = sc('총 시간', H.otSub)
+  months.forEach((mm, i) => { ws[`${colLetter(C_OTTOT + 1 + i)}2`] = sc(ML[mm], H.otSub) })
+  ws[`${L_HOLTOT}2`] = sc('총 시간', H.holSub)
+  months.forEach((mm, i) => { ws[`${colLetter(C_HOLTOT + 1 + i)}2`] = sc(ML[mm], H.holSub) })
+  ws[`${L_LATETOT}2`]= sc('총 횟수', H.lateSub)
+  months.forEach((mm, i) => { ws[`${colLetter(C_LATETOT + 1 + i)}2`] = sc(ML[mm], H.lateSub) })
 
   // ── Merges (0-indexed r/c) ──
   ws['!merges'] = [
-    { s: { r:0, c:0  }, e: { r:1, c:0  } }, // 소속
-    { s: { r:0, c:1  }, e: { r:1, c:1  } }, // 사번
-    { s: { r:0, c:2  }, e: { r:1, c:2  } }, // 이름
-    { s: { r:0, c:3  }, e: { r:1, c:3  } }, // 통상시급
-    { s: { r:0, c:4  }, e: { r:1, c:4  } }, // 연장+휴일수당
-    { s: { r:0, c:5  }, e: { r:1, c:5  } }, // 연장수당
-    { s: { r:0, c:6  }, e: { r:0, c:12 } }, // 연장근로시간 (총+6months)
-    { s: { r:0, c:13 }, e: { r:1, c:13 } }, // 휴일수당
-    { s: { r:0, c:14 }, e: { r:0, c:20 } }, // 휴일근로시간 (총+6months)
-    { s: { r:0, c:21 }, e: { r:0, c:27 } }, // 지각 (총+6months)
+    { s: { r:0, c:0 }, e: { r:1, c:0 } }, // 소속
+    { s: { r:0, c:1 }, e: { r:1, c:1 } }, // 사번
+    { s: { r:0, c:2 }, e: { r:1, c:2 } }, // 이름
+    { s: { r:0, c:3 }, e: { r:1, c:3 } }, // 통상시급
+    { s: { r:0, c:4 }, e: { r:1, c:4 } }, // 연장+휴일수당
+    { s: { r:0, c:5 }, e: { r:1, c:5 } }, // 연장+휴일시간
+    { s: { r:0, c:6 }, e: { r:1, c:6 } }, // 연장수당
+    { s: { r:0, c:C_OTTOT  }, e: { r:0, c:C_OTTOT  + nMo } }, // 연장근로시간 그룹
+    { s: { r:0, c:C_HOLPAY }, e: { r:1, c:C_HOLPAY } },       // 휴일수당
+    { s: { r:0, c:C_HOLTOT }, e: { r:0, c:C_HOLTOT + nMo } }, // 휴일근로시간 그룹
+    { s: { r:0, c:C_LATETOT}, e: { r:0, c:C_LAST          } }, // 지각 그룹
   ]
 
   // ── Row heights ──
@@ -178,26 +193,27 @@ function exportAllowanceExcel(
       ? nc(rate, rowBg ? { ...D.rate, fill: fill(rowBg) } : D.rate, '#,##0')
       : sc('',   rowBg ? { ...D.empty, fill: fill(rowBg) } : D.empty)
 
-    ws[`E${R}`] = fc(`F${R}+N${R}`, D.totalPay)
-    ws[`F${R}`] = fc(`G${R}*D${R}`, D.otPay)
-    ws[`G${R}`] = nc(round2(totalOt),      D.otHTot,  '0.00')
+    ws[`E${R}`] = fc(`${L_OTPAY}${R}+${L_HOLPAY}${R}`, D.totalPay)
+    ws[`F${R}`] = nc(round2(totalOt + totalHoliday),     D_totalH,  '0.00')
+    ws[`G${R}`] = fc(`${L_OTTOT}${R}*D${R}`,            D.otPay)
+    ws[`${L_OTTOT}${R}`]  = nc(round2(totalOt),      D.otHTot, '0.00')
     months.forEach((mm, i) => {
-      ws[`${colLetter(7 + i)}${R}`] = nc(round2(otByMonth[mm] ?? 0), D.otHMon, '0.00')
+      ws[`${colLetter(C_OTTOT + 1 + i)}${R}`] = nc(round2(otByMonth[mm] ?? 0), D.otHMon, '0.00')
     })
 
-    ws[`N${R}`] = fc(`O${R}*D${R}`, D.holPay)
-    ws[`O${R}`] = nc(round2(totalHoliday), D.holHTot, '0.00')
+    ws[`${L_HOLPAY}${R}`] = fc(`${L_HOLTOT}${R}*D${R}`, D.holPay)
+    ws[`${L_HOLTOT}${R}`] = nc(round2(totalHoliday), D.holHTot, '0.00')
     months.forEach((mm, i) => {
-      ws[`${colLetter(15 + i)}${R}`] = nc(round2(holidayByMonth[mm] ?? 0), D.holHMon, '0.00')
+      ws[`${colLetter(C_HOLTOT + 1 + i)}${R}`] = nc(round2(holidayByMonth[mm] ?? 0), D.holHMon, '0.00')
     })
 
-    ws[`V${R}`] = nc(totalLate, D.lateTot)
+    ws[`${L_LATETOT}${R}`] = nc(totalLate, D.lateTot)
     months.forEach((mm, i) => {
-      ws[`${colLetter(22 + i)}${R}`] = nc(lateByMonth[mm] ?? 0, D.lateMon)
+      ws[`${colLetter(C_LATETOT + 1 + i)}${R}`] = nc(lateByMonth[mm] ?? 0, D.lateMon)
     })
   })
 
-  ws['!ref'] = `A1:${colLetter(27)}${rows.length + 2}`
+  ws['!ref'] = `A1:${colLetter(C_LAST)}${rows.length + 2}`
 
   ws['!cols'] = [
     { wch: 16 }, // 소속
@@ -205,6 +221,7 @@ function exportAllowanceExcel(
     { wch: 8  }, // 이름
     { wch: 10 }, // 통상시급
     { wch: 14 }, // 연장+휴일수당
+    { wch: 9  }, // 연장+휴일시간
     { wch: 12 }, // 연장수당
     { wch: 8  }, // 연장총시간
     ...months.map(() => ({ wch: 6 })),
@@ -216,8 +233,8 @@ function exportAllowanceExcel(
   ]
 
   const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, `${halfLabel}수당집계`)
-  XLSX.writeFile(wb, `수당집계_${halfLabel}.xlsx`)
+  XLSX.utils.book_append_sheet(wb, ws, `${periodLabel}수당집계`)
+  XLSX.writeFile(wb, `수당집계_${periodLabel}.xlsx`)
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -244,9 +261,12 @@ export function AllowanceTab() {
   const { processedRecords: serverProcessed, employees } = useAttendanceSource()
   const { employeeAttrMap } = useEmployeeExceptions()
 
-  const [half,         setHalf]        = useState<'H1' | 'H2'>(() =>
-    new Date().getMonth() + 1 >= 7 ? 'H2' : 'H1',
-  )
+  const [selectedMonths, setSelectedMonths] = useState<Set<string>>(() => {
+    const m = new Date().getMonth() + 1
+    return new Set(m >= 7
+      ? ['07','08','09','10','11','12']
+      : ['01','02','03','04','05','06'])
+  })
   const [expanded,     setExpanded]    = useState<Set<SectionKey>>(new Set())
   const [hourlyRates,  setHourlyRates] = useState<Record<string, string>>({})
   const [search,       setSearch]      = useState('')
@@ -258,14 +278,25 @@ export function AllowanceTab() {
   const [viewSelected, setViewSelected]= useState(false)
   const [showDivAvg,   setShowDivAvg]  = useState(false)
 
-  const months: string[] = half === 'H1'
-    ? ['01', '02', '03', '04', '05', '06']
-    : ['07', '08', '09', '10', '11', '12']
+  const ALL_MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
+  const months: string[] = ALL_MONTHS.filter(mm => selectedMonths.has(mm))
 
   const monthLabels: Record<string, string> = {
     '01': '1월', '02': '2월', '03': '3월', '04': '4월', '05': '5월', '06': '6월',
     '07': '7월', '08': '8월', '09': '9월', '10': '10월', '11': '11월', '12': '12월',
   }
+
+  function toggleMonth(mm: string) {
+    setSelectedMonths(prev => { const n = new Set(prev); n.has(mm) ? n.delete(mm) : n.add(mm); return n })
+  }
+  function selectHalf(h: 'H1' | 'H2') {
+    setSelectedMonths(new Set(h === 'H1' ? ['01','02','03','04','05','06'] : ['07','08','09','10','11','12']))
+  }
+
+  const periodLabel = months.length === 0 ? '선택없음'
+    : months.length === 6 && months[0] === '01' ? '상반기'
+    : months.length === 6 && months[0] === '07' ? '하반기'
+    : `${parseInt(months[0])}~${parseInt(months[months.length - 1])}월`
 
   function toggleSection(key: SectionKey) {
     setExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
@@ -339,7 +370,7 @@ export function AllowanceTab() {
     })
     return result
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverProcessed, employees, employeeAttrMap, half])
+  }, [serverProcessed, employees, employeeAttrMap, selectedMonths])
 
   const divisions = useMemo(() => {
     const divSet = new Set(baseRows.map(r => r.emp.division))
@@ -400,7 +431,7 @@ export function AllowanceTab() {
     viewSelected ? baseRows.filter(r => selectedIds.has(r.emp.id)) : filteredRows,
   [viewSelected, selectedIds, baseRows, filteredRows])
 
-  useEffect(() => { setPage(0) }, [search, leaderOnly, divFilter, sortKey, half, viewSelected])
+  useEffect(() => { setPage(0) }, [search, leaderOnly, divFilter, sortKey, selectedMonths, viewSelected])
 
   const totalPages = Math.ceil(displayRows.length / PAGE_SIZE)
   const pagedRows  = displayRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
@@ -425,9 +456,8 @@ export function AllowanceTab() {
   const otColSpan      = expanded.has('ot')      ? months.length + 1 : 1
   const holidayColSpan = expanded.has('holiday')  ? months.length + 1 : 1
   const lateColSpan    = expanded.has('late')     ? months.length + 1 : 1
-  const totalCols      = 1 + 4 + 1 + 1 + 1 + otColSpan + 1 + holidayColSpan + lateColSpan // checkbox + 소속+사번+이름+시급
+  const totalCols      = 1 + 4 + 1 + 1 + 1 + 1 + otColSpan + 1 + holidayColSpan + lateColSpan // checkbox + 소속+사번+이름+시급+연장+휴일합계시간
 
-  const halfLabel    = half === 'H1' ? '상반기' : '하반기'
   const BADGE_LEADER = 'text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200'
 
   // Export target: selected rows if any selected, else all filteredRows
@@ -435,7 +465,7 @@ export function AllowanceTab() {
     const target = selectedIds.size > 0
       ? baseRows.filter(r => selectedIds.has(r.emp.id))
       : filteredRows
-    exportAllowanceExcel(target, half, months, hourlyRates)
+    exportAllowanceExcel(target, periodLabel, months, hourlyRates)
   }
 
   let lastDivision = ''
@@ -450,16 +480,30 @@ export function AllowanceTab() {
           <p className="text-xs text-gray-400">반기별 연장근로·휴일근로·지각 집계 및 수당 산출</p>
         </div>
 
-        {/* Half selector */}
-        <div className="ml-auto flex items-center bg-gray-100 rounded-lg p-0.5 text-xs font-medium shrink-0">
-          {(['H1', 'H2'] as const).map(h => (
-            <button key={h} onClick={() => setHalf(h)}
-              className={`px-3 py-1.5 rounded-md transition-colors ${
-                half === h ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-              }`}>
-              {h === 'H1' ? '상반기 (1–6월)' : '하반기 (7–12월)'}
-            </button>
-          ))}
+        {/* Month selector */}
+        <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
+          <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-xs font-medium shrink-0">
+            <button onClick={() => selectHalf('H1')}
+              className={`px-2.5 py-1 rounded-md transition-colors ${
+                months.length === 6 && months[0] === '01' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+              }`}>상반기</button>
+            <button onClick={() => selectHalf('H2')}
+              className={`px-2.5 py-1 rounded-md transition-colors ${
+                months.length === 6 && months[0] === '07' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+              }`}>하반기</button>
+          </div>
+          <div className="flex items-center gap-0.5">
+            {ALL_MONTHS.map(mm => (
+              <button key={mm} onClick={() => toggleMonth(mm)}
+                className={`text-[11px] px-1.5 py-0.5 rounded border font-medium transition-colors ${
+                  selectedMonths.has(mm)
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-400 border-gray-200 hover:border-blue-400 hover:text-blue-500'
+                }`}>
+                {parseInt(mm)}월
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -610,25 +654,28 @@ export function AllowanceTab() {
                 통상시급<br /><span className="text-[10px] font-normal text-gray-400">(선택)</span>
               </th>
               <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-900 bg-gray-100 border-r border-gray-300 whitespace-nowrap min-w-[120px]">
-                {halfLabel}<br />연장+휴일수당
+                {periodLabel}<br />연장+휴일수당
+              </th>
+              <th rowSpan={2} className="text-center px-3 py-2.5 font-semibold text-gray-700 bg-gray-100 border-r border-gray-300 whitespace-nowrap min-w-[90px]">
+                {periodLabel}<br />연장+휴일시간
               </th>
               <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-700 bg-blue-50 border-r border-blue-200 whitespace-nowrap min-w-[110px]">
-                {halfLabel}<br />연장근무수당
+                {periodLabel}<br />연장근무수당
               </th>
               <th colSpan={otColSpan} onClick={() => toggleSection('ot')}
                 className="cursor-pointer px-3 py-2.5 font-semibold text-gray-700 bg-blue-50/60 border-r border-blue-200 text-center whitespace-nowrap select-none hover:bg-blue-100 transition-colors">
-                {halfLabel} 연장근로시간 {expanded.has('ot') ? '▼' : '▶'}
+                {periodLabel} 연장근로시간 {expanded.has('ot') ? '▼' : '▶'}
               </th>
               <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-700 bg-amber-50 border-r border-amber-200 whitespace-nowrap min-w-[110px]">
-                {halfLabel}<br />휴일근무수당
+                {periodLabel}<br />휴일근무수당
               </th>
               <th colSpan={holidayColSpan} onClick={() => toggleSection('holiday')}
                 className="cursor-pointer px-3 py-2.5 font-semibold text-gray-700 bg-amber-50/60 border-r border-amber-200 text-center whitespace-nowrap select-none hover:bg-amber-100 transition-colors">
-                {halfLabel} 휴일근로시간 {expanded.has('holiday') ? '▼' : '▶'}
+                {periodLabel} 휴일근로시간 {expanded.has('holiday') ? '▼' : '▶'}
               </th>
               <th colSpan={lateColSpan} onClick={() => toggleSection('late')}
                 className="cursor-pointer px-3 py-2.5 font-semibold text-gray-700 bg-red-50/60 text-center whitespace-nowrap select-none hover:bg-red-100 transition-colors">
-                {halfLabel} 지각 {expanded.has('late') ? '▼' : '▶'}
+                {periodLabel} 지각 {expanded.has('late') ? '▼' : '▶'}
               </th>
             </tr>
 
@@ -710,8 +757,11 @@ export function AllowanceTab() {
                     />
                   </td>
 
-                  {/* 연장+휴일 합산 */}
+                  {/* 연장+휴일 합산수당 */}
                   <td className="px-3 py-2 border-r border-gray-300 text-right font-bold text-gray-900 bg-gray-50 tabular-nums whitespace-nowrap">{fmtW(totalAllowance)}</td>
+
+                  {/* 연장+휴일 합산시간 */}
+                  <td className="px-3 py-2 border-r border-gray-300 text-center font-bold text-gray-700 bg-gray-50 tabular-nums whitespace-nowrap">{fmtH(totalOt + totalHoliday)}</td>
 
                   {/* 연장수당 */}
                   <td className="px-3 py-2 border-r border-blue-200 text-right font-semibold text-gray-800 bg-blue-50/40 tabular-nums whitespace-nowrap">{fmtW(otAllowance)}</td>
