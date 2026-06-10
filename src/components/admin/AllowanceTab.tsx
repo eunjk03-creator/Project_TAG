@@ -293,10 +293,16 @@ export function AllowanceTab() {
     setSelectedMonths(new Set(h === 'H1' ? ['01','02','03','04','05','06'] : ['07','08','09','10','11','12']))
   }
 
-  const periodLabel = months.length === 0 ? '선택없음'
-    : months.length === 6 && months[0] === '01' ? '상반기'
-    : months.length === 6 && months[0] === '07' ? '하반기'
-    : `${parseInt(months[0])}~${parseInt(months[months.length - 1])}월`
+  const periodLabel = (() => {
+    if (months.length === 0) return '선택없음'
+    if (months.length === 6 && months[0] === '01') return '상반기'
+    if (months.length === 6 && months[0] === '07') return '하반기'
+    const nums = months.map(mm => parseInt(mm))
+    const isConsecutive = nums.every((n, i) => i === 0 || n === nums[i - 1] + 1)
+    return isConsecutive
+      ? `${nums[0]}~${nums[nums.length - 1]}월`
+      : nums.map(n => `${n}월`).join(',')
+  })()
 
   function toggleSection(key: SectionKey) {
     setExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
