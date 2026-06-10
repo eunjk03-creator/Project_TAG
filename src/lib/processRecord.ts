@@ -161,7 +161,8 @@ export function processRecord(
       if (r.dayType === 'HOLIDAY') return r.clockIn ? '휴일근무' : '공휴일'
       return r.clockIn ? '휴일근무' : '주말'
     }
-    if (r.leaveType === '연차' && !r.clockIn) return '연차'
+    // Full-day absence: 연차 or combo leave (erpLeaveAmount >= 1.0)
+    if (!r.clockIn && (r.leaveType === '연차' || (r.erpLeaveAmount ?? 0) >= 1.0)) return '연차'
     if (r.leaveType === '출장')     return '출장'
     if (r.leaveType === '재택근무') return '재택근무'
     if (r.flag === 'NO_CLOCK_IN')              return '근태이상'
@@ -428,7 +429,9 @@ export function processRecord(
   }
 
   if (!clockIn) {
-    if (record.leaveType === '연차') return applySlack({ ...base, flag: null })
+    // Full-day leave (연차 or combo leave totalling ≥ 1.0 day) → 정상, no attendance required
+    const isFullDay = record.leaveType === '연차' || effectiveLeaveAmount >= 1.0
+    if (isFullDay) return applySlack({ ...base, flag: null })
     const noClockFlag: SieveFlag = (bypassAllAnomalies || isDispatchedWorker) ? null : 'NO_CLOCK_IN'
     return applySlack({ ...base, flag: noClockFlag })
   }
