@@ -406,7 +406,17 @@ export function AllowanceTab() {
     return rows
   }, [baseRows, search, leaderOnly, divFilter, sortKey])
 
-  // ── Division averages (for summary panel) ────────────────────────────────
+  // ── Overall stats (전사 평균) ─────────────────────────────────────────────
+  const overallStats = useMemo(() => {
+    const n = filteredRows.length
+    if (n === 0) return null
+    const totOt  = filteredRows.reduce((s, r) => s + r.totalOt,      0)
+    const totHol = filteredRows.reduce((s, r) => s + r.totalHoliday, 0)
+    const totLate= filteredRows.reduce((s, r) => s + r.totalLate,    0)
+    return { count: n, avgOt: totOt/n, avgHol: totHol/n, avgTotal: (totOt+totHol)/n, avgLate: totLate/n }
+  }, [filteredRows])
+
+  // ── Division averages (부문별 비교) ───────────────────────────────────────
   const divAvgRows = useMemo(() => {
     const byDiv = new Map<string, { ot: number; holiday: number; late: number; count: number }>()
     for (const row of filteredRows) {
@@ -425,10 +435,11 @@ export function AllowanceTab() {
       })
       .map(([div, v]) => ({
         div,
-        count:   v.count,
-        avgOt:   v.ot      / v.count,
-        avgHol:  v.holiday / v.count,
-        avgLate: v.late    / v.count,
+        count:    v.count,
+        avgTotal: (v.ot + v.holiday) / v.count,
+        avgOt:    v.ot      / v.count,
+        avgHol:   v.holiday / v.count,
+        avgLate:  v.late    / v.count,
       }))
   }, [filteredRows])
 
@@ -603,37 +614,97 @@ export function AllowanceTab() {
         </div>
       </div>
 
-      {/* ── 부문별 평균 패널 ── */}
-      {showDivAvg && (
-        <div className="rounded-xl border border-teal-200 bg-white overflow-hidden">
+      {/* ── 부문별 현황 요약 패널 ── */}
+      {showDivAvg && overallStats && (
+        <div className="rounded-xl border border-teal-200 bg-white overflow-hidden text-xs">
+
+          {/* 패널 헤더 */}
           <div className="px-4 py-2.5 border-b border-teal-100 bg-teal-50/60 flex items-center gap-2">
-            <span className="text-xs font-semibold text-teal-800">부문별 평균</span>
-            <span className="text-[10px] text-teal-600">현재 필터 기준 · {filteredRows.length}명</span>
+            <span className="font-semibold text-teal-800">부문별 현황 요약</span>
+            <span className="text-[10px] text-teal-600">{periodLabel} 기준 · {overallStats.count}명</span>
           </div>
-          <table className="text-xs w-full">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="text-left px-4 py-2 text-gray-600 font-medium">부문</th>
-                <th className="text-center px-3 py-2 text-gray-600 font-medium">인원</th>
-                <th className="text-center px-3 py-2 font-medium text-blue-700 bg-blue-50/40">연장 평균 (h)</th>
-                <th className="text-center px-3 py-2 font-medium text-amber-700 bg-amber-50/40">휴일 평균 (h)</th>
-                <th className="text-center px-3 py-2 font-medium text-red-700 bg-red-50/40">지각 평균 (회)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {divAvgRows.map(row => (
-                <tr key={row.div} className="border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-2 font-medium text-gray-800">{row.div}</td>
-                  <td className="px-3 py-2 text-center text-gray-500 tabular-nums">{row.count}명</td>
-                  <td className="px-3 py-2 text-center text-blue-700 font-medium tabular-nums bg-blue-50/10">{fmtH(row.avgOt)}</td>
-                  <td className="px-3 py-2 text-center text-amber-700 font-medium tabular-nums bg-amber-50/10">{fmtH(row.avgHol)}</td>
-                  <td className="px-3 py-2 text-center text-red-700 font-medium tabular-nums bg-red-50/10">
-                    {row.avgLate > 0 ? round2(row.avgLate).toFixed(1) : '—'}
-                  </td>
-                </tr>
+
+          {/* ① 전사 평균 */}
+          <div className="px-4 py-3 border-b border-gray-100">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">전사 평균 (인당)</p>
+            <div className="grid grid-cols-4 gap-2">
+              {[
+                { label: '연장+휴일', value: fmtH(overallStats.avgTotal), color: 'text-gray-800', bg: 'bg-gray-50' },
+                { label: '연장',      value: fmtH(overallStats.avgOt),    color: 'text-blue-700',  bg: 'bg-blue-50/40' },
+                { label: '휴일',      value: fmtH(overallStats.avgHol),   color: 'text-amber-700', bg: 'bg-amber-50/40' },
+                { label: '지각',      value: overallStats.avgLate > 0 ? `${round2(overallStats.avgLate).toFixed(1)}회` : '—', color: 'text-red-600', bg: 'bg-red-50/30' },
+              ].map(({ label, value, color, bg }) => (
+                <div key={label} className={`rounded-lg px-3 py-2 ${bg} text-center`}>
+                  <div className={`text-base font-bold tabular-nums ${color}`}>{value}</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5">{label}</div>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </div>
+
+          {/* ② 부문별 비교 */}
+          <div className="border-b border-gray-100">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide px-4 pt-3 pb-1.5">부문별 비교 (인당 평균)</p>
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="text-left px-4 py-2 text-gray-600 font-medium">부문</th>
+                  <th className="text-center px-3 py-2 text-gray-500 font-medium">인원</th>
+                  <th className="text-center px-3 py-2 font-semibold text-gray-700 bg-gray-100">연장+휴일 (h)</th>
+                  <th className="text-center px-3 py-2 font-medium text-blue-700 bg-blue-50/40">연장 (h)</th>
+                  <th className="text-center px-3 py-2 font-medium text-amber-700 bg-amber-50/40">휴일 (h)</th>
+                  <th className="text-center px-3 py-2 font-medium text-red-600 bg-red-50/30">지각 (회)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {divAvgRows.map(row => (
+                  <tr key={row.div} className="border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-2 font-medium text-gray-800">{row.div}</td>
+                    <td className="px-3 py-2 text-center text-gray-400 tabular-nums">{row.count}명</td>
+                    <td className="px-3 py-2 text-center font-semibold text-gray-700 tabular-nums bg-gray-50/60">{fmtH(row.avgTotal)}</td>
+                    <td className="px-3 py-2 text-center text-blue-700 font-medium tabular-nums bg-blue-50/10">{fmtH(row.avgOt)}</td>
+                    <td className="px-3 py-2 text-center text-amber-700 font-medium tabular-nums bg-amber-50/10">{fmtH(row.avgHol)}</td>
+                    <td className="px-3 py-2 text-center text-red-600 font-medium tabular-nums bg-red-50/10">
+                      {row.avgLate > 0 ? round2(row.avgLate).toFixed(1) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* ③ 특이값 */}
+          {divAvgRows.length >= 2 && (() => {
+            const byTotal  = [...divAvgRows].sort((a, b) => b.avgTotal - a.avgTotal)
+            const byLate   = [...divAvgRows].sort((a, b) => b.avgLate  - a.avgLate)
+            const topTotal = byTotal[0], botTotal = byTotal[byTotal.length - 1]
+            const topLate  = byLate[0]
+            return (
+              <div className="px-4 py-3">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">특이값 (부문 평균 기준)</p>
+                <div className="flex items-stretch gap-2 flex-wrap">
+                  <div className="flex-1 min-w-[140px] rounded-lg bg-orange-50 border border-orange-100 px-3 py-2">
+                    <div className="text-[10px] text-orange-500 font-semibold mb-0.5">연장+휴일 최다</div>
+                    <div className="font-semibold text-gray-800 truncate">{topTotal.div}</div>
+                    <div className="text-orange-600 font-bold tabular-nums">{fmtH(topTotal.avgTotal)}</div>
+                  </div>
+                  <div className="flex-1 min-w-[140px] rounded-lg bg-sky-50 border border-sky-100 px-3 py-2">
+                    <div className="text-[10px] text-sky-500 font-semibold mb-0.5">연장+휴일 최소</div>
+                    <div className="font-semibold text-gray-800 truncate">{botTotal.div}</div>
+                    <div className="text-sky-600 font-bold tabular-nums">{fmtH(botTotal.avgTotal)}</div>
+                  </div>
+                  {topLate.avgLate > 0 && (
+                    <div className="flex-1 min-w-[140px] rounded-lg bg-red-50 border border-red-100 px-3 py-2">
+                      <div className="text-[10px] text-red-500 font-semibold mb-0.5">지각 최다</div>
+                      <div className="font-semibold text-gray-800 truncate">{topLate.div}</div>
+                      <div className="text-red-600 font-bold tabular-nums">{round2(topLate.avgLate).toFixed(1)}회</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
+
         </div>
       )}
 
