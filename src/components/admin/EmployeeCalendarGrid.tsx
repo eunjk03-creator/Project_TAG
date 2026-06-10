@@ -271,7 +271,9 @@ const empStats = useMemo(() => {
 
       if (r.dayType === 'WEEKDAY') {
         exactOt      += Math.max(0, finalWorkH - 8.0)
-        roundedOt    += r.erpOtApplied ? r.overtimeHours : 0  // ERP 상신자만 인정 (인정시간 기준)
+        roundedOt    += r.erpOtApplied                                          // ERP 상신자만 인정 (인정시간 기준)
+          ? (r.isLeader ? (r.rawOvertimeMinutes ?? 0) / 60 : r.overtimeHours)  // 직책자: 절삭없음, 비직책자: 30분 절삭
+          : 0
         exactTotal   += finalWorkH
         roundedTotal += flooredWork
       } else if (r.finalStatus === '휴일근무') {
