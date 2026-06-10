@@ -842,10 +842,13 @@ export default function AdminDashboard() {
   function handleModalSave(payload: SavePayload) {
     if (!modalCell) return
     const key = `${modalCell.employeeId}_${modalCell.date}`
-    setResolutions(prev => ({
-      ...prev,
-      [key]: { reasonLabel: payload.finalStatus, memo: payload.finalReason },
-    }))
+    // resolution은 소명완료 처리 시에만 세팅, 나머지는 기존 값 유지
+    if (payload.finalStatus === '소명완료') {
+      setResolutions(prev => ({
+        ...prev,
+        [key]: { reasonLabel: '소명완료', memo: payload.finalReason },
+      }))
+    }
     setRecordOverrides(prev => {
       const existing = prev[key]
       return {
@@ -1595,7 +1598,6 @@ export default function AdminDashboard() {
           record={modalRecord}
           policy={policy}
           initialEditHistory={recordOverrides[`${modalCell.employeeId}_${modalCell.date}`]?.editHistory}
-          initialDecision={resolutions[`${modalCell.employeeId}_${modalCell.date}`]?.reasonLabel}
           initialErpLeaveType={
             recordOverrides[`${modalCell.employeeId}_${modalCell.date}`]?.erpLeaveType
             ?? (

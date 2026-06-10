@@ -332,10 +332,12 @@ export default function AnomaliesPage() {
     if (!detailCell) return
     const key = recKey(detailCell.employeeId, detailCell.date)
 
-    setResolutions(prev => ({
-      ...prev,
-      [key]: { reasonLabel: payload.finalStatus, memo: payload.finalReason },
-    }))
+    if (payload.finalStatus === '소명완료') {
+      setResolutions(prev => ({
+        ...prev,
+        [key]: { reasonLabel: '소명완료', memo: payload.finalReason },
+      }))
+    }
 
     setRecordOverrides(prev => {
       const existing = prev[key]

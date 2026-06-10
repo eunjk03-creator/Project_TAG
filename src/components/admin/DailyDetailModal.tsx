@@ -156,7 +156,7 @@ export type SavePayload = {
   newClockOut:     string | null
   newErpOtApplied: boolean | null  // null = not edited, preserve existing
   newErpLeaveType: string  | null  // null = not edited, preserve existing
-  finalStatus:     string
+  finalStatus:     string | null
   finalReason:     string
   auditEntry:      EditHistoryEntry
 }
@@ -167,7 +167,6 @@ type Props = {
   policy:               PolicySettings
   initialEditHistory?:  EditHistoryEntry[]
   initialApproved?:     boolean
-  initialDecision?:     string   // 이전 저장된 최종 상태값
   initialErpLeaveType?: string | null
   showExactTime?:       boolean
   onClose:              () => void
@@ -175,7 +174,7 @@ type Props = {
   onDelete?:            () => void
 }
 
-export function DailyDetailModal({ employee, record, policy, initialEditHistory, initialApproved, initialDecision, initialErpLeaveType, showExactTime = false, onClose, onSave, onDelete }: Props) {
+export function DailyDetailModal({ employee, record, policy, initialEditHistory, initialApproved, initialErpLeaveType, showExactTime = false, onClose, onSave, onDelete }: Props) {
   // ── Audit / approval state ────────────────────────────────────────────
   const [editHistory, setEditHistory] = useState<EditHistoryEntry[]>(initialEditHistory ?? [])
   const isApproved = initialApproved ?? false
@@ -214,11 +213,9 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
   }
   const totalLeaveAmount = erpLeaveEntries.reduce((s, t) => s + leaveAmount(t), 0)
 
-  // ── Final decision (이전 저장값 → 정상 복원)  ──────────────────────────
-  const [adminDecision, setAdminDecision] = useState<string>(() =>
-    initialDecision ?? (initialApproved ? '소명완료' : record.finalStatus),
-  )
-  const [finalReason, setFinalReason] = useState('')
+  // 소명 완료 체크박스 (이상 건에서만 표시)
+  const [markSoMyeong, setMarkSoMyeong] = useState(initialApproved ?? false)
+  const [finalReason,  setFinalReason]  = useState('')
 
   const { exceptions: slackExceptions } = useSlack()
   // 동일 직원+날짜의 모든 슬랙 항목을 시간순으로 정렬
@@ -256,8 +253,6 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
     const origIn     = record.clockIn?.replace(/^\+/, '')  ?? ''
     const origOut    = record.clockOut?.replace(/^\+/, '') ?? ''
     const origErpOt  = record.erpOtApplied ? '신청됨' : record.overtimeHours > 0 ? '미신청' : '해당없음'
-    const origStatus = initialApproved ? '소명완료' : record.finalStatus
-
     const actionLog: string[] = []
 
     if (isEditingCaps) {
@@ -272,7 +267,7 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
       if (newLeaveStr !== origLeaveStr) actionLog.push(`[ERP] 연차/반차 ${origLeaveStr} → ${newLeaveStr}`)
     }
 
-    if (adminDecision !== origStatus) actionLog.push(`[상태] ${origStatus} → ${adminDecision}`)
+    if (markSoMyeong) actionLog.push('[소명] 이상 소명 완료 처리')
 
     const newClockIn      = isEditingCaps ? (capsIn  || null) : record.clockIn
     const newClockOut     = isEditingCaps ? (capsOut || null) : record.clockOut
@@ -291,7 +286,8 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
     // Optimistically update local history so the list refreshes immediately
     setEditHistory(prev => [...prev, auditEntry])
 
-    onSave({ newClockIn, newClockOut, newErpOtApplied, newErpLeaveType, finalStatus: adminDecision, finalReason: finalReason.trim(), auditEntry })
+    const finalStatus = markSoMyeong ? '소명완료' : null
+    onSave({ newClockIn, newClockOut, newErpOtApplied, newErpLeaveType, finalStatus, finalReason: finalReason.trim(), auditEntry })
   }
 
   return (
@@ -762,35 +758,34 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
           <section>
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">최종 근태 판정</p>
             <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5">최종 상태값</label>
-                <select
-                  value={adminDecision}
-                  onChange={e => setAdminDecision(e.target.value)}
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-700"
-                >
-                  <optgroup label="정상 근무">
-                    <option value="정상">정상</option>
-                    <option value="연장근로">연장근로</option>
-                    <option value="연차">연차</option>
-                    <option value="오전반차">오전반차</option>
-                    <option value="오후반차">오후반차</option>
-                    <option value="출장">출장</option>
-                    <option value="재택근무">재택근무</option>
-                  </optgroup>
-                  <optgroup label="근태 이상">
-                    <option value="지각">지각</option>
-                    <option value="조기퇴근">조기퇴근</option>
-                    <option value="출퇴근누락">출퇴근누락</option>
-                  </optgroup>
-                  <optgroup label="휴일">
-                    <option value="휴일근무">휴일근무</option>
-                  </optgroup>
-                  <optgroup label="관리자 처리">
-                    <option value="소명완료">소명완료</option>
-                  </optgroup>
-                </select>
+              {/* 자동 계산 결과 (읽기 전용) */}
+              <div className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg">
+                <span className="text-xs font-semibold text-gray-500">자동 계산 결과</span>
+                <span className={`text-sm font-bold px-3 py-1 rounded-full ${
+                  record.flag
+                    ? 'bg-red-50 text-red-700 border border-red-200'
+                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                }`}>
+                  {record.finalStatus}
+                </span>
               </div>
+              {/* 소명 완료 체크박스 — 이상 플래그가 있는 건에만 표시 */}
+              {record.flag && (
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={markSoMyeong}
+                    onChange={e => setMarkSoMyeong(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="text-sm text-gray-700">이상 소명 완료로 처리</span>
+                  {markSoMyeong && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
+                      소명완료
+                    </span>
+                  )}
+                </label>
+              )}
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1.5">
                   수정 사유 <span className="text-red-400">*</span>
