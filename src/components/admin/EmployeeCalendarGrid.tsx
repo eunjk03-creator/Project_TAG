@@ -290,7 +290,11 @@ const empStats = useMemo(() => {
     const rawNight   = recs.reduce((s, r) => s + (r.nightHours || 0), 0)
     const night      = recs.reduce((s, r) => s + floorTo30(r.nightHours || 0), 0)
     const rawHoliday = recs.reduce((s, r) => s + (r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0), 0)
-    const holiday    = recs.reduce((s, r) => s + floorTo30(r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0), 0)
+    const holiday    = recs.reduce((s, r) => {
+      if (r.dayType === 'WEEKDAY') return s
+      const h = r.holidayHours ?? 0
+      return s + (r.isLeader ? h : floorTo30(h))  // 직책자: 절삭없음, 비직책자: 30분 절삭
+    }, 0)
 
     stats[emp.id] = {
       total:      roundedTotal,

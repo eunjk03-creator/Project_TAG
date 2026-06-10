@@ -8,6 +8,7 @@ import type { Employee, ProcessedRecord } from '@/types/tag'
 
 // ── Format helpers (UI only) ──────────────────────────────────────────────
 
+function floorTo30(h: number): number { return Math.floor(h * 2) / 2 }
 function round2(n: number) { return Math.round(n * 100) / 100 }
 
 function fmtH(h: number): string {
@@ -315,7 +316,9 @@ export function AllowanceTab() {
           if (isLeader)          otByMonth[mm] += (r.rawOvertimeMinutes ?? 0) / 60  // 직책자: ERP 무관
           else if (r.erpOtApplied) otByMonth[mm] += r.overtimeHours                // 비직책자: ERP 상신자만
         }
-        holidayByMonth[mm] += r.holidayHours
+        if (r.dayType !== 'WEEKDAY') {
+          holidayByMonth[mm] += isLeader ? r.holidayHours : floorTo30(r.holidayHours)
+        }
         if (r.flag === 'LATE' || r.flag === 'LATE_AND_EARLY_DEPARTURE' || r.flag === 'LATE_AND_ANOMALY') {
           lateByMonth[mm] += 1
         }
