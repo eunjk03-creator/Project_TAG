@@ -25,10 +25,21 @@ import {
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useSlack } from '@/context/SlackContext'
-import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
+import type { Employee, ProcessedRecord, EmployeeAttributeOverrides, ErpLeaveType } from '@/types/tag'
 import { HR_THRESHOLDS, EXEC_THRESHOLDS } from '@/types/tag'
 import type { RiskView, ProcessedRecord as PR } from '@/types/tag'
 import { sortByDivisionOrder } from '@/data/orgChart'
+
+// erpLeaveType 문자열(단일 또는 comma-separated) → erpLeaveAmount 숫자 변환
+function erpLeaveTypeToAmount(leaveType: string): number {
+  if (leaveType === '없음') return 0
+  if (leaveType.includes(',')) {
+    return leaveType.split(',').reduce((sum, t) => sum + erpLeaveTypeToAmount(t.trim()), 0)
+  }
+  if (leaveType === '오전반반차' || leaveType === '오후반반차') return 0.25
+  if (leaveType === '연차') return 1.0
+  return 0.5  // 오전반차, 오후반차, 생일반차, 기타 반차류
+}
 
 const ANOMALY_STATUSES = new Set(['지각', '조기퇴근', '지각+조기퇴근', '미태깅', '이상치'])
 
@@ -377,6 +388,15 @@ export default function AdminDashboard() {
             clockIn:      ov.clockIn      ?? r.clockIn,
             clockOut:     ov.clockOut     ?? r.clockOut,
             erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
+            // erpLeaveType이 명시적으로 설정된 경우에만 연차 정보를 덮어씀
+            // null = 미수정(원본 유지), '없음' = 명시적 삭제, 그 외 = 해당 연차 유형으로 교체
+            ...(ov.erpLeaveType !== null ? (() => {
+              const amount = erpLeaveTypeToAmount(ov.erpLeaveType)
+              // 복합 연차(comma-separated)의 경우 첫 번째 항목을 대표 leaveType으로 사용
+              const primaryType = ov.erpLeaveType === '없음' ? null
+                : (ov.erpLeaveType.split(',')[0].trim() as ErpLeaveType)
+              return { leaveType: primaryType, erpLeaveAmount: amount }
+            })() : {}),
           } : {}),
         },
         policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId),
@@ -834,7 +854,7 @@ export default function AdminDashboard() {
           clockIn:      payload.newClockIn,
           clockOut:     payload.newClockOut,
           erpOtApplied: payload.newErpOtApplied !== null ? payload.newErpOtApplied : (existing?.erpOtApplied ?? null),
-          erpLeaveType: payload.newErpLeaveType !== null ? payload.newErpLeaveType : (existing?.erpLeaveType ?? '없음'),
+          erpLeaveType: payload.newErpLeaveType !== null ? payload.newErpLeaveType : (existing?.erpLeaveType ?? null),
           editHistory:  existing
             ? [...existing.editHistory, payload.auditEntry]
             : [payload.auditEntry],

@@ -68,7 +68,7 @@ export function AttendanceDataProvider({ children }: { children: ReactNode }) {
               clockIn:      row.clockIn      ?? null,
               clockOut:     row.clockOut     ?? null,
               erpOtApplied: row.erpOtApplied ?? null,
-              erpLeaveType: row.erpLeaveType ?? '없음',
+              erpLeaveType: row.erpLeaveType ?? null,
               editHistory:  Array.isArray(row.editHistory) ? row.editHistory as RecordOverride['editHistory'] : [],
             }
           }

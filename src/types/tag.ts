@@ -273,7 +273,7 @@ export type RecordOverride = {
   clockIn:      string | null
   clockOut:     string | null
   erpOtApplied: boolean | null  // null = not overridden; true/false = explicit admin override
-  erpLeaveType: string          // '없음' | '연차' | '반차'
+  erpLeaveType: string | null   // null = not overridden; '없음' = explicitly cleared; other = set to that type
   editHistory:  EditHistoryEntry[]
   memo?:        string
   reasonLabel?: string

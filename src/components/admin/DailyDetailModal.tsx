@@ -168,7 +168,7 @@ type Props = {
   initialEditHistory?:  EditHistoryEntry[]
   initialApproved?:     boolean
   initialDecision?:     string   // 이전 저장된 최종 상태값
-  initialErpLeaveType?: string
+  initialErpLeaveType?: string | null
   showExactTime?:       boolean
   onClose:              () => void
   onSave:               (payload: SavePayload) => void
@@ -190,7 +190,26 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
   const [erpOtEdit,    setErpOtEdit]    = useState<string>(
     record.erpOtApplied ? '신청됨' : record.overtimeHours > 0 ? '미신청' : '해당없음',
   )
-  const [erpLeaveEdit, setErpLeaveEdit] = useState(initialErpLeaveType ?? '없음')
+
+  // 연차 항목 배열: null/없음 → [], 단일/복합 → 파싱
+  const parseLeaveEntries = (raw: string | null | undefined): string[] => {
+    if (!raw || raw === '없음') return []
+    return raw.split(',').map(s => s.trim()).filter(Boolean)
+  }
+  const [erpLeaveEntries, setErpLeaveEntries] = useState<string[]>(() =>
+    parseLeaveEntries(initialErpLeaveType)
+  )
+  const [addingLeaveType, setAddingLeaveType] = useState('오전반차')
+
+  // 화면 표시용 — 배열 → '없음' or joined string (저장 전 참조용)
+  const erpLeaveEdit = erpLeaveEntries.length === 0 ? '없음' : erpLeaveEntries.join(',')
+
+  function leaveAmount(type: string): number {
+    if (type === '오전반반차' || type === '오후반반차') return 0.25
+    if (type === '연차') return 1.0
+    return 0.5
+  }
+  const totalLeaveAmount = erpLeaveEntries.reduce((s, t) => s + leaveAmount(t), 0)
 
   // ── Final decision (이전 저장값 → 정상 복원)  ──────────────────────────
   const [adminDecision, setAdminDecision] = useState<string>(() =>
@@ -245,7 +264,9 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
 
     if (isEditingErp) {
       if (erpOtEdit   !== origErpOt) actionLog.push(`[ERP] 연장근무 ${origErpOt} → ${erpOtEdit}`)
-      if (erpLeaveEdit !== '없음')   actionLog.push(`[ERP] 연차/반차 없음 → ${erpLeaveEdit}`)
+      const origLeaveStr = parseLeaveEntries(initialErpLeaveType).join(', ') || '없음'
+      const newLeaveStr  = erpLeaveEntries.join(', ') || '없음'
+      if (newLeaveStr !== origLeaveStr) actionLog.push(`[ERP] 연차/반차 ${origLeaveStr} → ${newLeaveStr}`)
     }
 
     if (adminDecision !== origStatus) actionLog.push(`[상태] ${origStatus} → ${adminDecision}`)
@@ -493,7 +514,7 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                 editButton={
                   <button
                     onClick={() => {
-                      if (isEditingErp) setErpLeaveEdit(initialErpLeaveType ?? '없음')
+                      if (isEditingErp) setErpLeaveEntries(parseLeaveEntries(initialErpLeaveType))
                       setIsEditingErp(p => !p)
                     }}
                     className="text-[11px] font-medium text-blue-500 hover:text-blue-700 transition-colors"
@@ -502,38 +523,80 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                   </button>
                 }
               >
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-500 w-20 shrink-0">연차 / 반차</span>
-                    {isEditingErp ? (
-                      <select
-                        value={erpLeaveEdit}
-                        onChange={e => setErpLeaveEdit(e.target.value)}
-                        className="text-xs border border-blue-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                      >
-                        <option value="없음">없음</option>
-                        <option value="연차">연차</option>
-                        <option value="오전반차">오전반차</option>
-                        <option value="오후반차">오후반차</option>
-                        <option value="오전반반차">오전반반차</option>
-                        <option value="오후반반차">오후반반차</option>
-                        <option value="출장">출장</option>
-                        <option value="재택근무">재택근무</option>
-                      </select>
-                    ) : (
-                      erpLeaveEdit && erpLeaveEdit !== '없음'
-                        ? (
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2">
+                    <span className="text-gray-500 w-20 shrink-0 pt-0.5">연차 / 반차</span>
+                    <div className="flex-1 space-y-1.5">
+                      {isEditingErp ? (
+                        <>
+                          {/* 등록된 항목 chips */}
+                          {erpLeaveEntries.map((entry, i) => (
+                            <div key={i} className="flex items-center gap-1.5">
+                              <span className="text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2.5 py-0.5 font-medium">
+                                {entry}
+                                <span className="text-blue-400 ml-1">({leaveAmount(entry)}일)</span>
+                              </span>
+                              <button
+                                onClick={() => setErpLeaveEntries(prev => prev.filter((_, idx) => idx !== i))}
+                                className="text-red-400 hover:text-red-600 text-xs font-bold"
+                              >✕</button>
+                            </div>
+                          ))}
+
+                          {/* 항목 추가 행 */}
+                          <div className="flex items-center gap-1.5">
+                            <select
+                              value={addingLeaveType}
+                              onChange={e => setAddingLeaveType(e.target.value)}
+                              className="text-xs border border-blue-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                            >
+                              <option value="연차">연차 (1.0일)</option>
+                              <option value="오전반차">오전반차 (0.5일)</option>
+                              <option value="오후반차">오후반차 (0.5일)</option>
+                              <option value="오전반반차">오전반반차 (0.25일)</option>
+                              <option value="오후반반차">오후반반차 (0.25일)</option>
+                              <option value="생일반차">생일반차 (0.5일)</option>
+                              <option value="출장">출장</option>
+                              <option value="재택근무">재택근무</option>
+                            </select>
+                            <button
+                              onClick={() => {
+                                if (!erpLeaveEntries.includes(addingLeaveType))
+                                  setErpLeaveEntries(prev => [...prev, addingLeaveType])
+                              }}
+                              className="text-xs bg-blue-500 text-white px-2 py-1 rounded-lg hover:bg-blue-600 transition-colors"
+                            >+ 추가</button>
+                            {erpLeaveEntries.length > 0 && (
+                              <button
+                                onClick={() => setErpLeaveEntries([])}
+                                className="text-xs text-red-400 hover:text-red-600 underline"
+                              >전체 삭제</button>
+                            )}
+                          </div>
+
+                          {/* 합계 */}
+                          {erpLeaveEntries.length > 0 && (
+                            <div className="text-xs text-gray-500 pt-0.5">
+                              합계: <span className="font-semibold text-blue-700">{totalLeaveAmount}일</span>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        erpLeaveEntries.length > 0 ? (
                           <span className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-blue-700 font-semibold">{formatErpLeave(erpLeaveEdit, record.erpLeaveAmount)}</span>
+                            {erpLeaveEntries.map((entry, i) => (
+                              <span key={i} className="text-blue-700 font-semibold">{entry}</span>
+                            ))}
+                            <span className="text-gray-400 text-xs">({totalLeaveAmount}일)</span>
                             {record.rawLeaveCode && (
                               <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
                                 {record.rawLeaveCode}
                               </span>
                             )}
                           </span>
-                        )
-                        : <span className="text-gray-400">없음</span>
-                    )}
+                        ) : <span className="text-gray-400">없음</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </SourceBlock>
