@@ -311,8 +311,9 @@ export function AllowanceTab() {
 
       for (const r of empRecords) {
         const mm = r.date.slice(5, 7)
-        if (r.dayType === 'WEEKDAY' && r.erpOtApplied) {
-          otByMonth[mm] += isLeader ? (r.rawOvertimeMinutes ?? 0) / 60 : r.overtimeHours
+        if (r.dayType === 'WEEKDAY') {
+          if (isLeader)          otByMonth[mm] += (r.rawOvertimeMinutes ?? 0) / 60  // 직책자: ERP 무관
+          else if (r.erpOtApplied) otByMonth[mm] += r.overtimeHours                // 비직책자: ERP 상신자만
         }
         holidayByMonth[mm] += r.holidayHours
         if (r.flag === 'LATE' || r.flag === 'LATE_AND_EARLY_DEPARTURE' || r.flag === 'LATE_AND_ANOMALY') {
