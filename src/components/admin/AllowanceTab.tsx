@@ -8,6 +8,13 @@ import type { Employee, ProcessedRecord } from '@/types/tag'
 
 // ── Format helpers (UI only) ──────────────────────────────────────────────
 
+function parseHireDate(rawId: string | null | undefined): string {
+  if (!rawId) return '—'
+  const m = rawId.match(/^[A-Za-z](\d{2})(\d{2})(\d{2})/)
+  if (!m) return '—'
+  return `20${m[1]}.${m[2]}.${m[3]}`
+}
+
 function floorTo30(h: number): number { return Math.floor(h * 2) / 2 }
 function round2(n: number) { return Math.round(n * 100) / 100 }
 
@@ -473,7 +480,7 @@ export function AllowanceTab() {
   const otColSpan      = expanded.has('ot')      ? months.length + 1 : 1
   const holidayColSpan = expanded.has('holiday')  ? months.length + 1 : 1
   const lateColSpan    = expanded.has('late')     ? months.length + 1 : 1
-  const totalCols      = 1 + 4 + 1 + 1 + 1 + 1 + otColSpan + 1 + holidayColSpan + lateColSpan // checkbox + 소속+사번+이름+시급+연장+휴일합계시간
+  const totalCols      = 1 + 5 + 1 + 1 + 1 + 1 + otColSpan + 1 + holidayColSpan + lateColSpan // checkbox + 소속+사번+이름+입사일+시급+연장+휴일합계시간
 
   const BADGE_LEADER = 'text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200'
 
@@ -727,6 +734,7 @@ export function AllowanceTab() {
               <th rowSpan={2} className="sticky left-8 z-10 bg-gray-50 text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap w-24">소속</th>
               <th rowSpan={2} className="sticky left-[128px] z-10 bg-gray-50 text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap w-[80px]">사번</th>
               <th rowSpan={2} className="sticky left-[208px] z-10 bg-gray-50 text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[80px]">이름</th>
+              <th rowSpan={2} className="text-center px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[90px]">입사일</th>
               <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[110px]">
                 통상시급<br /><span className="text-[10px] font-normal text-gray-400">(선택)</span>
               </th>
@@ -822,6 +830,11 @@ export function AllowanceTab() {
                       <span className="font-medium text-gray-900">{emp.name}</span>
                       {isLeader && <span className={BADGE_LEADER}>직책</span>}
                     </div>
+                  </td>
+
+                  {/* 입사일 */}
+                  <td className="px-3 py-2 border-r border-gray-100 text-center text-gray-500 tabular-nums whitespace-nowrap text-xs">
+                    {parseHireDate(emp.rawId)}
                   </td>
 
                   {/* 통상시급 */}
