@@ -392,8 +392,10 @@ export default function AdminDashboard() {
             // null = 미수정(원본 유지), '없음' = 명시적 삭제, 그 외 = 해당 연차 유형으로 교체
             ...(ov.erpLeaveType !== null ? (() => {
               const amount = erpLeaveTypeToAmount(ov.erpLeaveType)
-              // 복합 연차(comma-separated)의 경우 첫 번째 항목을 대표 leaveType으로 사용
-              const primaryType = ov.erpLeaveType === '없음' ? null
+              // ERP 원본과 동일한 정규화: 합산 1.0 이상이면 '연차'로 통일
+              // (buildLeaveMap 로직과 일관성 유지)
+              const primaryType: ErpLeaveType | null = ov.erpLeaveType === '없음' ? null
+                : amount >= 1.0 ? '연차'
                 : (ov.erpLeaveType.split(',')[0].trim() as ErpLeaveType)
               return { leaveType: primaryType, erpLeaveAmount: amount }
             })() : {}),
