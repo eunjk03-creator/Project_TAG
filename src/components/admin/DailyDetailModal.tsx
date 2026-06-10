@@ -196,9 +196,12 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
     if (!raw || raw === '없음') return []
     return raw.split(',').map(s => s.trim()).filter(Boolean)
   }
-  const [erpLeaveEntries, setErpLeaveEntries] = useState<string[]>(() =>
-    parseLeaveEntries(initialErpLeaveType)
-  )
+  const [erpLeaveEntries, setErpLeaveEntries] = useState<string[]>(() => {
+    // override가 명시적으로 저장된 경우 → override 값 사용 (원본 ERP 무시)
+    if (initialErpLeaveType != null) return parseLeaveEntries(initialErpLeaveType)
+    // override 없음 → 원본 ERP 데이터로 초기화 (편집 시작점)
+    return record.leaveType ? [record.leaveType] : []
+  })
   const [addingLeaveType, setAddingLeaveType] = useState('오전반차')
 
   // 화면 표시용 — 배열 → '없음' or joined string (저장 전 참조용)
@@ -514,7 +517,13 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                 editButton={
                   <button
                     onClick={() => {
-                      if (isEditingErp) setErpLeaveEntries(parseLeaveEntries(initialErpLeaveType))
+                      if (isEditingErp) {
+                        setErpLeaveEntries(
+                          initialErpLeaveType != null
+                            ? parseLeaveEntries(initialErpLeaveType)
+                            : (record.leaveType ? [record.leaveType] : [])
+                        )
+                      }
                       setIsEditingErp(p => !p)
                     }}
                     className="text-[11px] font-medium text-blue-500 hover:text-blue-700 transition-colors"
