@@ -271,7 +271,7 @@ const empStats = useMemo(() => {
 
       if (r.dayType === 'WEEKDAY') {
         exactOt      += Math.max(0, finalWorkH - 8.0)
-        roundedOt    += Math.max(0, flooredWork - 8.0)
+        roundedOt    += r.overtimeHours   // 저녁유예 + 30분 절사 적용값 (processRecord 산출)
         exactTotal   += finalWorkH
         roundedTotal += flooredWork
       } else if (r.finalStatus === '휴일근무') {
