@@ -74,6 +74,7 @@ function dataStyle(fg: string, bg?: string, bold = false, align: 'L'|'C'|'R' = '
 const D = {
   name:      dataStyle('1E293B', undefined, true,  'L'),
   dept:      dataStyle('475569', undefined, false, 'L'),
+  empId:     dataStyle('64748B', undefined, false, 'C'),
   rate:      dataStyle('1E293B', 'FAFAFA',  false, 'R'),
   totalPay:  dataStyle('1E293B', 'F1F5F9',  true,  'R'),
   otPay:     dataStyle('1D4ED8', 'EFF6FF',  true,  'R'),
@@ -114,80 +115,93 @@ function exportAllowanceExcel(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ws: Record<string, any> = {}
 
+  // ── Column layout (0-indexed) ──
+  // A(0):소속  B(1):사번  C(2):이름  D(3):통상시급
+  // E(4):연장+휴일수당(=F+N)  F(5):연장수당(=G*D)  G(6):연장총시간  H-M(7-12):월별연장
+  // N(13):휴일수당(=O*D)  O(14):휴일총시간  P-U(15-20):월별휴일
+  // V(21):지각총횟수  W-AB(22-27):월별지각
+
   // ── Header row 1 ──
-  ws['A1'] = sc('이름',                         H.name)
-  ws['B1'] = sc('부서',                         H.name)
-  ws['C1'] = sc('통상시급',                     H.name)
-  ws['D1'] = sc(`${halfLabel}\n연장+휴일수당`,  H.summary)
-  ws['E1'] = sc(`${halfLabel}\n연장근무수당`,   H.otPay)
-  ws['F1'] = sc(`${halfLabel} 연장근로시간`,    H.otGroup)
-  ws['M1'] = sc(`${halfLabel}\n휴일근무수당`,   H.holPay)
-  ws['N1'] = sc(`${halfLabel} 휴일근로시간`,    H.holGroup)
-  ws['U1'] = sc(`${halfLabel} 지각`,            H.lateGroup)
+  ws['A1'] = sc('소속',                         H.name)
+  ws['B1'] = sc('사번',                         H.name)
+  ws['C1'] = sc('이름',                         H.name)
+  ws['D1'] = sc('통상시급',                     H.name)
+  ws['E1'] = sc(`${halfLabel}\n연장+휴일수당`,  H.summary)
+  ws['F1'] = sc(`${halfLabel}\n연장근무수당`,   H.otPay)
+  ws['G1'] = sc(`${halfLabel} 연장근로시간`,    H.otGroup)
+  ws['N1'] = sc(`${halfLabel}\n휴일근무수당`,   H.holPay)
+  ws['O1'] = sc(`${halfLabel} 휴일근로시간`,    H.holGroup)
+  ws['V1'] = sc(`${halfLabel} 지각`,            H.lateGroup)
 
   // ── Header row 2 ──
-  ws['F2'] = sc('총 시간', H.otSub)
-  months.forEach((mm, i) => { ws[`${colLetter(6 + i)}2`] = sc(ML[mm], H.otSub) })
-  ws['N2'] = sc('총 시간', H.holSub)
-  months.forEach((mm, i) => { ws[`${colLetter(14 + i)}2`] = sc(ML[mm], H.holSub) })
-  ws['U2'] = sc('총 횟수', H.lateSub)
-  months.forEach((mm, i) => { ws[`${colLetter(21 + i)}2`] = sc(ML[mm], H.lateSub) })
+  ws['G2'] = sc('총 시간', H.otSub)
+  months.forEach((mm, i) => { ws[`${colLetter(7 + i)}2`] = sc(ML[mm], H.otSub) })
+  ws['O2'] = sc('총 시간', H.holSub)
+  months.forEach((mm, i) => { ws[`${colLetter(15 + i)}2`] = sc(ML[mm], H.holSub) })
+  ws['V2'] = sc('총 횟수', H.lateSub)
+  months.forEach((mm, i) => { ws[`${colLetter(22 + i)}2`] = sc(ML[mm], H.lateSub) })
 
   // ── Merges (0-indexed r/c) ──
   ws['!merges'] = [
-    { s: { r:0, c:0  }, e: { r:1, c:0  } }, // 이름
-    { s: { r:0, c:1  }, e: { r:1, c:1  } }, // 부서
-    { s: { r:0, c:2  }, e: { r:1, c:2  } }, // 통상시급
-    { s: { r:0, c:3  }, e: { r:1, c:3  } }, // 연장+휴일수당
-    { s: { r:0, c:4  }, e: { r:1, c:4  } }, // 연장수당
-    { s: { r:0, c:5  }, e: { r:0, c:11 } }, // 연장근로시간 (총+6months)
-    { s: { r:0, c:12 }, e: { r:1, c:12 } }, // 휴일수당
-    { s: { r:0, c:13 }, e: { r:0, c:19 } }, // 휴일근로시간 (총+6months)
-    { s: { r:0, c:20 }, e: { r:0, c:26 } }, // 지각 (총+6months)
+    { s: { r:0, c:0  }, e: { r:1, c:0  } }, // 소속
+    { s: { r:0, c:1  }, e: { r:1, c:1  } }, // 사번
+    { s: { r:0, c:2  }, e: { r:1, c:2  } }, // 이름
+    { s: { r:0, c:3  }, e: { r:1, c:3  } }, // 통상시급
+    { s: { r:0, c:4  }, e: { r:1, c:4  } }, // 연장+휴일수당
+    { s: { r:0, c:5  }, e: { r:1, c:5  } }, // 연장수당
+    { s: { r:0, c:6  }, e: { r:0, c:12 } }, // 연장근로시간 (총+6months)
+    { s: { r:0, c:13 }, e: { r:1, c:13 } }, // 휴일수당
+    { s: { r:0, c:14 }, e: { r:0, c:20 } }, // 휴일근로시간 (총+6months)
+    { s: { r:0, c:21 }, e: { r:0, c:27 } }, // 지각 (총+6months)
   ]
 
   // ── Row heights ──
-  ws['!rows'] = [{ hpt: 30 }, { hpt: 18 }] // header rows taller
+  ws['!rows'] = [{ hpt: 30 }, { hpt: 18 }]
 
   // ── Data rows (Excel row 3 onward) ──
   rows.forEach((row, idx) => {
     const R = idx + 3
     const { emp, otByMonth, holidayByMonth, lateByMonth, totalOt, totalHoliday, totalLate } = row
-    const rate = parseFloat(hourlyRates[emp.id] ?? '0') || 0
+    const rate   = parseFloat(hourlyRates[emp.id] ?? '0') || 0
+    const rowBg  = idx % 2 === 1 ? 'F8FAFC' : undefined
+    const altDep = rowBg ? { ...D.dept,  fill: fill(rowBg) } : D.dept
+    const altNam = rowBg ? { ...D.name,  fill: fill(rowBg) } : D.name
+    const altId  = rowBg ? { ...D.empId, fill: fill(rowBg) } : D.empId
 
-    const deptStr = emp.division + (emp.team !== emp.division ? ` / ${emp.team}` : '')
-    const rowBg   = idx % 2 === 1 ? 'F8FAFC' : undefined  // subtle alternating
+    const divStr = emp.division + (emp.team !== emp.division ? ` / ${emp.team}` : '')
 
-    ws[`A${R}`] = sc(emp.name, idx % 2 === 1 ? { ...D.name, fill: fill('F8FAFC') } : D.name)
-    ws[`B${R}`] = sc(deptStr,  idx % 2 === 1 ? { ...D.dept, fill: fill('F8FAFC') } : D.dept)
-    ws[`C${R}`] = rate > 0
+    ws[`A${R}`] = sc(divStr,          altDep)
+    ws[`B${R}`] = sc(emp.rawId ?? '', altId)
+    ws[`C${R}`] = sc(emp.name,        altNam)
+    ws[`D${R}`] = rate > 0
       ? nc(rate, rowBg ? { ...D.rate, fill: fill(rowBg) } : D.rate, '#,##0')
       : sc('',   rowBg ? { ...D.empty, fill: fill(rowBg) } : D.empty)
 
-    ws[`D${R}`] = fc(`E${R}+M${R}`, D.totalPay)
-    ws[`E${R}`] = fc(`F${R}*C${R}`, D.otPay)
-    ws[`F${R}`] = nc(round2(totalOt),      D.otHTot,  '0.00')
+    ws[`E${R}`] = fc(`F${R}+N${R}`, D.totalPay)
+    ws[`F${R}`] = fc(`G${R}*D${R}`, D.otPay)
+    ws[`G${R}`] = nc(round2(totalOt),      D.otHTot,  '0.00')
     months.forEach((mm, i) => {
-      ws[`${colLetter(6 + i)}${R}`] = nc(round2(otByMonth[mm] ?? 0), D.otHMon, '0.00')
+      ws[`${colLetter(7 + i)}${R}`] = nc(round2(otByMonth[mm] ?? 0), D.otHMon, '0.00')
     })
 
-    ws[`M${R}`] = fc(`N${R}*C${R}`, D.holPay)
-    ws[`N${R}`] = nc(round2(totalHoliday), D.holHTot, '0.00')
+    ws[`N${R}`] = fc(`O${R}*D${R}`, D.holPay)
+    ws[`O${R}`] = nc(round2(totalHoliday), D.holHTot, '0.00')
     months.forEach((mm, i) => {
-      ws[`${colLetter(14 + i)}${R}`] = nc(round2(holidayByMonth[mm] ?? 0), D.holHMon, '0.00')
+      ws[`${colLetter(15 + i)}${R}`] = nc(round2(holidayByMonth[mm] ?? 0), D.holHMon, '0.00')
     })
 
-    ws[`U${R}`] = nc(totalLate, D.lateTot)
+    ws[`V${R}`] = nc(totalLate, D.lateTot)
     months.forEach((mm, i) => {
-      ws[`${colLetter(21 + i)}${R}`] = nc(lateByMonth[mm] ?? 0, D.lateMon)
+      ws[`${colLetter(22 + i)}${R}`] = nc(lateByMonth[mm] ?? 0, D.lateMon)
     })
   })
 
-  ws['!ref'] = `A1:${colLetter(26)}${rows.length + 2}`
+  ws['!ref'] = `A1:${colLetter(27)}${rows.length + 2}`
 
   ws['!cols'] = [
-    { wch: 10 }, // 이름
-    { wch: 18 }, // 부서
+    { wch: 16 }, // 소속
+    { wch: 10 }, // 사번
+    { wch: 8  }, // 이름
     { wch: 10 }, // 통상시급
     { wch: 14 }, // 연장+휴일수당
     { wch: 12 }, // 연장수당
