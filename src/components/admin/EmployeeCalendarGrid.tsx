@@ -69,7 +69,7 @@ function getStatus(
   if (isApproved && cat === 'ANOMALY') return 'APPROVED'
   if (rec.finalStatus === '지각') return 'L'
   if (cat === 'ANOMALY')           return 'A'
-  if (rec.overtimeHours > 0 || rec.finalStatus === '연장근로') return 'OT'
+  if (rec.erpOtApplied && (rec.overtimeHours > 0 || rec.finalStatus === '연장근로')) return 'OT'
   return 'N'
 }
 
@@ -271,12 +271,11 @@ const empStats = useMemo(() => {
 
       if (r.dayType === 'WEEKDAY') {
         exactOt      += Math.max(0, finalWorkH - 8.0)
-        roundedOt    += r.overtimeHours   // 저녁유예 + 30분 절사 적용값 (processRecord 산출)
+        roundedOt    += r.erpOtApplied ? r.overtimeHours : 0  // ERP 상신자만 인정 (인정시간 기준)
         exactTotal   += finalWorkH
         roundedTotal += flooredWork
       } else if (r.finalStatus === '휴일근무') {
-        exactOt      += finalWorkH
-        roundedOt    += flooredWork
+        // 휴일근무는 연장(OT) 컬럼이 아닌 휴일 컬럼에만 집계
         exactTotal   += finalWorkH
         roundedTotal += flooredWork
       } else {
@@ -983,7 +982,7 @@ const empStats = useMemo(() => {
                       if (fs === '휴일근무')  tags.push({ cls: TAG.holiday,   text: '휴일근로'   })
                       if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY')
                                              tags.push({ cls: TAG.anomaly,   text: '근무시간 미달' })
-                      if ((rec?.overtimeHours ?? 0) > 0 && !flag)
+                      if ((rec?.overtimeHours ?? 0) > 0 && !flag && rec?.erpOtApplied)
                                              tags.push({ cls: TAG.ot,        text: '연장근로'    })
 
                       return (
