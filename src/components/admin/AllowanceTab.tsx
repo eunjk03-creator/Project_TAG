@@ -241,6 +241,7 @@ export function AllowanceTab() {
   const [page,         setPage]        = useState(0)
   const [selectedIds,  setSelectedIds] = useState<Set<string>>(new Set())
   const [viewSelected, setViewSelected]= useState(false)
+  const [showDivAvg,   setShowDivAvg]  = useState(false)
 
   const months: string[] = half === 'H1'
     ? ['01', '02', '03', '04', '05', '06']
@@ -350,6 +351,32 @@ export function AllowanceTab() {
     return rows
   }, [baseRows, search, leaderOnly, divFilter, sortKey])
 
+  // ── Division averages (for summary panel) ────────────────────────────────
+  const divAvgRows = useMemo(() => {
+    const byDiv = new Map<string, { ot: number; holiday: number; late: number; count: number }>()
+    for (const row of filteredRows) {
+      const d = row.emp.division
+      const b = byDiv.get(d) ?? { ot: 0, holiday: 0, late: 0, count: 0 }
+      b.ot      += row.totalOt
+      b.holiday += row.totalHoliday
+      b.late    += row.totalLate
+      b.count   += 1
+      byDiv.set(d, b)
+    }
+    return [...byDiv.entries()]
+      .sort((a, b) => {
+        const ai = DIVISION_ORDER.indexOf(a[0]), bi = DIVISION_ORDER.indexOf(b[0])
+        return ai === -1 && bi === -1 ? a[0].localeCompare(b[0], 'ko') : ai === -1 ? 1 : bi === -1 ? -1 : ai - bi
+      })
+      .map(([div, v]) => ({
+        div,
+        count:   v.count,
+        avgOt:   v.ot      / v.count,
+        avgHol:  v.holiday / v.count,
+        avgLate: v.late    / v.count,
+      }))
+  }, [filteredRows])
+
   // viewSelected: bypass all filters and show only selected rows
   const displayRows = useMemo(() =>
     viewSelected ? baseRows.filter(r => selectedIds.has(r.emp.id)) : filteredRows,
@@ -380,7 +407,7 @@ export function AllowanceTab() {
   const otColSpan      = expanded.has('ot')      ? months.length + 1 : 1
   const holidayColSpan = expanded.has('holiday')  ? months.length + 1 : 1
   const lateColSpan    = expanded.has('late')     ? months.length + 1 : 1
-  const totalCols      = 1 + 3 + 1 + 1 + 1 + otColSpan + 1 + holidayColSpan + lateColSpan // +1 for checkbox
+  const totalCols      = 1 + 4 + 1 + 1 + 1 + otColSpan + 1 + holidayColSpan + lateColSpan // checkbox + 소속+사번+이름+시급
 
   const halfLabel    = half === 'H1' ? '상반기' : '하반기'
   const BADGE_LEADER = 'text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200'
@@ -487,6 +514,16 @@ export function AllowanceTab() {
             <button onClick={() => setSortKey('default')} className="text-[11px] text-gray-400 hover:text-gray-600 px-1">초기화</button>
           )}
 
+          {/* 부문 평균 토글 */}
+          <button onClick={() => setShowDivAvg(v => !v)}
+            className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
+              showDivAvg
+                ? 'bg-teal-600 text-white border-teal-600'
+                : 'bg-white text-gray-600 border-gray-200 hover:border-teal-400 hover:text-teal-600'
+            }`}>
+            부문 평균
+          </button>
+
           {/* 엑셀 다운로드 */}
           <button onClick={handleExport}
             className="ml-1 flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors font-medium">
@@ -497,6 +534,40 @@ export function AllowanceTab() {
           </button>
         </div>
       </div>
+
+      {/* ── 부문별 평균 패널 ── */}
+      {showDivAvg && (
+        <div className="rounded-xl border border-teal-200 bg-white overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-teal-100 bg-teal-50/60 flex items-center gap-2">
+            <span className="text-xs font-semibold text-teal-800">부문별 평균</span>
+            <span className="text-[10px] text-teal-600">현재 필터 기준 · {filteredRows.length}명</span>
+          </div>
+          <table className="text-xs w-full">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="text-left px-4 py-2 text-gray-600 font-medium">부문</th>
+                <th className="text-center px-3 py-2 text-gray-600 font-medium">인원</th>
+                <th className="text-center px-3 py-2 font-medium text-blue-700 bg-blue-50/40">연장 평균 (h)</th>
+                <th className="text-center px-3 py-2 font-medium text-amber-700 bg-amber-50/40">휴일 평균 (h)</th>
+                <th className="text-center px-3 py-2 font-medium text-red-700 bg-red-50/40">지각 평균 (회)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {divAvgRows.map(row => (
+                <tr key={row.div} className="border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-2 font-medium text-gray-800">{row.div}</td>
+                  <td className="px-3 py-2 text-center text-gray-500 tabular-nums">{row.count}명</td>
+                  <td className="px-3 py-2 text-center text-blue-700 font-medium tabular-nums bg-blue-50/10">{fmtH(row.avgOt)}</td>
+                  <td className="px-3 py-2 text-center text-amber-700 font-medium tabular-nums bg-amber-50/10">{fmtH(row.avgHol)}</td>
+                  <td className="px-3 py-2 text-center text-red-700 font-medium tabular-nums bg-red-50/10">
+                    {row.avgLate > 0 ? round2(row.avgLate).toFixed(1) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* ── Table ── */}
       <div className="overflow-auto rounded-xl border border-gray-200 bg-white">
@@ -514,8 +585,9 @@ export function AllowanceTab() {
                   className="w-3.5 h-3.5 cursor-pointer"
                 />
               </th>
-              <th rowSpan={2} className="sticky left-8 z-10 bg-gray-50 text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[100px]">이름</th>
-              <th rowSpan={2} className="text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[90px]">부서</th>
+              <th rowSpan={2} className="sticky left-8 z-10 bg-gray-50 text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap w-24">소속</th>
+              <th rowSpan={2} className="sticky left-[128px] z-10 bg-gray-50 text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap w-[80px]">사번</th>
+              <th rowSpan={2} className="sticky left-[208px] z-10 bg-gray-50 text-left px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[80px]">이름</th>
               <th rowSpan={2} className="text-right px-3 py-2.5 font-semibold text-gray-700 border-r border-gray-200 whitespace-nowrap min-w-[110px]">
                 통상시급<br /><span className="text-[10px] font-normal text-gray-400">(선택)</span>
               </th>
@@ -589,19 +661,24 @@ export function AllowanceTab() {
                       className="w-3.5 h-3.5 cursor-pointer" />
                   </td>
 
-                  {/* 이름 + 직책 뱃지 */}
-                  <td className="sticky left-8 z-10 bg-inherit px-3 py-2 border-r border-gray-100 whitespace-nowrap">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-medium text-gray-900">{emp.name}</span>
-                      {isLeader && <span className={BADGE_LEADER}>직책</span>}
+                  {/* 소속 */}
+                  <td className="sticky left-8 z-10 bg-inherit px-3 py-2 border-r border-gray-100 whitespace-nowrap w-24">
+                    <div className="leading-tight">
+                      <div className="text-gray-700">{emp.division}</div>
+                      {emp.team !== emp.division && <div className="text-[10px] text-gray-400">{emp.team}</div>}
                     </div>
                   </td>
 
-                  {/* 부서 */}
-                  <td className="px-3 py-2 border-r border-gray-100 text-gray-600 whitespace-nowrap">
-                    <div className="leading-tight">
-                      <div>{emp.division}</div>
-                      {emp.team !== emp.division && <div className="text-[10px] text-gray-400">{emp.team}</div>}
+                  {/* 사번 */}
+                  <td className="sticky left-[128px] z-10 bg-inherit px-3 py-2 border-r border-gray-100 whitespace-nowrap w-[80px] text-gray-500 tabular-nums">
+                    {emp.rawId ?? '—'}
+                  </td>
+
+                  {/* 이름 + 직책 뱃지 */}
+                  <td className="sticky left-[208px] z-10 bg-inherit px-3 py-2 border-r border-gray-100 whitespace-nowrap">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-gray-900">{emp.name}</span>
+                      {isLeader && <span className={BADGE_LEADER}>직책</span>}
                     </div>
                   </td>
 
