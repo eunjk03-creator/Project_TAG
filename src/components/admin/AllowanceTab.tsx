@@ -251,14 +251,15 @@ type SectionKey = 'ot' | 'holiday' | 'late'
 type SortKey    = 'default' | 'ot_desc' | 'ot_asc' | 'holiday_desc' | 'holiday_asc'
 
 interface EmpRow {
-  emp:            Employee
-  otByMonth:      Record<string, number>
-  holidayByMonth: Record<string, number>
-  lateByMonth:    Record<string, number>
-  totalOt:        number
-  totalHoliday:   number
-  totalLate:      number
-  isLeader:       boolean
+  emp:              Employee
+  otByMonth:        Record<string, number>
+  holidayByMonth:   Record<string, number>
+  lateByMonth:      Record<string, number>
+  totalOt:          number
+  totalHoliday:     number
+  totalLate:        number
+  isLeader:         boolean
+  activeMonthCount: number  // 선택 월 중 입사 이후 월 수 (평균 분모용)
 }
 
 const PAGE_SIZE = 50
@@ -335,6 +336,17 @@ export function AllowanceTab() {
     const records  = serverProcessed ?? []
     const monthSet = new Set(months)
 
+    // 레코드에서 월 → "YYYY-MM" 맵 구성 (입사월 비교용)
+    const monthYearMap: Record<string, string> = {}
+    for (const r of records) {
+      const mm = r.date.slice(5, 7)
+      if (!monthYearMap[mm]) monthYearMap[mm] = r.date.slice(0, 7)
+    }
+    const dataYear = Object.values(monthYearMap)[0]?.slice(0, 4) ?? '2026'
+    for (const mm of months) {
+      if (!monthYearMap[mm]) monthYearMap[mm] = `${dataYear}-${mm}`
+    }
+
     const recsByEmp = new Map<string, ProcessedRecord[]>()
     for (const r of records) {
       if (!monthSet.has(r.date.slice(5, 7))) continue
@@ -349,6 +361,17 @@ export function AllowanceTab() {
 
       const isLeader   = attrs?.isLeader === true
       const empRecords = recsByEmp.get(emp.id) ?? []
+
+      // 입사월 기준 활성 월 수 계산 (입사한 달 포함)
+      const hireYM = (() => {
+        const rawId = emp.rawId
+        if (!rawId) return null
+        const m = rawId.match(/^[A-Za-z](\d{2})(\d{2})(\d{2})/)
+        return m ? `20${m[1]}-${m[2]}` : null  // e.g. "2026-05"
+      })()
+      const activeMonthCount = months.filter(mm =>
+        !hireYM || hireYM <= (monthYearMap[mm] ?? `${dataYear}-${mm}`)
+      ).length
 
       const otByMonth:      Record<string, number> = {}
       const holidayByMonth: Record<string, number> = {}
@@ -378,7 +401,7 @@ export function AllowanceTab() {
       const totalHoliday = months.reduce((s, mm) => s + holidayByMonth[mm], 0)
       const totalLate    = months.reduce((s, mm) => s + lateByMonth[mm],    0)
 
-      result.push({ emp, otByMonth, holidayByMonth, lateByMonth, totalOt, totalHoliday, totalLate, isLeader })
+      result.push({ emp, otByMonth, holidayByMonth, lateByMonth, totalOt, totalHoliday, totalLate, isLeader, activeMonthCount })
     }
 
     result.sort((a, b) => {
@@ -421,24 +444,29 @@ export function AllowanceTab() {
 
   // ── Overall stats (전사 평균) ─────────────────────────────────────────────
   const overallStats = useMemo(() => {
-    const n = filteredRows.length
+    const active = filteredRows.filter(r => r.activeMonthCount > 0)
+    const n = active.length
     if (n === 0) return null
-    const totOt  = filteredRows.reduce((s, r) => s + r.totalOt,      0)
-    const totHol = filteredRows.reduce((s, r) => s + r.totalHoliday, 0)
-    const totLate= filteredRows.reduce((s, r) => s + r.totalLate,    0)
-    return { count: n, avgOt: totOt/n, avgHol: totHol/n, avgTotal: (totOt+totHol)/n, avgLate: totLate/n }
+    const personMonths = active.reduce((s, r) => s + r.activeMonthCount, 0)
+    if (personMonths === 0) return null
+    const totOt  = active.reduce((s, r) => s + r.totalOt,      0)
+    const totHol = active.reduce((s, r) => s + r.totalHoliday, 0)
+    const totLate= active.reduce((s, r) => s + r.totalLate,    0)
+    return { count: n, avgOt: totOt/personMonths, avgHol: totHol/personMonths, avgTotal: (totOt+totHol)/personMonths, avgLate: totLate/personMonths }
   }, [filteredRows])
 
   // ── Division averages (부문별 비교) ───────────────────────────────────────
   const divAvgRows = useMemo(() => {
-    const byDiv = new Map<string, { ot: number; holiday: number; late: number; count: number }>()
+    const byDiv = new Map<string, { ot: number; holiday: number; late: number; personMonths: number; count: number }>()
     for (const row of filteredRows) {
+      if (row.activeMonthCount === 0) continue  // 선택 기간 내 미재직자 제외
       const d = row.emp.division
-      const b = byDiv.get(d) ?? { ot: 0, holiday: 0, late: 0, count: 0 }
-      b.ot      += row.totalOt
-      b.holiday += row.totalHoliday
-      b.late    += row.totalLate
-      b.count   += 1
+      const b = byDiv.get(d) ?? { ot: 0, holiday: 0, late: 0, personMonths: 0, count: 0 }
+      b.ot           += row.totalOt
+      b.holiday      += row.totalHoliday
+      b.late         += row.totalLate
+      b.personMonths += row.activeMonthCount  // 실제 재직 월 수만 분모에 반영
+      b.count        += 1
       byDiv.set(d, b)
     }
     return [...byDiv.entries()]
@@ -449,10 +477,10 @@ export function AllowanceTab() {
       .map(([div, v]) => ({
         div,
         count:    v.count,
-        avgTotal: (v.ot + v.holiday) / v.count,
-        avgOt:    v.ot      / v.count,
-        avgHol:   v.holiday / v.count,
-        avgLate:  v.late    / v.count,
+        avgTotal: v.personMonths > 0 ? (v.ot + v.holiday) / v.personMonths : 0,
+        avgOt:    v.personMonths > 0 ? v.ot      / v.personMonths : 0,
+        avgHol:   v.personMonths > 0 ? v.holiday / v.personMonths : 0,
+        avgLate:  v.personMonths > 0 ? v.late    / v.personMonths : 0,
       }))
   }, [filteredRows])
 
@@ -639,7 +667,7 @@ export function AllowanceTab() {
 
           {/* ① 전사 평균 */}
           <div className="px-4 py-3 border-b border-gray-100">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">전사 평균 (인당)</p>
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">전사 평균 (인당/월)</p>
             <div className="grid grid-cols-4 gap-2">
               {[
                 { label: '연장+휴일', value: fmtH(overallStats.avgTotal), color: 'text-gray-800', bg: 'bg-gray-50' },
@@ -657,7 +685,7 @@ export function AllowanceTab() {
 
           {/* ② 부문별 비교 */}
           <div className="border-b border-gray-100">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide px-4 pt-3 pb-1.5">부문별 비교 (인당 평균)</p>
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide px-4 pt-3 pb-1.5">부문별 비교 (인당/월 평균)</p>
             <table className="w-full">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
@@ -917,6 +945,7 @@ export function AllowanceTab() {
         * 통상시급은 페이지 새로고침 시 초기화됩니다.
         수당 = 시간 × 통상시급. Excel 다운로드 시 수당 열에 <code>=시간*통상시급</code> 수식이 포함됩니다.
         직책자(직책 뱃지)는 rawOvertimeMinutes 기준(절사 없음)으로 연장근로 집계.
+        부문/전사 평균은 각 직원의 실제 재직 월 수 기준 산출 (입사월 포함, 미재직 월 분모 제외).
       </p>
     </div>
   )
