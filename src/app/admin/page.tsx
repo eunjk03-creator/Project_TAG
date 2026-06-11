@@ -993,30 +993,29 @@ export default function AdminDashboard() {
       {/* ── CSV / Excel uploader ── */}
       <CsvUploader />
 
-      {/* ── Server computation status / manual recompute / snapshot ── */}
+      {/* ── 전체 재계산 (단일 진입점) ── */}
       {isLiveData && (
-        <div className="px-6 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-4 text-sm">
+        <div className="px-6 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-3 text-sm">
           {isServerProcessing ? (
-            <span className="flex items-center gap-2 text-blue-600">
+            <span className="flex items-center gap-2 text-blue-600 font-medium">
               <svg className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
               </svg>
-              서버 재계산 중...
+              전체 재계산 중...
             </span>
           ) : (
             <button
               onClick={recomputeProcessed}
-              className="flex items-center gap-1.5 text-gray-500 hover:text-gray-800 transition-colors"
-              title="예외규칙·Slack·정책 변경 후 수동 재계산"
+              className="flex items-center gap-1.5 px-3 py-1 rounded-md border border-gray-200 bg-white text-gray-600 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors text-xs font-medium"
+              title="예외규칙·Slack·정책 변경 사항을 반영해 전체 근태 데이터를 서버에서 다시 계산합니다"
             >
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
               </svg>
-              데이터 재계산
+              전체 재계산
             </button>
           )}
-
         </div>
       )}
 

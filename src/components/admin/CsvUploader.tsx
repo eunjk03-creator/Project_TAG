@@ -298,7 +298,7 @@ const MAX_CAPS = 5
 
 // ── Main export ───────────────────────────────────────────────────────────
 export function CsvUploader() {
-  const { setRawData, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, recomputeProcessed, isProcessing } = useAttendanceSource()
+  const { setRawData, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, isProcessing } = useAttendanceSource()
 
   // CAPS: 복수 파일 지원 (최대 MAX_CAPS)
   const capsDataRefs = useRef<(Record<string, string>[] | null)[]>([null])
@@ -475,16 +475,6 @@ export function CsvUploader() {
         )}
 
         <div className="ml-auto flex items-center gap-2 shrink-0">
-          {isLiveData && !isDbLoading && (
-            <button
-              onClick={() => recomputeProcessed()}
-              disabled={isProcessing}
-              title="서버에서 근태 데이터를 다시 계산합니다"
-              className="text-[11px] text-gray-400 hover:text-indigo-600 transition-colors font-medium disabled:opacity-40"
-            >
-              재계산
-            </button>
-          )}
           {isLiveData && (
             <button
               onClick={handleClear}
