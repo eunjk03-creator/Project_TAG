@@ -7,7 +7,7 @@ import type {
   EmployeeAttributeOverrides,
   ErpLeaveType,
 } from '@/types/tag'
-import { normalizeLeaveType } from '@/utils/attendanceCalc'
+import { normalizeLeaveType, computeDisplayBreakMins } from '@/utils/attendanceCalc'
 
 export function parseTime(hhmm: string): number {
   const isNext = hhmm.startsWith('+')
@@ -409,20 +409,6 @@ export function processRecord(
     return { ...updated, finalStatus: computeFinalStatus(updated) }
   }
 
-  function computeBreakMins(ci: number, co: number): number {
-    if (co - ci > 12 * 60) return 120
-    if (
-      effectiveLeaveType === '오후반차'   ||
-      effectiveLeaveType === '오전반반차' ||
-      effectiveLeaveType === '오후반반차'
-    ) return 30
-    if (effectiveLeaveType === '오전반차') {
-      if (co < parseTime('12:30')) return 0
-      if (co <= parseTime('13:30')) return 30
-      return 60
-    }
-    return 60
-  }
 
   if (dayType !== 'WEEKDAY') {
     if (clockIn && clockOut) {
@@ -524,11 +510,10 @@ export function processRecord(
   }
 
   const outMins         = parseTime(clockOut)
-  const breakMins       = computeBreakMins(effectiveInMins, outMins)
-  const lunchDeducted   = outMins > lunchEndMins && effectiveInMins < lunchStartMins
   const rawStayMins     = outMins - effectiveInMins
-  let elapsed = rawStayMins
-  if (lunchDeducted) elapsed -= (lunchEndMins - lunchStartMins)
+  const breakMins       = computeDisplayBreakMins(rawStayMins, effectiveInMins, outMins, effectiveLeaveType)
+  const lunchDeducted   = outMins > lunchEndMins && effectiveInMins < lunchStartMins
+  const elapsed         = Math.max(0, rawStayMins - breakMins)
 
   const leaveMinRequired: number | null =
     effectiveLeaveType === '오전반반차' ? 6 * 60 :
