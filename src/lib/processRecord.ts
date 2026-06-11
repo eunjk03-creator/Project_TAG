@@ -358,10 +358,24 @@ export function processRecord(
     if (isHalfDayNote && currentStatus === '조기퇴근') {
       const leaveTypeFromNote = normalizedNote!
       if (record.leaveType) {
-        return {
-          ...r,
-          verificationNote: [...cleanedNotes, `슬랙+ERP ${leaveTypeFromNote} 일치 확인 (조기퇴근)${dupSuffix}`],
-          finalStatus: computeFinalStatus(r),
+        if (record.leaveType === leaveTypeFromNote) {
+          // ERP와 Slack leaveType 일치
+          return {
+            ...r,
+            verificationNote: [...cleanedNotes, `슬랙+ERP ${leaveTypeFromNote} 일치 확인 (조기퇴근)${dupSuffix}`],
+            finalStatus: computeFinalStatus(r),
+          }
+        } else {
+          // ERP와 Slack leaveType 불일치 → Slack 기준으로 정정
+          const updated: ProcessedRecord = {
+            ...r,
+            leaveType: leaveTypeFromNote as typeof r.leaveType,
+            verificationNote: [
+              ...cleanedNotes,
+              `슬랙 ${leaveTypeFromNote} 확인 / ERP 방향 불일치(${record.leaveType}) → 슬랙 기준 정정 (조기퇴근)${dupSuffix}`,
+            ],
+          }
+          return { ...updated, finalStatus: computeFinalStatus(updated) }
         }
       }
       const slackMemo = `슬랙 휴가 공유 확인 / ERP 미신청 / ${leaveTypeFromNote}${dupSuffix}`
