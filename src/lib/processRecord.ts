@@ -354,6 +354,25 @@ export function processRecord(
       return { ...updated, finalStatus: computeFinalStatus(updated) }
     }
 
+    // 반차 Slack 확인됐지만 체류시간 부족으로 조기퇴근 플래그가 붙은 경우 — flag 유지
+    if (isHalfDayNote && currentStatus === '조기퇴근') {
+      const leaveTypeFromNote = normalizedNote!
+      if (record.leaveType) {
+        return {
+          ...r,
+          verificationNote: [...cleanedNotes, `슬랙+ERP ${leaveTypeFromNote} 일치 확인 (조기퇴근)${dupSuffix}`],
+          finalStatus: computeFinalStatus(r),
+        }
+      }
+      const slackMemo = `슬랙 휴가 공유 확인 / ERP 미신청 / ${leaveTypeFromNote}${dupSuffix}`
+      const updated: ProcessedRecord = {
+        ...r,
+        leaveType:        leaveTypeFromNote,
+        verificationNote: [...cleanedNotes, slackMemo],
+      }
+      return { ...updated, finalStatus: computeFinalStatus(updated) }
+    }
+
     void slackContext
     const isMorningNote = isHalfDayNote && !normalizedNote!.includes('오후')
     const clearable     = new Set(['NO_CLOCK_IN', 'NO_CLOCK_OUT', 'EARLY_DEPARTURE', 'ATTENDANCE_ANOMALY'])
