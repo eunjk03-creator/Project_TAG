@@ -27,6 +27,8 @@ const C = {
   violetFg: '4C1D95',
   totalBg:  'E2E8F0',
   totalFg:  '0F172A',
+  redBg:    'FEE2E2',
+  redFg:    '991B1B',
 }
 
 // ── Cell helpers ─────────────────────────────────────────────────────────────
@@ -46,14 +48,18 @@ function dCell(text: string, extra?: CellOpts): Cell {
 function dCellL(text: string, extra?: CellOpts): Cell {
   return { text, options: { align: 'left', valign: 'middle', color: C.gray700, ...extra } }
 }
-function dimCell(): Cell {
-  return { text: '—', options: { align: 'center', valign: 'middle', color: C.gray300 } }
+function dimCell(extra?: CellOpts): Cell {
+  return { text: '—', options: { align: 'center', valign: 'middle', color: C.gray300, ...extra } }
 }
 function totalCell(text: string, extra?: CellOpts): Cell {
   return { text, options: { bold: true, fill: { color: C.totalBg }, color: C.totalFg, align: 'center', valign: 'middle', ...extra } }
 }
 function totalCellL(text: string, extra?: CellOpts): Cell {
   return { text, options: { bold: true, fill: { color: C.totalBg }, color: C.totalFg, align: 'left', valign: 'middle', ...extra } }
+}
+// blank cell for template (writable input appearance)
+function blankCell(wide = false): Cell {
+  return { text: '', options: { align: wide ? 'left' : 'center', valign: 'middle', fill: { color: C.white } } }
 }
 
 // ── Data helpers ─────────────────────────────────────────────────────────────
@@ -93,6 +99,14 @@ const ANOMALY_COLS = [
   { key: 'total'    as const, label: '총합계',        bg: C.totalBg,  fg: C.totalFg  },
 ]
 
+// ── Layout constants ─────────────────────────────────────────────────────────
+const LEFT    = 0.4
+const W       = 12.53
+const TABLE_Y = 0.85
+const ROW_H   = 0.265
+const SEP     = 0.42    // gap between auto-table and template below it
+const TMPL_ROWS = 5     // blank rows in each template
+
 // ── Main export ──────────────────────────────────────────────────────────────
 
 export async function buildStatusSlidePptxBuffer(
@@ -105,13 +119,9 @@ export async function buildStatusSlidePptxBuffer(
   const pres = new PptxGenJS()
   pres.layout = 'LAYOUT_WIDE'  // 13.33" × 7.5"
 
-  const empMap     = new Map(employees.map(e => [e.id, e]))
-  const deptLabel  = dept ?? '전체'
+  const empMap      = new Map(employees.map(e => [e.id, e]))
+  const deptLabel   = dept ?? '전체'
   const periodLabel = `${shortDate(from)} ~ ${shortDate(to)}`
-
-  const W     = 12.53 // usable table width
-  const LEFT  = 0.4
-  const TABLE_Y = 0.85
 
   const borderOpts = { pt: 0.5, color: C.gray200 }
   const tableBase = {
@@ -120,37 +130,53 @@ export async function buildStatusSlidePptxBuffer(
     border: borderOpts,
     fontFace: 'Malgun Gothic',
     fontSize: 10,
-    rowH: 0.265,
+    rowH: ROW_H,
     valign: 'middle' as const,
   }
 
   // ── Helper: add a titled slide ────────────────────────────────────────────
-  function newSlide(title: string, sub?: string, note?: string) {
+  function newSlide(title: string, note?: string) {
     const s = pres.addSlide()
     s.background = { color: C.white }
-
-    // Top accent bar
     s.addShape('rect' as Parameters<typeof s.addShape>[0], {
       x: 0, y: 0, w: '100%', h: 0.06,
       fill: { color: C.gray900 },
       line: { color: C.gray900, pt: 0 },
     })
-
     s.addText(title, {
       x: LEFT, y: 0.12, w: 8, h: 0.48,
       fontSize: 17, bold: true, color: C.gray900, fontFace: 'Malgun Gothic',
     })
-    s.addText(`${deptLabel} · ${periodLabel}${sub ? '  ' + sub : ''}`, {
-      x: LEFT, y: 0.6, w: W, h: 0.2,
+    s.addText(`${deptLabel} · ${periodLabel}`, {
+      x: LEFT, y: 0.62, w: W, h: 0.18,
       fontSize: 9, color: C.gray400, fontFace: 'Malgun Gothic',
     })
     if (note) {
       s.addText(note, {
-        x: LEFT, y: 0.63, w: W, h: 0.18,
-        fontSize: 8, color: C.gray400, fontFace: 'Malgun Gothic', align: 'right',
+        x: LEFT, y: 0.62, w: W, h: 0.18,
+        fontSize: 8.5, color: C.gray400, fontFace: 'Malgun Gothic', align: 'right',
       })
     }
     return s
+  }
+
+  // ── Helper: add a sub-section label inside a slide ────────────────────────
+  function addSectionLabel(
+    s: ReturnType<typeof pres.addSlide>,
+    text: string,
+    y: number,
+    accentColor = C.gray700,
+  ) {
+    // colored left bar
+    s.addShape('rect' as Parameters<typeof s.addShape>[0], {
+      x: LEFT, y: y + 0.04, w: 0.04, h: 0.15,
+      fill: { color: accentColor },
+      line: { color: accentColor, pt: 0 },
+    })
+    s.addText(text, {
+      x: LEFT + 0.1, y, w: 6, h: 0.23,
+      fontSize: 10, bold: true, color: C.gray800, fontFace: 'Malgun Gothic',
+    })
   }
 
   // ── Slide 1: Cover ────────────────────────────────────────────────────────
@@ -168,8 +194,8 @@ export async function buildStatusSlidePptxBuffer(
   })
 
   // ── Slide 2: 휴일근무 현황 ────────────────────────────────────────────────
-  const holidayRecs = records.filter(r => r.finalStatus === '휴일근무')
   {
+    const holidayRecs = records.filter(r => r.finalStatus === '휴일근무')
     const dates = [...new Set(holidayRecs.map(r => r.date))].sort()
 
     type DivRow = { division: string; empIds: Set<string>; dateCounts: Record<string, number>; totalHours: number }
@@ -193,15 +219,19 @@ export async function buildStatusSlidePptxBuffer(
 
     const s = newSlide('휴일근무 현황')
 
+    // ── 메인 테이블 ─────────────────────────────────────────────────────────
+    let mainTableEndY = TABLE_Y + ROW_H  // minimum: just header
+
     if (rows.length === 0) {
       s.addText('휴일근무 기록이 없습니다', {
-        x: LEFT, y: TABLE_Y, w: W, h: 1,
-        fontSize: 12, color: C.gray400, align: 'center', fontFace: 'Malgun Gothic',
+        x: LEFT, y: TABLE_Y, w: W, h: 0.9,
+        fontSize: 11, color: C.gray400, align: 'center', fontFace: 'Malgun Gothic',
       })
+      mainTableEndY = TABLE_Y + 0.9
     } else {
       const divW  = 1.6
       const cntW  = 0.55
-      const sumW  = 0.75
+      const sumW  = 0.78
       const dateW = Math.max(0.38, Math.min(0.6, (W - divW - cntW - sumW - 2.2) / Math.max(dates.length, 1)))
       const nameW = Math.max(1.5, W - divW - cntW - sumW - dateW * dates.length)
       const colW  = [divW, cntW, ...dates.map(() => dateW), sumW, nameW]
@@ -233,12 +263,32 @@ export async function buildStatusSlidePptxBuffer(
         totalCellL(''),
       ]
 
-      s.addTable([header, ...dataRows, totalRow] as unknown as Parameters<typeof s.addTable>[0], {
-        ...tableBase,
-        y: TABLE_Y,
-        colW,
+      const tableRows = [header, ...dataRows, totalRow]
+      s.addTable(tableRows as unknown as Parameters<typeof s.addTable>[0], {
+        ...tableBase, y: TABLE_Y, colW,
       })
+      mainTableEndY = TABLE_Y + tableRows.length * ROW_H
     }
+
+    // ── 휴일근무 사유 템플릿 (수기 작성) ────────────────────────────────────
+    const reasonsY = mainTableEndY + SEP
+    addSectionLabel(s, '휴일근무 사유', reasonsY, C.amber)
+
+    const reasonColW = [2.2, W - 2.2]
+    const reasonHeader: Cell[] = [
+      hCellL('부서'),
+      hCellL('휴일근무 사유'),
+    ]
+    const reasonRows: Cell[][] = Array.from({ length: TMPL_ROWS }, () => [
+      blankCell(false),
+      blankCell(true),
+    ])
+
+    s.addTable([reasonHeader, ...reasonRows] as unknown as Parameters<typeof s.addTable>[0], {
+      ...tableBase,
+      y: reasonsY + 0.27,
+      colW: reasonColW,
+    })
   }
 
   // ── Slide 3: 부서별 이상치 현황 ──────────────────────────────────────────
@@ -259,13 +309,17 @@ export async function buildStatusSlidePptxBuffer(
       { late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 },
     )
 
-    const s = newSlide('부서별 이상치 현황', undefined, '이상치 합계 10건 이상 부서만 표시')
+    const s = newSlide('부서별 이상치 현황', '이상치 합계 10건 이상 부서만 표시')
+
+    // ── 메인 이상치 테이블 ─────────────────────────────────────────────────
+    let mainTableEndY = TABLE_Y + ROW_H
 
     if (divRows.length === 0) {
       s.addText('이상치 10건 이상 부서가 없습니다', {
-        x: LEFT, y: TABLE_Y, w: W, h: 1,
-        fontSize: 12, color: C.gray400, align: 'center', fontFace: 'Malgun Gothic',
+        x: LEFT, y: TABLE_Y, w: W, h: 0.9,
+        fontSize: 11, color: C.gray400, align: 'center', fontFace: 'Malgun Gothic',
       })
+      mainTableEndY = TABLE_Y + 0.9
     } else {
       const divW  = 2.1
       const anomW = (W - divW) / ANOMALY_COLS.length
@@ -289,12 +343,53 @@ export async function buildStatusSlidePptxBuffer(
         ...ANOMALY_COLS.map(({ key }) => totalCell(totals[key] ? String(totals[key]) : '—')),
       ]
 
-      s.addTable([header, ...dataRows, totalRow] as unknown as Parameters<typeof s.addTable>[0], {
-        ...tableBase,
-        y: TABLE_Y,
-        colW,
+      const tableRows = [header, ...dataRows, totalRow]
+      s.addTable(tableRows as unknown as Parameters<typeof s.addTable>[0], {
+        ...tableBase, y: TABLE_Y, colW,
       })
+      mainTableEndY = TABLE_Y + tableRows.length * ROW_H
     }
+
+    // ── 주 52시간 초과자 템플릿 ──────────────────────────────────────────────
+    const over52Y = mainTableEndY + SEP
+    addSectionLabel(s, '주 52시간 초과자', over52Y, C.redFg)
+
+    // 5열: 부서 | 미포함(인원) | 포함(인원) | 미포함(대상자) | 포함(대상자)
+    const col52Div  = 2.0
+    const col52Cnt  = 0.92
+    const col52Name = (W - col52Div - col52Cnt * 2) / 2   // ~4.35"
+    const colW52    = [col52Div, col52Cnt, col52Cnt, col52Name, col52Name]
+
+    // 그룹 헤더 (colspan 적용)
+    const header52_0: Cell[] = [
+      hCellL('구분'),
+      hCell('휴일근로 포함 여부', C.orangeBg, C.orangeFg, { colspan: 2 }),
+      hCell('대상자', C.skyBg, C.skyFg, { colspan: 2 }),
+    ]
+    // 서브 헤더
+    const header52_1: Cell[] = [
+      hCellL('부서'),
+      hCell('미포함', C.orangeBg, C.orangeFg),
+      hCell('포함',   C.orangeBg, C.orangeFg),
+      hCell('미포함', C.skyBg,   C.skyFg),
+      hCell('포함',   C.skyBg,   C.skyFg),
+    ]
+    const blankRows52: Cell[][] = Array.from({ length: TMPL_ROWS }, () => [
+      blankCell(false),
+      blankCell(false),
+      blankCell(false),
+      blankCell(true),
+      blankCell(true),
+    ])
+    const totalRow52: Cell[] = [
+      totalCellL('합계'),
+      totalCell(''), totalCell(''), totalCellL(''), totalCellL(''),
+    ]
+
+    s.addTable(
+      [header52_0, header52_1, ...blankRows52, totalRow52] as unknown as Parameters<typeof s.addTable>[0],
+      { ...tableBase, y: over52Y + 0.27, colW: colW52 },
+    )
   }
 
   // ── Slide 4+: 개인별 근태이상 (20명씩 분할) ──────────────────────────────
@@ -338,16 +433,16 @@ export async function buildStatusSlidePptxBuffer(
     ]
 
     for (let si = 0; si < numSlides; si++) {
-      const chunk     = empRows.slice(si * PER_SLIDE, (si + 1) * PER_SLIDE)
+      const chunk      = empRows.slice(si * PER_SLIDE, (si + 1) * PER_SLIDE)
       const slideTitle = numSlides > 1
         ? `개인별 근태이상 (${si + 1}/${numSlides})`
         : '개인별 근태이상'
-      const s = newSlide(slideTitle, undefined, '이상치 합계 3건 이상 대상자만 표시')
+      const s = newSlide(slideTitle, '이상치 합계 3건 이상 대상자만 표시')
 
       if (empRows.length === 0) {
         s.addText('이상치 3건 이상 대상자가 없습니다', {
-          x: LEFT, y: TABLE_Y, w: W, h: 1,
-          fontSize: 12, color: C.gray400, align: 'center', fontFace: 'Malgun Gothic',
+          x: LEFT, y: TABLE_Y, w: W, h: 0.9,
+          fontSize: 11, color: C.gray400, align: 'center', fontFace: 'Malgun Gothic',
         })
         continue
       }
@@ -373,10 +468,7 @@ export async function buildStatusSlidePptxBuffer(
       }
 
       s.addTable(tableRows as unknown as Parameters<typeof s.addTable>[0], {
-        ...tableBase,
-        y: TABLE_Y,
-        colW,
-        rowH: 0.25,
+        ...tableBase, y: TABLE_Y, colW, rowH: 0.25,
       })
     }
   }
