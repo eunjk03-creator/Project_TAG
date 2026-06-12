@@ -8,6 +8,7 @@ import { EmployeeCalendarGrid } from '@/components/admin/EmployeeCalendarGrid'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { useDateRange, DEFAULT_RANGE } from '@/context/DateRangeContext'
 import { exportXlsx } from '@/utils/exportCsv'
+import DeptReportButton from '@/components/admin/DeptReportButton'
 import { DailyDetailModal } from '@/components/admin/DailyDetailModal'
 import type { SavePayload } from '@/components/admin/DailyDetailModal'
 import { DateRangePicker } from '@/components/admin/DateRangePicker'
@@ -986,7 +987,7 @@ export default function AdminDashboard() {
         <DateRangePicker value={dateRange} onChange={setDateRange} />
 
         <div className="ml-auto flex items-center gap-3 shrink-0">
-
+          <DeptReportButton dateRange={dateRange} divisions={[...new Set(baseEmployees.map(e => e.division).filter(Boolean))]} />
         </div>
       </div>
 
