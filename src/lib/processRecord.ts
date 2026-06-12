@@ -217,67 +217,60 @@ export function processRecord(
     )
     const hasLeaveContext = !!r.leaveType
 
-    const actualOut = r.clockOut
-
     // 출근 시각을 [flexStart, flexEnd] 범위로 클램핑
-    // - 08:00~09:00 사이: 실제 출근 시각 그대로
-    // - 09:00 이후(직출 복귀 태그 등): 09:00으로 freeze
-    // - 출근 기록 없음: 09:00 기본값
-    const rawInRaw    = r.effectiveClockIn ?? r.clockIn ?? null
-    const effInMins   = rawInRaw
+    const rawInRaw  = r.effectiveClockIn ?? r.clockIn ?? null
+    const effInMins = rawInRaw
       ? Math.min(Math.max(parseTime(rawInRaw), flexStartMins), flexEndMins)
       : flexEndMins
 
-    if (!actualOut) {
-      const fixedOutMins = parseTime('18:00')
-      const rawStay      = fixedOutMins - effInMins
-      const brk          = computeDisplayBreakMins(rawStay, effInMins, fixedOutMins, effectiveLeaveType)
-      const net          = Math.max(0, rawStay - brk)
-      const lunchDed     = fixedOutMins > lunchEndMins && effInMins < lunchStartMins
-      return {
-        ...r,
-        clockIn:          r.clockIn ?? null,
-        clockOut:         '18:00',
-        effectiveClockIn: fmtMins(effInMins),
-        regularHours:     net / 60,
-        overtimeHours:    0,
-        nightHours:       0,
-        breakMinutes:     brk,
-        lunchDeducted:    lunchDed,
-        dinnerDeducted:   false,
-        flag:             hasLeaveContext ? r.flag : null,
-        finalStatus:      '외근',
-        verificationNote: [...cleanedNotes, `✅ 슬랙 외근 공유 확인: ${memoCtx}${dupSuffix}`],
-      }
-    }
+    // 퇴근 시각: 외근이면 18:00까지 근무한 것으로 간주
+    // - 퇴근 없음 or 퇴근 < 18:00 → 18:00 고정
+    // - 퇴근 ≥ 18:00 (야근) → 실제 퇴근 사용
+    const stdEndMins     = parseTime('18:00')
+    const actualOutMins  = r.clockOut ? parseTime(r.clockOut) : null
+    const effOutMins     = (actualOutMins !== null && actualOutMins > stdEndMins)
+      ? actualOutMins
+      : stdEndMins
+    const effOutStr      = fmtMins(effOutMins)
 
-    const actualOutMins  = parseTime(actualOut)
-    const rawStay        = actualOutMins - effInMins
-    const brk            = computeDisplayBreakMins(rawStay, effInMins, actualOutMins, effectiveLeaveType)
+    const rawStay        = effOutMins - effInMins
+    const brk            = computeDisplayBreakMins(rawStay, effInMins, effOutMins, effectiveLeaveType)
     const net            = Math.max(0, rawStay - brk)
+    const lunchDed       = effOutMins > lunchEndMins && effInMins < lunchStartMins
+
+    // 체류시간 기반 플래그(근무시간 미달·조기퇴근)는 외근 보정 후 재평가
+    // 지각 플래그는 출근 태도 문제이므로 유지
+    const preservedFlag = hasLeaveContext ? r.flag : null
+    const newFlag: SieveFlag =
+      preservedFlag === 'ATTENDANCE_ANOMALY'       ? null   :
+      preservedFlag === 'EARLY_DEPARTURE'          ? null   :
+      preservedFlag === 'LATE_AND_ANOMALY'         ? 'LATE' :
+      preservedFlag === 'LATE_AND_EARLY_DEPARTURE' ? 'LATE' :
+      preservedFlag
+
     const lunchDuration  = lunchEndMins - lunchStartMins
-    const stdOutMins     = effInMins + effectiveStdH * 60 + lunchDuration
-    const dinnerEndMins_ = stdOutMins + policy.dinnerGraceMinutes
-    const rawOtMins      = Math.max(0, actualOutMins - dinnerEndMins_)
+    const offsiteStdOut  = effInMins + effectiveStdH * 60 + (lunchDed ? lunchDuration : 0)
+    const dinnerEndMins_ = offsiteStdOut + policy.dinnerGraceMinutes
+    const rawOtMins      = Math.max(0, effOutMins - dinnerEndMins_)
     const otMins         = Math.floor(rawOtMins / policy.otUnitMinutes) * policy.otUnitMinutes
     const overtimeHours  = otMins / 60
-    const dinnerDeducted = actualOutMins > stdOutMins
+    const dinnerDeducted = effOutMins > offsiteStdOut
     const nightWorkStart = Math.max(effInMins, nightStartMins)
-    const nightWorkEnd   = Math.min(actualOutMins, nightEndMins)
+    const nightWorkEnd   = Math.min(effOutMins, nightEndMins)
     const nightHours     = Math.max(0, nightWorkEnd - nightWorkStart) / 60
-    const lunchDed       = actualOutMins > lunchEndMins && effInMins < lunchStartMins
 
     return {
       ...r,
+      clockOut:         effOutStr,
       effectiveClockIn: fmtMins(effInMins),
       regularHours:     Math.min(net, effectiveStdH * 60) / 60,
-      breakMinutes:     brk,
-      lunchDeducted:    lunchDed,
-      flag:             hasLeaveContext ? r.flag : null,
       overtimeHours,
       ...(rawOtMins > 0 && { rawOvertimeMinutes: rawOtMins }),
       nightHours,
+      breakMinutes:     brk,
+      lunchDeducted:    lunchDed,
       dinnerDeducted,
+      flag:             newFlag,
       finalStatus:      '외근',
       verificationNote: [...cleanedNotes, `✅ 슬랙 외근 공유 확인: ${memoCtx}${dupSuffix}`],
     }
