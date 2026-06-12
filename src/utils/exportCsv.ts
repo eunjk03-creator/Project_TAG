@@ -355,11 +355,92 @@ export function exportXlsx(
     { wch: 8  },
   ]
 
+  // ── Sheet 3: 이상치 (개인별 이상치 유형 집계) ──────────────────────────
+
+  const ANOMALY_HEADERS = [
+    '사번', '이름', '본부',
+    '지각', '조기퇴근', '근무시간 미달', '미태깅', '혼합', '총합계',
+  ]
+
+  type AnomalyKey = '지각' | '조기퇴근' | '근무시간 미달' | '미태깅' | '혼합'
+
+  function classifyAnomalyFlag(flag: string | null): AnomalyKey | null {
+    switch (flag) {
+      case 'LATE':                     return '지각'
+      case 'EARLY_DEPARTURE':          return '조기퇴근'
+      case 'ATTENDANCE_ANOMALY':       return '근무시간 미달'
+      case 'NO_CLOCK_IN':
+      case 'NO_CLOCK_OUT':             return '미태깅'
+      case 'LATE_AND_EARLY_DEPARTURE':
+      case 'LATE_AND_ANOMALY':         return '혼합'
+      default:                         return null
+    }
+  }
+
+  const anomalyDataRows: (string | number | null)[][] = []
+  const anomalyTotals: Record<AnomalyKey, number> = {
+    '지각': 0, '조기퇴근': 0, '근무시간 미달': 0, '미태깅': 0, '혼합': 0,
+  }
+
+  for (const empId of empOrder) {
+    const emp  = empMap.get(empId)
+    const recs = recsByEmp.get(empId)!
+    const counts: Record<AnomalyKey, number> = {
+      '지각': 0, '조기퇴근': 0, '근무시간 미달': 0, '미태깅': 0, '혼합': 0,
+    }
+    for (const r of recs) {
+      if (r.dayType !== 'WEEKDAY') continue
+      const cat = classifyAnomalyFlag(r.flag)
+      if (cat) counts[cat]++
+    }
+    const total = Object.values(counts).reduce((s, v) => s + v, 0)
+    if (total === 0) continue   // 이상치 없는 직원 제외
+
+    for (const k of Object.keys(anomalyTotals) as AnomalyKey[]) {
+      anomalyTotals[k] += counts[k]
+    }
+
+    anomalyDataRows.push([
+      emp?.rawId ?? empId.split('_')[0],
+      emp?.name  ?? empId,
+      emp?.division ?? '',
+      counts['지각']          || null,
+      counts['조기퇴근']      || null,
+      counts['근무시간 미달'] || null,
+      counts['미태깅']        || null,
+      counts['혼합']          || null,
+      total,
+    ])
+  }
+
+  // 합계 행
+  const grandTotal = Object.values(anomalyTotals).reduce((s, v) => s + v, 0)
+  const anomalyTotalRow: (string | number | null)[] = [
+    null, '합계', null,
+    anomalyTotals['지각']          || null,
+    anomalyTotals['조기퇴근']      || null,
+    anomalyTotals['근무시간 미달'] || null,
+    anomalyTotals['미태깅']        || null,
+    anomalyTotals['혼합']          || null,
+    grandTotal || null,
+  ]
+
+  const wsAnomaly = XLSX.utils.aoa_to_sheet([
+    ANOMALY_HEADERS,
+    ...anomalyDataRows,
+    anomalyTotalRow,
+  ])
+  wsAnomaly['!cols'] = [
+    { wch: 12 }, { wch: 10 }, { wch: 14 },
+    { wch: 8  }, { wch: 10 }, { wch: 14 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
+  ]
+
   // ── Build and download workbook ───────────────────────────────────────
 
   const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, wsDetail, '근태결과')
-  XLSX.utils.book_append_sheet(wb, wsSum,    '요약')
+  XLSX.utils.book_append_sheet(wb, wsDetail,  '근태결과')
+  XLSX.utils.book_append_sheet(wb, wsSum,     '요약')
+  XLSX.utils.book_append_sheet(wb, wsAnomaly, '이상치')
 
   const buf  = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
