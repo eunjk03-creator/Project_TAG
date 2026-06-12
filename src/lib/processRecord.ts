@@ -219,18 +219,31 @@ export function processRecord(
 
     const actualOut = r.clockOut
 
+    // 출근 시각을 [flexStart, flexEnd] 범위로 클램핑
+    // - 08:00~09:00 사이: 실제 출근 시각 그대로
+    // - 09:00 이후(직출 복귀 태그 등): 09:00으로 freeze
+    // - 출근 기록 없음: 09:00 기본값
+    const rawInRaw    = r.effectiveClockIn ?? r.clockIn ?? null
+    const effInMins   = rawInRaw
+      ? Math.min(Math.max(parseTime(rawInRaw), flexStartMins), flexEndMins)
+      : flexEndMins
+
     if (!actualOut) {
-      const rawIn = r.effectiveClockIn ?? r.clockIn ?? '09:00'
+      const fixedOutMins = parseTime('18:00')
+      const rawStay      = fixedOutMins - effInMins
+      const brk          = computeDisplayBreakMins(rawStay, effInMins, fixedOutMins, effectiveLeaveType)
+      const net          = Math.max(0, rawStay - brk)
+      const lunchDed     = fixedOutMins > lunchEndMins && effInMins < lunchStartMins
       return {
         ...r,
-        clockIn:          r.clockIn ?? '09:00',
+        clockIn:          r.clockIn ?? null,
         clockOut:         '18:00',
-        effectiveClockIn: fmtMins(Math.max(parseTime(rawIn), flexStartMins)),
-        regularHours:     effectiveStdH,
+        effectiveClockIn: fmtMins(effInMins),
+        regularHours:     net / 60,
         overtimeHours:    0,
         nightHours:       0,
-        breakMinutes:     60,
-        lunchDeducted:    true,
+        breakMinutes:     brk,
+        lunchDeducted:    lunchDed,
         dinnerDeducted:   false,
         flag:             hasLeaveContext ? r.flag : null,
         finalStatus:      '외근',
@@ -238,23 +251,28 @@ export function processRecord(
       }
     }
 
-    const rawFrozenMins = r.effectiveClockIn ? parseTime(r.effectiveClockIn) : (r.clockIn ? parseTime(r.clockIn) : flexStartMins)
-    const frozenInMins  = Math.max(rawFrozenMins, flexStartMins)
-    const actualOutMins = parseTime(actualOut)
-    const lunchDuration = lunchEndMins - lunchStartMins
-    const stdOutMins    = frozenInMins + effectiveStdH * 60 + lunchDuration
+    const actualOutMins  = parseTime(actualOut)
+    const rawStay        = actualOutMins - effInMins
+    const brk            = computeDisplayBreakMins(rawStay, effInMins, actualOutMins, effectiveLeaveType)
+    const net            = Math.max(0, rawStay - brk)
+    const lunchDuration  = lunchEndMins - lunchStartMins
+    const stdOutMins     = effInMins + effectiveStdH * 60 + lunchDuration
     const dinnerEndMins_ = stdOutMins + policy.dinnerGraceMinutes
-    const rawOtMins     = Math.max(0, actualOutMins - dinnerEndMins_)
-    const otMins        = Math.floor(rawOtMins / policy.otUnitMinutes) * policy.otUnitMinutes
-    const overtimeHours = otMins / 60
+    const rawOtMins      = Math.max(0, actualOutMins - dinnerEndMins_)
+    const otMins         = Math.floor(rawOtMins / policy.otUnitMinutes) * policy.otUnitMinutes
+    const overtimeHours  = otMins / 60
     const dinnerDeducted = actualOutMins > stdOutMins
-    const nightWorkStart = Math.max(frozenInMins, nightStartMins)
+    const nightWorkStart = Math.max(effInMins, nightStartMins)
     const nightWorkEnd   = Math.min(actualOutMins, nightEndMins)
     const nightHours     = Math.max(0, nightWorkEnd - nightWorkStart) / 60
+    const lunchDed       = actualOutMins > lunchEndMins && effInMins < lunchStartMins
 
     return {
       ...r,
-      effectiveClockIn: fmtMins(frozenInMins),
+      effectiveClockIn: fmtMins(effInMins),
+      regularHours:     Math.min(net, effectiveStdH * 60) / 60,
+      breakMinutes:     brk,
+      lunchDeducted:    lunchDed,
       flag:             hasLeaveContext ? r.flag : null,
       overtimeHours,
       ...(rawOtMins > 0 && { rawOvertimeMinutes: rawOtMins }),
