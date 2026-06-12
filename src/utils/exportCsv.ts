@@ -1,5 +1,5 @@
 import Papa from 'papaparse'
-import * as XLSX from 'xlsx'
+import * as XLSX from 'xlsx-js-style'
 import type { ProcessedRecord, Employee } from '@/types/tag'
 import {
   computeWorkA, parseTimeToMins, computeDisplayBreakMins,
@@ -68,6 +68,51 @@ export function exportCsv(
 }
 
 // ── Excel helpers ──────────────────────────────────────────────────────────
+
+// ── Excel style helpers (xlsx-js-style) ───────────────────────────────────
+
+const BORDER_THIN = {
+  top:    { style: 'thin', color: { rgb: 'E0E0E0' } },
+  bottom: { style: 'thin', color: { rgb: 'E0E0E0' } },
+  left:   { style: 'thin', color: { rgb: 'E0E0E0' } },
+  right:  { style: 'thin', color: { rgb: 'E0E0E0' } },
+}
+
+/** Set style on a cell, creating a blank cell if it doesn't exist yet. */
+function cs(ws: XLSX.WorkSheet, r: number, c: number, s: object) {
+  const ref = XLSX.utils.encode_cell({ r, c })
+  if (!ws[ref]) ws[ref] = { v: null, t: 'z' }
+  ws[ref].s = { border: BORDER_THIN, ...s }
+}
+
+/** Apply header-row style (row 0) across `cols` columns. */
+function styleHeader(ws: XLSX.WorkSheet, cols: number, fillRgb: string) {
+  for (let c = 0; c < cols; c++) {
+    cs(ws, 0, c, {
+      font:      { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 },
+      fill:      { patternType: 'solid', fgColor: { rgb: fillRgb } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+    })
+  }
+}
+
+/** Style a data/total block: alternating rows, optional per-cell overrides. */
+function styleBlock(
+  ws:       XLSX.WorkSheet,
+  startRow: number,
+  rowCount: number,
+  cols:     number,
+  getStyle: (r: number, c: number, val: unknown) => object,
+) {
+  for (let r = startRow; r < startRow + rowCount; r++) {
+    for (let c = 0; c < cols; c++) {
+      const ref = XLSX.utils.encode_cell({ r, c })
+      const val = ws[ref]?.v ?? null
+      if (!ws[ref]) ws[ref] = { v: null, t: 'z' }
+      cs(ws, r, c, getStyle(r, c, val))
+    }
+  }
+}
 
 /**
  * Convert YYYY-MM-DD string → Excel 1900 date serial (integer).
@@ -292,6 +337,15 @@ export function exportXlsx(
 
   wsDetail['!cols'] = activeCols.map(c => ({ wch: c.wch }))
 
+  // 근태결과 헤더 스타일 (네이비)
+  styleHeader(wsDetail, activeCols.length, '1F3864')
+  // 데이터 행: 홀짝 줄무늬
+  styleBlock(wsDetail, 1, sorted.length, activeCols.length, (r, _c, _v) => ({
+    fill:      { patternType: 'solid', fgColor: { rgb: r % 2 === 0 ? 'F5F8FF' : 'FFFFFF' } },
+    font:      { sz: 9, color: { rgb: '333333' } },
+    alignment: { vertical: 'center' },
+  }))
+
   // ── Sheet 2: 요약 ──────────────────────────────────────────────────────
 
   const SUM_HEADERS = [
@@ -354,6 +408,15 @@ export function exportXlsx(
     { wch: 10 }, { wch: 14 }, { wch: 18 },
     { wch: 8  },
   ]
+
+  // 요약 헤더 스타일 (다크그레이)
+  styleHeader(wsSum, SUM_HEADERS.length, '404040')
+  // 데이터 행
+  styleBlock(wsSum, 1, summaryRows.length, SUM_HEADERS.length, (r, c, v) => ({
+    fill:      { patternType: 'solid', fgColor: { rgb: r % 2 === 0 ? 'F7F7F7' : 'FFFFFF' } },
+    font:      { sz: 9, color: { rgb: c >= 3 && v ? '1F3864' : '333333' } },
+    alignment: { horizontal: c >= 3 ? 'center' : 'left', vertical: 'center' },
+  }))
 
   // ── Sheet 3: 이상치 (개인별 이상치 유형 집계) ──────────────────────────
 
@@ -434,6 +497,22 @@ export function exportXlsx(
     { wch: 12 }, { wch: 10 }, { wch: 14 },
     { wch: 8  }, { wch: 10 }, { wch: 14 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
   ]
+
+  // 이상치 헤더 스타일 (레드)
+  styleHeader(wsAnomaly, ANOMALY_HEADERS.length, 'C00000')
+  // 데이터 행: 수치 컬럼 빨간색 강조
+  styleBlock(wsAnomaly, 1, anomalyDataRows.length, ANOMALY_HEADERS.length, (r, c, v) => ({
+    fill:      { patternType: 'solid', fgColor: { rgb: r % 2 === 0 ? 'FFF5F5' : 'FFFFFF' } },
+    font:      { sz: 9, bold: c === 8 && !!v, color: { rgb: c >= 3 && v ? 'C00000' : '333333' } },
+    alignment: { horizontal: c >= 3 ? 'center' : 'left', vertical: 'center' },
+  }))
+  // 합계 행
+  const anomalyTotalRowIdx = anomalyDataRows.length + 1
+  styleBlock(wsAnomaly, anomalyTotalRowIdx, 1, ANOMALY_HEADERS.length, (_r, c, v) => ({
+    fill:      { patternType: 'solid', fgColor: { rgb: 'FFE0E0' } },
+    font:      { sz: 9, bold: true, color: { rgb: c >= 3 && v ? 'C00000' : '333333' } },
+    alignment: { horizontal: c >= 3 ? 'center' : 'left', vertical: 'center' },
+  }))
 
   // ── Build and download workbook ───────────────────────────────────────
 
