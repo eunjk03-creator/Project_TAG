@@ -749,6 +749,7 @@ export function AttendanceResultTable({
     getPaginationRowModel:    getPaginationRowModel(),
     getFacetedRowModel:       getFacetedRowModel(),
     getFacetedUniqueValues:   getFacetedUniqueValues(),
+    autoResetPageIndex:       false,
     columnResizeMode:         'onChange',
     enableColumnResizing:     true,
   })
