@@ -14,7 +14,7 @@ import { EMPLOYEES } from '@/data/orgChart'
 import {
   parseTimeToMins,
   computeWorkA, computeBreakH, computeDisplayBreakMins,
-  computeGasPayOtMins, computeGasNightMins, computeLeaderOtMins,
+  computeGasPayOtMins, computeGasNightMins,
 } from '@/utils/attendanceCalc'
 
 // ── Row shape ─────────────────────────────────────────────────────────────
@@ -495,12 +495,11 @@ export function AttendanceResultTable({
       if (r.overtimeHours > 0) normalTags.push('연장근로')
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
       // Zone 2 — GAS formula payroll metrics (leave-last)
-      // 직책자: 체류-threshold, 절삭없음 / 비직책자: 30분 절삭 적용
+      // 그리드는 참고용 — 직책자 포함 동일 공식으로 연장/야간 표시 (수당 지급 여부는 AllowanceTab 별도)
       const systemOtH      = Math.max(0, finalWorkH - 8.0)
       const rawWorkAMins   = Math.round(computeWorkA(r.clockIn, r.clockOut) * 60)
-      const gasPayOtMins   = r.isLeader
-        ? computeLeaderOtMins(rawWorkAMins, leaveAmt, displayStatus)
-        : computeGasPayOtMins(gasWorkAMins, leaveAmt, displayStatus)
+      void rawWorkAMins
+      const gasPayOtMins   = computeGasPayOtMins(gasWorkAMins, leaveAmt, displayStatus)
       const gasNightMins   = computeGasNightMins(r.clockOut)
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60
