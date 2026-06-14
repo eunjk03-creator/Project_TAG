@@ -225,12 +225,14 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
 
   type AnomalyCounts = { late: number; early: number; shortage: number; notag: number; mixed: number; total: number }
 
-  function flagToCategory(flag: string): keyof Omit<AnomalyCounts, 'total'> {
-    if (flag === 'LATE')               return 'late'
-    if (flag === 'EARLY_DEPARTURE')    return 'early'
-    if (flag === 'ATTENDANCE_ANOMALY') return 'shortage'
-    if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') return 'notag'
-    return 'mixed'
+  function flagToCategories(flag: string): Array<keyof Omit<AnomalyCounts, 'total'>> {
+    if (flag === 'LATE')                     return ['late']
+    if (flag === 'EARLY_DEPARTURE')          return ['early']
+    if (flag === 'LATE_AND_EARLY_DEPARTURE') return ['late', 'early']
+    if (flag === 'ATTENDANCE_ANOMALY')       return ['shortage']
+    if (flag === 'LATE_AND_ANOMALY')         return ['late', 'shortage']
+    if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') return ['notag']
+    return ['mixed']
   }
 
   const divAnomalyData = useMemo(() => {
@@ -242,7 +244,7 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
       const div = empMap.get(r.employeeId)?.division ?? '—'
       if (!divMap.has(div)) divMap.set(div, { division: div, late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 })
       const row = divMap.get(div)!
-      row[flagToCategory(r.flag)]++
+      for (const cat of flagToCategories(r.flag)) row[cat]++
       row.total++
     }
 
@@ -267,7 +269,7 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
       const name = emp?.name ?? r.employeeId
       if (!empMap2.has(r.employeeId)) empMap2.set(r.employeeId, { division: div, name, late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 })
       const row = empMap2.get(r.employeeId)!
-      row[flagToCategory(r.flag)]++
+      for (const cat of flagToCategories(r.flag)) row[cat]++
       row.total++
     }
 
