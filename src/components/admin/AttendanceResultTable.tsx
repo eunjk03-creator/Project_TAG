@@ -495,15 +495,11 @@ export function AttendanceResultTable({
       if (r.overtimeHours > 0) normalTags.push('연장근로')
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
       // Zone 2 — GAS formula payroll metrics (leave-last)
-      // 직책자: processRecord의 r.overtimeHours 사용 (dinnerEndMins 기준 실제 초과, 수당 지급 여부는 AllowanceTab 별도)
-      // 비직책자: GAS 공식 (체류 − 10h, 30분 절삭)
+      // 직책자 포함 동일 공식: 체류 − 10h(출근+8h+점심1h+저녁1h), 30분 절삭
+      // 수당 지급 여부는 AllowanceTab에서 별도 처리
       const systemOtH      = Math.max(0, finalWorkH - 8.0)
-      const gasPayOtMins   = r.isLeader
-        ? Math.round((r.overtimeHours ?? 0) * 60)
-        : computeGasPayOtMins(gasWorkAMins, leaveAmt, displayStatus)
-      const gasNightMins   = r.isLeader
-        ? Math.round((r.nightHours ?? 0) * 60)
-        : computeGasNightMins(r.clockOut)
+      const gasPayOtMins   = computeGasPayOtMins(gasWorkAMins, leaveAmt, displayStatus)
+      const gasNightMins   = computeGasNightMins(r.clockOut)
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60
       const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
