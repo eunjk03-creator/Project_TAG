@@ -187,7 +187,7 @@ export interface PayrollMetrics {
  *
  * Col 14 thresholds (elapsed = clockOut − effectiveClockIn):
  *   반반차  → 8 h  (6 h work + 1 h lunch + 1 h dinner)
- *   반차    → 5 h  (4 h work + 1 h break)
+ *   반차    → 6 h  (4 h work + 1 h lunch + 1 h dinner)
  *   default → 10 h (8 h work + 1 h lunch + 1 h dinner)
  *
  * 30-min floor: Math.floor(value / 0.5) * 0.5
@@ -208,7 +208,7 @@ export function computePayrollMetrics(p: {
     const elapsed = computeWorkA(effectiveClockIn, clockOut)
     const threshold: number =
       (leaveType === '오전반반차' || leaveType === '오후반반차') ? 8.0 :
-      (leaveType === '오전반차'   || leaveType === '오후반차')   ? 5.0 :
+      (leaveType === '오전반차'   || leaveType === '오후반차')   ? 6.0 :
       10.0
     const rawOT = Math.max(0, elapsed - threshold)
     payrollOtH = Math.floor(rawOT / 0.5) * 0.5
@@ -300,7 +300,7 @@ export function computeDisplayBreakMins(
 }
 
 export function computeGasOtThreshMins(leaveDays: number): number {
-  if (leaveDays >= 0.5) return 300   // 반차: 5h (엑셀 기준)
+  if (leaveDays >= 0.5) return 360   // 반차: 6h (4h 실근무 + 점심 1h + 저녁 1h)
   if (leaveDays >= 0.25) return 480  // 반반차: 8h
   return 600                          // 기본: 10h
 }
@@ -314,7 +314,7 @@ export function computeGasNightMins(clockOut: string | null | undefined): number
 
 // Returns payroll-eligible OT minutes (Col 16) using the GAS leave-last formula.
 // OOO rows are forced to 0 regardless of workAMins.
-// Allowance: leaveDays>=0.5 → 300 min, >=0.25 → 480 min, else → 600 min.
+// Allowance: leaveDays>=0.5 → 360 min, >=0.25 → 480 min, else → 600 min.
 // Result is floored to the nearest 30-min unit.
 export function computeGasPayOtMins(
   workAMins:  number,
@@ -322,7 +322,7 @@ export function computeGasPayOtMins(
   status:     string | null | undefined,
 ): number {
   if (status?.includes('외근')) return 0
-  const allowance = leaveDays >= 0.5 ? 300 : leaveDays >= 0.25 ? 480 : 600
+  const allowance = leaveDays >= 0.5 ? 360 : leaveDays >= 0.25 ? 480 : 600
   return Math.max(0, Math.floor((workAMins - allowance) / 30) * 30)
 }
 
@@ -333,6 +333,6 @@ export function computeLeaderOtMins(
   status:       string | null | undefined,
 ): number {
   if (status?.includes('외근')) return 0
-  const allowance = leaveDays >= 0.5 ? 300 : leaveDays >= 0.25 ? 480 : 600
+  const allowance = leaveDays >= 0.5 ? 360 : leaveDays >= 0.25 ? 480 : 600
   return Math.max(0, rawWorkAMins - allowance)
 }
