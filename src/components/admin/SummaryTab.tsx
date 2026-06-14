@@ -81,7 +81,6 @@ const ANOMALY_COL = {
   early:    { hBg: 'bg-orange-50', hTxt: 'text-orange-900', vTxt: 'text-orange-700' },
   shortage: { hBg: 'bg-sky-50',    hTxt: 'text-sky-900',    vTxt: 'text-sky-700'    },
   notag:    { hBg: 'bg-rose-50',   hTxt: 'text-rose-900',   vTxt: 'text-rose-700'   },
-  mixed:    { hBg: 'bg-violet-50', hTxt: 'text-violet-900', vTxt: 'text-violet-600' },
   total:    { hBg: 'bg-slate-200', hTxt: 'text-slate-900',  vTxt: 'text-slate-900'  },
 }
 
@@ -223,7 +222,7 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
 
   // ── 섹션3: 부서별 이상치 ─────────────────────────────────────────────────
 
-  type AnomalyCounts = { late: number; early: number; shortage: number; notag: number; mixed: number; total: number }
+  type AnomalyCounts = { late: number; early: number; shortage: number; notag: number; total: number }
 
   function flagToCategories(flag: string): Array<keyof Omit<AnomalyCounts, 'total'>> {
     if (flag === 'LATE')                     return ['late']
@@ -232,7 +231,7 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
     if (flag === 'ATTENDANCE_ANOMALY')       return ['shortage']
     if (flag === 'LATE_AND_ANOMALY')         return ['late', 'shortage']
     if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') return ['notag']
-    return ['mixed']
+    return []
   }
 
   const divAnomalyData = useMemo(() => {
@@ -242,7 +241,7 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
     for (const r of scopedRecords) {
       if (!r.flag) continue
       const div = empMap.get(r.employeeId)?.division ?? '—'
-      if (!divMap.has(div)) divMap.set(div, { division: div, late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 })
+      if (!divMap.has(div)) divMap.set(div, { division: div, late: 0, early: 0, shortage: 0, notag: 0, total: 0 })
       const row = divMap.get(div)!
       for (const cat of flagToCategories(r.flag)) row[cat]++
       row.total++
@@ -250,8 +249,8 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
 
     const rows = divSort([...divMap.values()]).filter(r => r.total >= 10)
     const totals = rows.reduce<AnomalyCounts>(
-      (s, r) => ({ late: s.late + r.late, early: s.early + r.early, shortage: s.shortage + r.shortage, notag: s.notag + r.notag, mixed: s.mixed + r.mixed, total: s.total + r.total }),
-      { late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 },
+      (s, r) => ({ late: s.late + r.late, early: s.early + r.early, shortage: s.shortage + r.shortage, notag: s.notag + r.notag, total: s.total + r.total }),
+      { late: 0, early: 0, shortage: 0, notag: 0, total: 0 },
     )
     return { rows, totals }
   }, [scopedRecords, empMap])
@@ -267,7 +266,7 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
       const emp  = empMap.get(r.employeeId)
       const div  = emp?.division ?? '—'
       const name = emp?.name ?? r.employeeId
-      if (!empMap2.has(r.employeeId)) empMap2.set(r.employeeId, { division: div, name, late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 })
+      if (!empMap2.has(r.employeeId)) empMap2.set(r.employeeId, { division: div, name, late: 0, early: 0, shortage: 0, notag: 0, total: 0 })
       const row = empMap2.get(r.employeeId)!
       for (const cat of flagToCategories(r.flag)) row[cat]++
       row.total++
@@ -282,8 +281,8 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
         }),
     )
     const totals = rows.reduce<AnomalyCounts>(
-      (s, r) => ({ late: s.late + r.late, early: s.early + r.early, shortage: s.shortage + r.shortage, notag: s.notag + r.notag, mixed: s.mixed + r.mixed, total: s.total + r.total }),
-      { late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 },
+      (s, r) => ({ late: s.late + r.late, early: s.early + r.early, shortage: s.shortage + r.shortage, notag: s.notag + r.notag, total: s.total + r.total }),
+      { late: 0, early: 0, shortage: 0, notag: 0, total: 0 },
     )
     return { rows, totals }
   }, [scopedRecords, empMap])
@@ -301,7 +300,6 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
     { key: 'early'    as const, label: '조기퇴근'     },
     { key: 'shortage' as const, label: '근무시간 미달' },
     { key: 'notag'    as const, label: '미태깅'       },
-    { key: 'mixed'    as const, label: '혼합'         },
     { key: 'total'    as const, label: '총합계'       },
   ]
 
