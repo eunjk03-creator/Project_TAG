@@ -3,7 +3,7 @@ import { useMemo } from 'react'
 import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
 import { HOLIDAYS } from '@/data/mockData'
 import {
-  computeWorkA, computeWorkB, computeBreakH, computeFinalWork,
+  computeWorkA, computeDisplayBreakMins, parseTimeToMins,
 } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
@@ -90,9 +90,13 @@ function recordHours(r: ProcessedRecord): { totalH: number; otH: number } {
   if (r.dayType !== 'WEEKDAY') return { totalH: 0, otH: 0 }
   const leaveAmt   = r.erpLeaveAmount ?? 0
   const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
-  const workB      = computeWorkB(workA, leaveAmt, r.isUnpaidLeave ?? false)
-  const breakH_    = computeBreakH(workB)
-  const finalWorkH = computeFinalWork(workB, breakH_)
+  const wAMins     = Math.round(workA * 60)
+  const effIn      = r.effectiveClockIn ?? r.clockIn
+  const ci         = effIn      ? parseTimeToMins(effIn)      : null
+  const co         = r.clockOut ? parseTimeToMins(r.clockOut) : null
+  const breakMins  = computeDisplayBreakMins(wAMins, ci, co)
+  const leaveCredit = (r.isUnpaidLeave ? 0 : leaveAmt) * 8
+  const finalWorkH = Math.max(0, wAMins - breakMins) / 60 + leaveCredit
   return { totalH: finalWorkH, otH: Math.max(0, finalWorkH - 8.0) }
 }
 

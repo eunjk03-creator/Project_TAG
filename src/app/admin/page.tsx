@@ -21,7 +21,8 @@ import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
 import { SummaryTab }            from '@/components/admin/SummaryTab'
 import { AllowanceTab }          from '@/components/admin/AllowanceTab'
 import {
-  computeWorkA, computeWorkB, computeBreakH, computeFinalWork, computeStatusN,
+  computeWorkA, computeStatusN,
+  computeDisplayBreakMins, parseTimeToMins,
 } from '@/utils/attendanceCalc'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
@@ -523,9 +524,13 @@ export default function AdminDashboard() {
       const rawId      = emp?.rawId ?? r.employeeId.split('_')[0]
       const leaveAmt   = r.erpLeaveAmount ?? 0
       const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
-      const workB      = computeWorkB(workA, leaveAmt, r.isUnpaidLeave ?? false)
-      const breakH_    = computeBreakH(workB)
-      const finalWorkH = computeFinalWork(workB, breakH_)
+      const wAMins     = Math.round(workA * 60)
+      const effIn      = r.effectiveClockIn ?? r.clockIn
+      const ci         = effIn      ? parseTimeToMins(effIn)      : null
+      const co         = r.clockOut ? parseTimeToMins(r.clockOut) : null
+      const breakMins  = computeDisplayBreakMins(wAMins, ci, co)
+      const leaveCredit = (r.isUnpaidLeave ? 0 : leaveAmt) * 8
+      const finalWorkH = Math.max(0, wAMins - breakMins) / 60 + leaveCredit
       const ds: string | null =
         r.finalStatus === '외근'     ? '외근'     :
         r.finalStatus === '휴일근무' ? '휴일근무' :
@@ -546,9 +551,13 @@ export default function AdminDashboard() {
       if (r.dayType !== 'WEEKDAY') continue
       const leaveAmt   = r.erpLeaveAmount ?? 0
       const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
-      const workB      = computeWorkB(workA, leaveAmt, r.isUnpaidLeave ?? false)
-      const breakH_    = computeBreakH(workB)
-      const finalWorkH = computeFinalWork(workB, breakH_)
+      const wAMins     = Math.round(workA * 60)
+      const effIn      = r.effectiveClockIn ?? r.clockIn
+      const ci         = effIn      ? parseTimeToMins(effIn)      : null
+      const co         = r.clockOut ? parseTimeToMins(r.clockOut) : null
+      const breakMins  = computeDisplayBreakMins(wAMins, ci, co)
+      const leaveCredit = (r.isUnpaidLeave ? 0 : leaveAmt) * 8
+      const finalWorkH = Math.max(0, wAMins - breakMins) / 60 + leaveCredit
       totalH += finalWorkH
       otH    += Math.max(0, finalWorkH - 8.0)
     }
