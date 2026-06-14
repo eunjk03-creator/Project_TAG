@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import type { ProcessedRecord, Employee } from '@/types/tag'
 import { DIVISION_ORDER } from '@/data/orgChart'
-import { computeWorkA, computeWorkB, computeBreakH, computeFinalWork, computeLeaderOtMins } from '@/utils/attendanceCalc'
+import { computeWorkA, computeDisplayBreakMins, computeLeaderOtMins, parseTimeToMins } from '@/utils/attendanceCalc'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -178,8 +178,13 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
       const a = empAgg.get(r.employeeId)!
       if (r.dayType === 'WEEKDAY') {
         const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
-        const workB      = computeWorkB(workA, r.erpLeaveAmount ?? 0, r.isUnpaidLeave ?? false)
-        const finalWorkH = computeFinalWork(workB, computeBreakH(workB))
+        const wAMins     = Math.round(workA * 60)
+        const effIn      = r.effectiveClockIn ?? r.clockIn
+        const ci         = effIn      ? parseTimeToMins(effIn)      : null
+        const co         = r.clockOut ? parseTimeToMins(r.clockOut) : null
+        const breakMins  = computeDisplayBreakMins(wAMins, ci, co, r.leaveType)
+        const leaveCredit = (r.isUnpaidLeave ? 0 : (r.erpLeaveAmount ?? 0)) * 8
+        const finalWorkH = Math.max(0, wAMins - breakMins) / 60 + leaveCredit
         const baseWork   = Math.min(finalWorkH, 8)
         if (r.isLeader) {
           const rawWA = Math.round(workA * 60)

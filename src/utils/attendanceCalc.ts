@@ -274,9 +274,12 @@ const GAS_LUNCH_END   = 810  // 13:30
  *
  * Bracket (근무A 구간):
  *   < 4h  → 0분
- *   4–8h  → 30분  (특이사항: 오전반차+출근<12:30 또는 오후반차+퇴근>13:30 → 60분)
+ *   4–8h  → 30분 (단, 점심 12:30~13:30을 60분 완전히 걸치면 60분)
  *   8–12h → 60분
  *   ≥12h  → 120분
+ *
+ * GAS와 동일한 방식: 법정 bracket과 실제 점심 겹침 중 큰 값 사용.
+ * leaveType 파라미터는 API 호환성 유지용 (내부에서 미사용).
  */
 export function computeDisplayBreakMins(
   workAMins:    number | null,
@@ -288,12 +291,13 @@ export function computeDisplayBreakMins(
   if (workAMins >= 720) return 120          // 12h 이상
   if (workAMins >= 480) return 60           // 8h 이상 ~ 12h 미만
   if (workAMins >= 240) {                   // 4h 이상 ~ 8h 미만 → 기본 30분
-    // 오전반차/오전반반차: 출근 < 12:30 → 점심 전 출근이므로 60분
-    if ((leaveType === '오전반차' || leaveType === '오전반반차') &&
-        clockInMins !== null && clockInMins < GAS_LUNCH_START) return 60
-    // 오후반차/오후반반차: 퇴근 > 13:30 → 점심 지나서까지 근무이므로 60분
-    if ((leaveType === '오후반차' || leaveType === '오후반반차') &&
-        clockOutMins !== null && clockOutMins > GAS_LUNCH_END) return 60
+    // 점심시간(12:30~13:30) 60분을 완전히 걸쳤으면 60분
+    if (clockInMins !== null && clockOutMins !== null) {
+      const lunchOverlap = Math.max(0,
+        Math.min(clockOutMins, GAS_LUNCH_END) - Math.max(clockInMins, GAS_LUNCH_START)
+      )
+      if (lunchOverlap >= 60) return 60
+    }
     return 30
   }
   return 0                                  // 4h 미만
