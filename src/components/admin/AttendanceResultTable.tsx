@@ -14,7 +14,7 @@ import { EMPLOYEES } from '@/data/orgChart'
 import {
   parseTimeToMins,
   computeWorkA, computeBreakH, computeDisplayBreakMins,
-  computeGasPayOtMins, computeGasNightMins,
+  computeGasPayOtMins, computeGasNightMins, computeLeaderOtMins,
 } from '@/utils/attendanceCalc'
 
 // ── Row shape ─────────────────────────────────────────────────────────────
@@ -498,7 +498,9 @@ export function AttendanceResultTable({
       // 직책자 포함 동일 공식: 체류 − 10h(출근+8h+점심1h+저녁1h), 30분 절삭
       // 수당 지급 여부는 AllowanceTab에서 별도 처리
       const systemOtH      = Math.max(0, finalWorkH - 8.0)
-      const gasPayOtMins   = computeGasPayOtMins(gasWorkAMins, leaveAmt, displayStatus)
+      const gasPayOtMins   = r.isLeader
+        ? computeLeaderOtMins(gasWorkAMins, leaveAmt, displayStatus)   // 출근+10h 초과, 절삭 없음
+        : computeGasPayOtMins(gasWorkAMins, leaveAmt, displayStatus)   // 출근+10h 초과, 30분 절삭
       const gasNightMins   = computeGasNightMins(r.clockOut)
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60
