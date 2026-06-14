@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import type { ProcessedRecord, Employee } from '@/types/tag'
 import { DIVISION_ORDER } from '@/data/orgChart'
-import { computeWorkA, computeWorkB, computeBreakH, computeFinalWork } from '@/utils/attendanceCalc'
+import { computeWorkA, computeWorkB, computeBreakH, computeFinalWork, computeLeaderOtMins } from '@/utils/attendanceCalc'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -180,7 +180,16 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
         const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
         const workB      = computeWorkB(workA, r.erpLeaveAmount ?? 0, r.isUnpaidLeave ?? false)
         const finalWorkH = computeFinalWork(workB, computeBreakH(workB))
-        a.baseH += finalWorkH
+        const baseWork   = Math.min(finalWorkH, 8)
+        if (r.isLeader) {
+          const rawWA = Math.round(workA * 60)
+          const otH   = computeLeaderOtMins(rawWA, r.erpLeaveAmount ?? 0, r.finalStatus) / 60
+          a.baseH += baseWork + otH
+        } else if (r.erpOtApplied) {
+          a.baseH += baseWork + r.overtimeHours
+        } else {
+          a.baseH += baseWork
+        }
       } else {
         a.holidayH += r.holidayHours
       }
