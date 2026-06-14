@@ -101,7 +101,6 @@ export default function FastDashboard() {
   const DEFAULT_FIXED_A  = new Set(['E25122301'])
   const DEFAULT_FIXED_B  = new Set(['E26030501','E24011001'])
   const DEFAULT_PREGNANT = new Set(['E25060901','E22080101','E25060902'])
-  const DEFAULT_TEN_AM   = new Set(['E25081103','E25120104','E26010511','E25021702','E25011501','E22121901','E25110301'])
 
   const { finalAttrMap, remappedExcludeIds } = useMemo(() => {
     const normName = (s: string) => s.trim().replace(/\s+/g, '')
@@ -119,7 +118,6 @@ export default function FastDashboard() {
       else if (DEFAULT_FIXED_A.has(rawId))         result.set(emp.id, { isFixedScheduleA: true })
       else if (DEFAULT_FIXED_B.has(rawId))         result.set(emp.id, { isFixedScheduleB: true })
       else if (DEFAULT_PREGNANT.has(rawId))        result.set(emp.id, { isPregnantReduced: true })
-      else if (DEFAULT_TEN_AM.has(rawId))          result.set(emp.id, { isTenAMStarter: true })
     }
     for (const [staleId, attrs] of employeeAttrMap) {
       const liveId = toLive.get(staleId) ?? staleId

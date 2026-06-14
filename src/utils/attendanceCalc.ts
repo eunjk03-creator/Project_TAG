@@ -73,44 +73,36 @@ export type DisplayStatus =
   | '정상' | '지각' | '조기퇴근' | '지각+조기퇴근'
   | '미태깅' | '이상치' | '외근' | '휴일근무'
 
-/**
- * Employee rawIds whose standard start time is 10:00.
- * These IDs are checked against emp.rawId (not the composite employeeId).
- */
-export const LATE_10AM_IDS = new Set([
-  'E25081103', 'E25120104', 'E26010511',
-  'E25021702', 'E25011501', 'E22121901', 'E25110301',
-])
 
 /**
  * Lateness and early-departure thresholds by leave type.
  *
  * Late threshold (clock-in must be ≤ this time):
- *   오전반반차  → 11:00   오전반차  → 14:00
- *   10AM group  → 10:00   default   → 09:00
- *   (leave-type rules take priority over the employee exception list)
+ *   오전반반차   → 11:00   오전반차  → 14:00
+ *   isTenAMStarter → 10:00   default   → 09:00
+ *   (leave-type rules take priority over the employee exception flag)
  *
- * Early-departure threshold (duration-based, except 오후반차):
- *   오전반차    → workA ≥ 4.0h   오전반반차 → workA ≥ 7.0h
- *   오후반반차  → workA ≥ 7.0h   오후반차   → clockOut ≥ 12:30 (time-based)
+ * Early-departure threshold (duration-based):
+ *   오전반차    → workA ≥ 4.5h   오전반반차 → workA ≥ 6.0h
+ *   오후반반차  → workA ≥ 6.0h   오후반차   → workA ≥ 4.5h
  *   default     → workA ≥ 9.0h
  *
  * Severity: > 30 min short → 이상치; ≤ 30 min → 조기퇴근.
  * Catch-all: finalWorkH < 8.0 with NO leave and NO explicit flags → 이상치.
  *
- * @param finalWorkH  Pre-computed value from computeFinalWork() (Step 2).
- * @param rawId       Employee raw ID (emp.rawId) for the 10AM group check.
+ * @param finalWorkH     Pre-computed value from computeFinalWork() (Step 2).
+ * @param isTenAMStarter True when the employee's standard start time is 10:00.
  */
 export function computeStatusN(p: {
-  dayType:        DayType
-  clockIn:        string | null | undefined
-  clockOut:       string | null | undefined
-  leaveType:      ErpLeaveType | null | undefined
-  erpLeaveAmount: number | undefined
-  finalWorkH:     number
-  rawId:          string
+  dayType:         DayType
+  clockIn:         string | null | undefined
+  clockOut:        string | null | undefined
+  leaveType:       ErpLeaveType | null | undefined
+  erpLeaveAmount:  number | undefined
+  finalWorkH:      number
+  isTenAMStarter?: boolean
 }): Exclude<DisplayStatus, '외근' | '휴일근무'> | null {
-  const { dayType, clockIn, clockOut, leaveType, erpLeaveAmount, finalWorkH, rawId } = p
+  const { dayType, clockIn, clockOut, leaveType, erpLeaveAmount, finalWorkH, isTenAMStarter } = p
 
   // Non-working days: caller handles 주말/공휴일/휴일근무 display
   if (dayType !== 'WEEKDAY') return null
@@ -128,7 +120,7 @@ export function computeStatusN(p: {
   const lateThreshold: string =
     leaveType === '오전반차'   ? '14:00' :
     leaveType === '오전반반차' ? '11:00' :
-    LATE_10AM_IDS.has(rawId)  ? '10:00' :
+    isTenAMStarter             ? '10:00' :
     '09:00'
 
   const isLate = parseTimeToMins(clockIn) > parseTimeToMins(lateThreshold)

@@ -285,11 +285,6 @@ export default function AdminDashboard() {
   const DEFAULT_FIXED_A  = new Set(['E25122301'])
   const DEFAULT_FIXED_B  = new Set(['E26030501','E24011001'])
   const DEFAULT_PREGNANT = new Set(['E25060901','E22080101','E25060902'])
-  // Late grace extended to 10:00 — "지각" only triggers after 10:00 for these employees
-  const DEFAULT_TEN_AM_STARTERS = new Set([
-    'E25081103','E25120104','E26010511','E25021702',
-    'E25011501','E22121901','E25110301',
-  ])
 
   // Remap exception-rule keys from stale/mock IDs to current live composite keys.
   // Rules added before a CSV upload store mock IDs (e.g. "E1111111"); this bridges
@@ -320,7 +315,6 @@ export default function AdminDashboard() {
       else if (DEFAULT_FIXED_A.has(rawId))         def = { isFixedScheduleA: true }
       else if (DEFAULT_FIXED_B.has(rawId))         def = { isFixedScheduleB: true }
       else if (DEFAULT_PREGNANT.has(rawId))        def = { isPregnantReduced: true }
-      else if (DEFAULT_TEN_AM_STARTERS.has(rawId)) def = { isTenAMStarter: true }
       if (def) remappedAttr.set(emp.id, def)
     }
 
@@ -538,7 +532,7 @@ export default function AdminDashboard() {
         computeStatusN({
           dayType: r.dayType, clockIn: r.clockIn, clockOut: r.clockOut,
           leaveType: r.leaveType ?? null, erpLeaveAmount: r.erpLeaveAmount,
-          finalWorkH, rawId,
+          finalWorkH, isTenAMStarter: finalAttrMap.get(r.employeeId)?.isTenAMStarter ?? false,
         })
       m.set(`${r.employeeId}_${r.date}`, ds)
     }

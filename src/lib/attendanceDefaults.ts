@@ -7,10 +7,6 @@ export const DEFAULT_GLOBAL_EXCLUSIONS = new Set([
 export const DEFAULT_FIXED_A  = new Set(['E25122301'])
 export const DEFAULT_FIXED_B  = new Set(['E26030501','E24011001'])
 export const DEFAULT_PREGNANT = new Set(['E25060901','E22080101','E25060902'])
-export const DEFAULT_TEN_AM_STARTERS = new Set([
-  'E25081103','E25120104','E26010511','E25021702',
-  'E25011501','E22121901','E25110301',
-])
 
 /** Maps ExceptionRule.ruleType → EmployeeAttributeOverrides fields (server-side replication of context logic). */
 export function buildAttrMapFromRules(
@@ -125,7 +121,6 @@ export function buildFinalAttrMap(
     else if (DEFAULT_FIXED_A.has(rawId))         def = { isFixedScheduleA: true }
     else if (DEFAULT_FIXED_B.has(rawId))         def = { isFixedScheduleB: true }
     else if (DEFAULT_PREGNANT.has(rawId))        def = { isPregnantReduced: true }
-    else if (DEFAULT_TEN_AM_STARTERS.has(rawId)) def = { isTenAMStarter: true }
     if (def) result.set(emp.id, def)
   }
 
