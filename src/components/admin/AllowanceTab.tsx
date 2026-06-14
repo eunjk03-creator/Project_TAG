@@ -201,9 +201,13 @@ function exportAllowanceExcel(
       ? nc(rate, rowBg ? { ...D.rate, fill: fill(rowBg) } : D.rate, '#,##0')
       : sc('',   rowBg ? { ...D.empty, fill: fill(rowBg) } : D.empty)
 
-    ws[`E${R}`] = fc(`${L_OTPAY}${R}+${L_HOLPAY}${R}`, D.totalPay)
+    ws[`E${R}`] = row.isLeader
+      ? fc(`${L_HOLPAY}${R}`,              D.totalPay)   // 직책자: 휴일수당만
+      : fc(`${L_OTPAY}${R}+${L_HOLPAY}${R}`, D.totalPay)
     ws[`F${R}`] = nc(round2(totalOt + totalHoliday),     D_totalH,  '0.00')
-    ws[`G${R}`] = fc(`${L_OTTOT}${R}*D${R}`,            D.otPay)
+    ws[`G${R}`] = row.isLeader
+      ? nc(0, D.otPay, '0.00')                           // 직책자: 연장수당 없음
+      : fc(`${L_OTTOT}${R}*D${R}`, D.otPay)
     ws[`${L_OTTOT}${R}`]  = nc(round2(totalOt),      D.otHTot, '0.00')
     months.forEach((mm, i) => {
       ws[`${colLetter(C_OTTOT + 1 + i)}${R}`] = nc(round2(otByMonth[mm] ?? 0), D.otHMon, '0.00')
@@ -390,7 +394,7 @@ export function AllowanceTab() {
           }
         }
         if (r.dayType !== 'WEEKDAY') {
-          holidayByMonth[mm] += isLeader ? r.holidayHours : floorTo30(r.holidayHours)
+          holidayByMonth[mm] += floorTo30(r.holidayHours)
         }
         if (r.flag === 'LATE' || r.flag === 'LATE_AND_EARLY_DEPARTURE' || r.flag === 'LATE_AND_ANOMALY') {
           lateByMonth[mm] += 1
@@ -825,7 +829,7 @@ export function AllowanceTab() {
             ) : pagedRows.map(row => {
               const { emp, otByMonth, holidayByMonth, lateByMonth, totalOt, totalHoliday, totalLate, isLeader } = row
               const rate             = parseFloat(hourlyRates[emp.id] ?? '0') || 0
-              const otAllowance      = rate > 0 ? totalOt      * rate : 0
+              const otAllowance      = (!isLeader && rate > 0) ? totalOt * rate : 0
               const holidayAllowance = rate > 0 ? totalHoliday * rate : 0
               const totalAllowance   = otAllowance + holidayAllowance
               const isSelected       = selectedIds.has(emp.id)
@@ -944,7 +948,7 @@ export function AllowanceTab() {
       <p className="text-[11px] text-gray-400">
         * 통상시급은 페이지 새로고침 시 초기화됩니다.
         수당 = 시간 × 통상시급. Excel 다운로드 시 수당 열에 <code>=시간*통상시급</code> 수식이 포함됩니다.
-        직책자(직책 뱃지)는 rawOvertimeMinutes 기준(절사 없음)으로 연장근로 집계.
+        직책자(직책 뱃지)는 연장근로 절사 없음·수당 미산출, 휴일근로는 30분 절사 후 수당 산출.
         부문/전사 평균은 각 직원의 실제 재직 월 수 기준 산출 (입사월 포함, 미재직 월 분모 제외).
       </p>
     </div>
