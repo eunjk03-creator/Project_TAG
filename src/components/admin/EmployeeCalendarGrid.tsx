@@ -270,12 +270,9 @@ const empStats = useMemo(() => {
       const flooredWork = floorTo30(finalWorkH)
 
       if (r.dayType === 'WEEKDAY') {
-        exactOt      += Math.max(0, finalWorkH - 8.0)
-        if (r.isLeader) {                                           // 직책자: OT 면제 → 실근무 - 8h 전체 표시
-          roundedOt  += Math.max(0, finalWorkH - 8.0)
-        } else {                                                    // 비직책자: ERP 상신자만, 30분 절삭
-          roundedOt  += r.erpOtApplied ? r.overtimeHours : 0
-        }
+        const dailyOt = Math.max(0, finalWorkH - 8.0)
+        exactOt   += dailyOt
+        roundedOt += dailyOt  // 그리드 체크용 — 직책자/비직책자 구분 없이 실근무 초과분 표시
         exactTotal   += finalWorkH
         roundedTotal += flooredWork
       } else if (r.finalStatus === '휴일근무') {
