@@ -18,8 +18,6 @@ type SlotState =
   | { phase: 'ready';  name: string; rowCount: number }
   | { phase: 'error';  name: string; msg: string }
 
-type UploadMode = 'replace' | 'append'
-
 type ApplyResult =
   | { ok: true;  empCount: number; recCount: number; skipped: number; added?: number; updated?: number }
   | { ok: false; msg: string }
@@ -297,30 +295,38 @@ function SlackPanel() {
 }
 
 const MAX_CAPS = 5
+const MAX_ERP  = 5
 
 // ── Main export ───────────────────────────────────────────────────────────
 export function CsvUploader() {
-  const { setRawData, mergeRawData, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, isProcessing } = useAttendanceSource()
+  const { mergeRawData, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, isProcessing } = useAttendanceSource()
 
   // CAPS: 복수 파일 지원 (최대 MAX_CAPS)
   const capsDataRefs = useRef<(Record<string, string>[] | null)[]>([null])
-  const erpDataRef   = useRef<Record<string, string>[] | null>(null)
+  const erpDataRefs  = useRef<(Record<string, string>[] | null)[]>([null])
 
-  const [capsSlots,   setCapsSlots]   = useState<SlotState[]>([{ phase: 'idle' }])
-  const [erpSlot,     setErpSlot]     = useState<SlotState>({ phase: 'idle' })
-  const [result,      setResult]      = useState<ApplyResult | null>(null)
-  const [expanded,    setExpanded]    = useState(false)
-  const [isSaving,    setIsSaving]    = useState(false)
-  const [uploadMode,  setUploadMode]  = useState<UploadMode>('replace')
+  const [capsSlots, setCapsSlots] = useState<SlotState[]>([{ phase: 'idle' }])
+  const [erpSlots,  setErpSlots]  = useState<SlotState[]>([{ phase: 'idle' }])
+  const [result,    setResult]    = useState<ApplyResult | null>(null)
+  const [expanded,  setExpanded]  = useState(false)
+  const [isSaving,  setIsSaving]  = useState(false)
 
   function setCapsSlot(idx: number, s: SlotState) {
     setCapsSlots(prev => prev.map((v, i) => i === idx ? s : v))
+  }
+  function setErpSlot(idx: number, s: SlotState) {
+    setErpSlots(prev => prev.map((v, i) => i === idx ? s : v))
   }
 
   function addCapsSlot() {
     if (capsSlots.length >= MAX_CAPS) return
     capsDataRefs.current = [...capsDataRefs.current, null]
     setCapsSlots(prev => [...prev, { phase: 'idle' }])
+  }
+  function addErpSlot() {
+    if (erpSlots.length >= MAX_ERP) return
+    erpDataRefs.current = [...erpDataRefs.current, null]
+    setErpSlots(prev => [...prev, { phase: 'idle' }])
   }
 
   function removeCapsSlot(idx: number) {
@@ -329,29 +335,28 @@ export function CsvUploader() {
     setCapsSlots(prev => prev.filter((_, i) => i !== idx))
     setResult(null)
   }
+  function removeErpSlot(idx: number) {
+    if (erpSlots.length <= 1) return
+    erpDataRefs.current = erpDataRefs.current.filter((_, i) => i !== idx)
+    setErpSlots(prev => prev.filter((_, i) => i !== idx))
+    setResult(null)
+  }
 
   // ── Merge + push to context (async: saves to DB) ─────────────────────
   async function applyAll() {
     const allCaps = capsDataRefs.current.filter(Boolean) as Record<string, string>[][]
-    const erpData = erpDataRef.current
-    if (allCaps.length === 0 || !erpData) return
+    const allErp  = erpDataRefs.current.filter(Boolean)  as Record<string, string>[][]
+    if (allCaps.length === 0 || allErp.length === 0) return
 
     const mergedCaps = allCaps.flat()
+    const mergedErp  = allErp.flat()
     setIsSaving(true)
     try {
-      if (uploadMode === 'append') {
-        const { employees: emps, rawRecords: recs, skippedCount, addedCount, updatedCount } = await mergeRawData(
-          mergedCaps as unknown as CapsRow[],
-          erpData    as unknown as ErpUnifiedRow[],
-        )
-        setResult({ ok: true, empCount: emps.length, recCount: recs.length, skipped: skippedCount, added: addedCount, updated: updatedCount })
-      } else {
-        const { employees: emps, rawRecords: recs, skippedCount } = await setRawData(
-          mergedCaps as unknown as CapsRow[],
-          erpData    as unknown as ErpUnifiedRow[],
-        )
-        setResult({ ok: true, empCount: emps.length, recCount: recs.length, skipped: skippedCount })
-      }
+      const { employees: emps, rawRecords: recs, skippedCount, addedCount, updatedCount } = await mergeRawData(
+        mergedCaps as unknown as CapsRow[],
+        mergedErp  as unknown as ErpUnifiedRow[],
+      )
+      setResult({ ok: true, empCount: emps.length, recCount: recs.length, skipped: skippedCount, added: addedCount, updated: updatedCount })
       setExpanded(false)
     } catch (e) {
       setResult({ ok: false, msg: (e as Error).message })
@@ -382,23 +387,23 @@ export function CsvUploader() {
   }
 
   // ── ERP 파일 처리 ─────────────────────────────────────────────────────
-  async function processErpFile(file: File) {
-    setErpSlot({ phase: 'parsing' })
+  async function processErpFile(file: File, idx: number) {
+    setErpSlot(idx, { phase: 'parsing' })
     setResult(null)
-    erpDataRef.current = null
+    erpDataRefs.current[idx] = null
 
     try {
       const rows    = await readRows(file)
       const missing = missingCols(rows, ERP_REQUIRED)
       if (missing.length > 0) {
-        setErpSlot({ phase: 'error', name: file.name, msg: `누락 컬럼: ${missing.join(' · ')}` })
+        setErpSlot(idx, { phase: 'error', name: file.name, msg: `누락 컬럼: ${missing.join(' · ')}` })
         return
       }
-      erpDataRef.current = rows
-      setErpSlot({ phase: 'ready', name: file.name, rowCount: rows.length })
+      erpDataRefs.current[idx] = rows
+      setErpSlot(idx, { phase: 'ready', name: file.name, rowCount: rows.length })
       applyAll()
     } catch (e) {
-      setErpSlot({ phase: 'error', name: file.name, msg: (e as Error).message })
+      setErpSlot(idx, { phase: 'error', name: file.name, msg: (e as Error).message })
     }
   }
 
@@ -406,9 +411,9 @@ export function CsvUploader() {
   async function handleClear() {
     await clearLiveData()
     capsDataRefs.current = [null]
-    erpDataRef.current   = null
+    erpDataRefs.current  = [null]
     setCapsSlots([{ phase: 'idle' }])
-    setErpSlot({ phase: 'idle' })
+    setErpSlots([{ phase: 'idle' }])
     setResult(null)
     setExpanded(true)
   }
@@ -465,10 +470,7 @@ export function CsvUploader() {
         )}
         {!isSaving && result?.ok && !dbSaveError && (
           <span className="text-[11px] text-emerald-600 font-medium whitespace-nowrap">
-            {result.added !== undefined
-              ? `✓ 추가 ${result.added}건 · 업데이트 ${result.updated}건 (총 ${result.recCount.toLocaleString()}건)`
-              : `✓ 저장 완료${result.skipped > 0 ? ` (${result.skipped}건 스킵)` : ''}`
-            }
+            ✓ 추가 {result.added ?? 0}건 · 업데이트 {result.updated ?? 0}건 (총 {result.recCount.toLocaleString()}건)
           </span>
         )}
         {!isSaving && result?.ok && dbSaveError && (
@@ -497,21 +499,6 @@ export function CsvUploader() {
               목업으로 초기화
             </button>
           )}
-          {/* 업로드 모드 토글 */}
-          <div className="flex items-center rounded-md border border-gray-200 overflow-hidden text-[10px] font-semibold">
-            <button
-              onClick={() => setUploadMode('replace')}
-              className={`px-2 py-1 transition-colors ${uploadMode === 'replace' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-600'}`}
-            >
-              전체 교체
-            </button>
-            <button
-              onClick={() => setUploadMode('append')}
-              className={`px-2 py-1 transition-colors ${uploadMode === 'append' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-600'}`}
-            >
-              추가 업로드
-            </button>
-          </div>
           <button
             onClick={() => setExpanded(v => !v)}
             className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 transition-colors font-medium"
@@ -574,18 +561,45 @@ export function CsvUploader() {
               </div>
             </div>
 
-            {/* ERP 통합 (Leave + OT) */}
+            {/* ERP 통합 (Leave + OT) — 복수 파일 지원 */}
             <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">
-                ERP 근태신청
-                <span className="ml-1.5 normal-case font-normal text-gray-300">.xlsx · .csv</span>
-              </p>
-              <DropZone
-                label="연차 · 반차 · 연장근로 통합"
-                hint={`필수: ${ERP_REQUIRED.join(' · ')}`}
-                slot={erpSlot}
-                onFile={f => processErpFile(f)}
-              />
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                  ERP 근태신청
+                  <span className="ml-1.5 normal-case font-normal text-gray-300">.xlsx · .csv</span>
+                </p>
+                {erpSlots.length < MAX_ERP && (
+                  <button
+                    onClick={addErpSlot}
+                    className="text-[10px] font-semibold text-blue-500 hover:text-blue-700 transition-colors flex items-center gap-0.5"
+                  >
+                    <span>+</span> 파일 추가
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                {erpSlots.map((slot, idx) => (
+                  <div key={idx} className="flex items-start gap-1">
+                    <div className="flex-1">
+                      <DropZone
+                        label={erpSlots.length > 1 ? `파일 ${idx + 1}` : '연차 · 반차 · 연장근로 통합'}
+                        hint={`필수: ${ERP_REQUIRED.join(' · ')}`}
+                        slot={slot}
+                        onFile={f => processErpFile(f, idx)}
+                      />
+                    </div>
+                    {erpSlots.length > 1 && (
+                      <button
+                        onClick={() => removeErpSlot(idx)}
+                        className="mt-1 text-gray-300 hover:text-red-400 transition-colors text-lg leading-none shrink-0"
+                        title="제거"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Slack Integration Panel */}
@@ -602,13 +616,13 @@ export function CsvUploader() {
           </div>
 
           {/* Instruction footer */}
-          {(capsSlots.every(s => s.phase === 'idle') || erpSlot.phase === 'idle') && (
+          {(capsSlots.every(s => s.phase === 'idle') || erpSlots.every(s => s.phase === 'idle')) && (
             <p className="mt-3 text-[10px] text-gray-400 text-center">
-              CAPS RAW + ERP 근태신청 필수 · CAPS는 여러 파일 합산 가능 · Slack은 선택
+              CAPS RAW + ERP 근태신청 필수 · 여러 파일 추가 가능 · Slack은 선택
             </p>
           )}
-          {(capsSlots.some(s => s.phase === 'ready') || erpSlot.phase === 'ready') &&
-           !(capsSlots.some(s => s.phase === 'ready') && erpSlot.phase === 'ready') && (
+          {(capsSlots.some(s => s.phase === 'ready') || erpSlots.some(s => s.phase === 'ready')) &&
+           !(capsSlots.some(s => s.phase === 'ready') && erpSlots.some(s => s.phase === 'ready')) && (
             <p className="mt-3 text-[10px] text-blue-500 text-center font-medium">
               나머지 파일을 업로드하면 자동 적용됩니다
             </p>
