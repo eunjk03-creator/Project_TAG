@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import type { ProcessedRecord, Employee } from '@/types/tag'
 import { DIVISION_ORDER } from '@/data/orgChart'
-import { computeWorkA, computeDisplayBreakMins, computeLeaderOtMins, parseTimeToMins } from '@/utils/attendanceCalc'
+import { computeWorkA, computeDisplayBreakMins, parseTimeToMins } from '@/utils/attendanceCalc'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -177,24 +177,13 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
       if (!empAgg.has(r.employeeId)) empAgg.set(r.employeeId, { baseH: 0, holidayH: 0 })
       const a = empAgg.get(r.employeeId)!
       if (r.dayType === 'WEEKDAY') {
-        const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
-        const wAMins     = Math.round(workA * 60)
+        const wAMins     = Math.round(computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut) * 60)
         const effIn      = r.effectiveClockIn ?? r.clockIn
         const ci         = effIn      ? parseTimeToMins(effIn)      : null
         const co         = r.clockOut ? parseTimeToMins(r.clockOut) : null
         const breakMins  = computeDisplayBreakMins(wAMins, ci, co, r.leaveType)
         const leaveCredit = (r.isUnpaidLeave ? 0 : (r.erpLeaveAmount ?? 0)) * 8
-        const finalWorkH = Math.max(0, wAMins - breakMins) / 60 + leaveCredit
-        const baseWork   = Math.min(finalWorkH, 8)
-        if (r.isLeader) {
-          const rawWA = Math.round(workA * 60)
-          const otH   = computeLeaderOtMins(rawWA, r.erpLeaveAmount ?? 0, r.finalStatus) / 60
-          a.baseH += baseWork + otH
-        } else if (r.erpOtApplied) {
-          a.baseH += baseWork + r.overtimeHours
-        } else {
-          a.baseH += baseWork
-        }
+        a.baseH += Math.max(0, wAMins - breakMins) / 60 + leaveCredit
       } else {
         a.holidayH += r.holidayHours
       }

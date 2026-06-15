@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
-import { computeWorkA, computeDisplayBreakMins, parseTimeToMins, computeLeaderOtMins } from '@/utils/attendanceCalc'
+import { computeWorkA, computeDisplayBreakMins, parseTimeToMins } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
@@ -271,9 +271,8 @@ const empStats = useMemo(() => {
 
       if (r.dayType === 'WEEKDAY') {
         exactOt      += Math.max(0, finalWorkH - 8.0)
-        if (r.isLeader) {                                           // 직책자: 체류-10h 기준, 절삭없음
-          const rawWA = Math.round(computeWorkA(r.clockIn, r.clockOut) * 60)
-          roundedOt  += computeLeaderOtMins(rawWA, leaveAmt, r.finalStatus) / 60
+        if (r.isLeader) {                                           // 직책자: OT 면제 → 실근무 - 8h 전체 표시
+          roundedOt  += Math.max(0, finalWorkH - 8.0)
         } else {                                                    // 비직책자: ERP 상신자만, 30분 절삭
           roundedOt  += r.erpOtApplied ? r.overtimeHours : 0
         }
