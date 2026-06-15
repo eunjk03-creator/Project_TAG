@@ -575,14 +575,6 @@ export default function AdminDashboard() {
     }
   }, [scopedRecords, approvedKeys, displayStatusMap])
 
-  // 복합 플래그(중복) 건수: LATE_AND_EARLY_DEPARTURE, LATE_AND_ANOMALY
-  const compoundAnomalyCount = useMemo(() => {
-    return scopedRecords.filter(r => {
-      if (approvedKeys.has(`${r.employeeId}_${r.date}`)) return false
-      return r.flag === 'LATE_AND_EARLY_DEPARTURE' || r.flag === 'LATE_AND_ANOMALY'
-    }).length
-  }, [scopedRecords, approvedKeys])
-
   // ── Filters ───────────────────────────────────────────────────────────────
   const searchQuery = DAY_ALIASES[search.trim().toLowerCase()] ?? search.trim().toLowerCase()
 

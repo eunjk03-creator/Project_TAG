@@ -69,7 +69,6 @@ export function MetricDeepDive({
     const lateCount:      Record<string, number> = {}  // LATE + compound flags
     const earlyCount:     Record<string, number> = {}  // EARLY_DEPARTURE + LATE_AND_EARLY_DEPARTURE
     const shortWorkCount: Record<string, number> = {}  // ATTENDANCE_ANOMALY + LATE_AND_ANOMALY
-    const compoundCount:  Record<string, number> = {}  // LATE_AND_EARLY_DEPARTURE + LATE_AND_ANOMALY
     for (const r of processedRecords) {
       if (approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
       const div = empDiv[r.employeeId]
@@ -83,20 +82,17 @@ export function MetricDeepDive({
         shortWorkCount[div] = (shortWorkCount[div] ?? 0) + 1
       if (f === 'NO_CLOCK_IN' || f === 'NO_CLOCK_OUT')
         missedTag[div] = (missedTag[div] ?? 0) + 1
-      if (f === 'LATE_AND_EARLY_DEPARTURE' || f === 'LATE_AND_ANOMALY')
-        compoundCount[div] = (compoundCount[div] ?? 0) + 1
     }
 
     return {
       highestTotal, otOverCount,
-      missedTag, lateCount, earlyCount, shortWorkCount, compoundCount,
+      missedTag, lateCount, earlyCount, shortWorkCount,
       severeCount: shortWorkCount,
       totalOtOver:    Object.values(otOverCount).reduce((s, v) => s + v, 0),
       totalMissed:    Object.values(missedTag).reduce((s, v) => s + v, 0),
       totalLate:      Object.values(lateCount).reduce((s, v) => s + v, 0),
       totalEarly:     Object.values(earlyCount).reduce((s, v) => s + v, 0),
       totalShortWork: Object.values(shortWorkCount).reduce((s, v) => s + v, 0),
-      totalCompound:  Object.values(compoundCount).reduce((s, v) => s + v, 0),
       totalSevere:    Object.values(shortWorkCount).reduce((s, v) => s + v, 0),
     }
   }, [processedRecords, employees, approvedKeys, riskThresholds.otRedH])
@@ -347,7 +343,6 @@ export function MetricDeepDive({
                     <th className="text-center px-3 py-2.5 text-orange-500">조기퇴근</th>
                     <th className="text-center px-3 py-2.5 text-red-600">근무시간미달</th>
                     <th className="text-center px-3 py-2.5 text-red-500">미태깅</th>
-                    <th className="text-center px-3 py-2.5 text-purple-500">혼합</th>
                     <th className="text-center px-3 py-2.5 text-gray-700">총합계</th>
                   </tr>
                 </thead>
@@ -358,7 +353,6 @@ export function MetricDeepDive({
                     const early     = derived.earlyCount[m.division]     ?? 0
                     const shortWork = derived.shortWorkCount[m.division] ?? 0
                     const missed    = derived.missedTag[m.division]      ?? 0
-                    const compound  = derived.compoundCount[m.division]  ?? 0
                     return (
                       <tr
                         key={m.division}
@@ -390,9 +384,6 @@ export function MetricDeepDive({
                           {missed > 0 ? <span className="text-red-500 font-semibold">{missed}건</span> : <span className="text-gray-300">—</span>}
                         </td>
                         <td className="px-3 py-2.5 text-center tabular-nums">
-                          {compound > 0 ? <span className="text-purple-500 font-semibold">{compound}건</span> : <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-3 py-2.5 text-center tabular-nums">
                           {m.anomalies > 0 ? <span className="text-gray-800 font-bold">{m.anomalies}건</span> : <span className="text-gray-300">—</span>}
                         </td>
                       </tr>
@@ -413,19 +404,9 @@ export function MetricDeepDive({
                       {derived.totalMissed > 0 ? <span className="text-red-500">{derived.totalMissed}건</span> : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center tabular-nums">
-                      {derived.totalCompound > 0 ? <span className="text-purple-500">{derived.totalCompound}건</span> : <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="px-3 py-2.5 text-center tabular-nums">
                       {total.anomalies > 0 ? <span className="text-gray-800">{total.anomalies}건</span> : <span className="text-gray-300">—</span>}
                     </td>
                   </tr>
-                  {derived.totalCompound > 0 && (
-                    <tr>
-                      <td colSpan={7} className="px-4 py-2 text-[10px] text-gray-400 border-t border-gray-100">
-                        ※ 혼합: 지각+조기퇴근 또는 지각+근무시간미달 동시 해당 건수. 각 항목에 중복 집계됩니다.
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>
