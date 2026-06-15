@@ -172,15 +172,20 @@ export function SlackProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem(LS_EXCEPTIONS)
       }
 
-      // DB에 저장 (다른 사용자와 공유)
-      fetch('/api/slack/exceptions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed.map(e => ({
-          empId: e.empId, empName: e.empName, date: e.date,
-          type: e.type, note: e.note, rawText: e.rawText,
-        }))),
-      }).catch(() => {})
+      // DB에 저장 후 재계산 — await 필수: compute-attendance가 DB에서 Slack 예외를 읽으므로
+      // fire-and-forget이면 DB 쓰기 전에 재계산이 실행되어 Slack 반영 안 됨
+      try {
+        await fetch('/api/slack/exceptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed.map(e => ({
+            empId: e.empId, empName: e.empName, date: e.date,
+            type: e.type, note: e.note, rawText: e.rawText,
+          }))),
+        })
+      } catch {
+        // DB 저장 실패해도 재계산 시도 (로컬 메모리 기준으로는 반영됨)
+      }
 
       const ts    = new Date().toLocaleString('ko-KR')
       const range: SyncedRange = { start: config.startDate, end: config.endDate }
@@ -189,7 +194,7 @@ export function SlackProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(LS_LAST_SYNC,    JSON.stringify(ts))
       localStorage.setItem(LS_SYNCED_RANGE, JSON.stringify(range))
 
-      // 슬랙 동기화 후 자동 재계산 (슬랙 데이터가 반영되도록)
+      // Slack DB 저장 완료 후 재계산 실행 (이제 슬랙 예외가 DB에 반영된 상태)
       if (isLiveData) {
         recomputeProcessed().catch(() => {})
       }
