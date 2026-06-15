@@ -232,7 +232,7 @@ export const EXEC_THRESHOLDS: RiskThresholds = {
 // toggling a flag in the drawer triggers an immediate re-computation.
 
 export interface EmployeeAttributeOverrides {
-  /** 직책자: exempt from LATE flag */
+  /** 직책자: OT 30분 절삭 없음, 수당집계에서 연장수당 미지급 (리포팅 전용) */
   isLeader?:            boolean
   /** 육아휴직자: exempt from ALL anomaly checks — always shows 정상/연차 */
   isParentalLeave?:     boolean
