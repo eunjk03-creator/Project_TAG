@@ -18,8 +18,10 @@ type SlotState =
   | { phase: 'ready';  name: string; rowCount: number }
   | { phase: 'error';  name: string; msg: string }
 
+type UploadMode = 'replace' | 'append'
+
 type ApplyResult =
-  | { ok: true;  empCount: number; recCount: number; skipped: number }
+  | { ok: true;  empCount: number; recCount: number; skipped: number; added?: number; updated?: number }
   | { ok: false; msg: string }
 
 // ── Low-level file → rows parser ──────────────────────────────────────────
@@ -298,17 +300,18 @@ const MAX_CAPS = 5
 
 // ── Main export ───────────────────────────────────────────────────────────
 export function CsvUploader() {
-  const { setRawData, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, isProcessing } = useAttendanceSource()
+  const { setRawData, mergeRawData, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, isProcessing } = useAttendanceSource()
 
   // CAPS: 복수 파일 지원 (최대 MAX_CAPS)
   const capsDataRefs = useRef<(Record<string, string>[] | null)[]>([null])
   const erpDataRef   = useRef<Record<string, string>[] | null>(null)
 
-  const [capsSlots, setCapsSlots] = useState<SlotState[]>([{ phase: 'idle' }])
-  const [erpSlot,   setErpSlot]   = useState<SlotState>({ phase: 'idle' })
-  const [result,    setResult]    = useState<ApplyResult | null>(null)
-  const [expanded,  setExpanded]  = useState(false)
-  const [isSaving,  setIsSaving]  = useState(false)
+  const [capsSlots,   setCapsSlots]   = useState<SlotState[]>([{ phase: 'idle' }])
+  const [erpSlot,     setErpSlot]     = useState<SlotState>({ phase: 'idle' })
+  const [result,      setResult]      = useState<ApplyResult | null>(null)
+  const [expanded,    setExpanded]    = useState(false)
+  const [isSaving,    setIsSaving]    = useState(false)
+  const [uploadMode,  setUploadMode]  = useState<UploadMode>('replace')
 
   function setCapsSlot(idx: number, s: SlotState) {
     setCapsSlots(prev => prev.map((v, i) => i === idx ? s : v))
@@ -336,11 +339,19 @@ export function CsvUploader() {
     const mergedCaps = allCaps.flat()
     setIsSaving(true)
     try {
-      const { employees: emps, rawRecords: recs, skippedCount } = await setRawData(
-        mergedCaps as unknown as CapsRow[],
-        erpData    as unknown as ErpUnifiedRow[],
-      )
-      setResult({ ok: true, empCount: emps.length, recCount: recs.length, skipped: skippedCount })
+      if (uploadMode === 'append') {
+        const { employees: emps, rawRecords: recs, skippedCount, addedCount, updatedCount } = await mergeRawData(
+          mergedCaps as unknown as CapsRow[],
+          erpData    as unknown as ErpUnifiedRow[],
+        )
+        setResult({ ok: true, empCount: emps.length, recCount: recs.length, skipped: skippedCount, added: addedCount, updated: updatedCount })
+      } else {
+        const { employees: emps, rawRecords: recs, skippedCount } = await setRawData(
+          mergedCaps as unknown as CapsRow[],
+          erpData    as unknown as ErpUnifiedRow[],
+        )
+        setResult({ ok: true, empCount: emps.length, recCount: recs.length, skipped: skippedCount })
+      }
       setExpanded(false)
     } catch (e) {
       setResult({ ok: false, msg: (e as Error).message })
@@ -454,7 +465,10 @@ export function CsvUploader() {
         )}
         {!isSaving && result?.ok && !dbSaveError && (
           <span className="text-[11px] text-emerald-600 font-medium whitespace-nowrap">
-            ✓ 저장 완료{result.skipped > 0 ? ` (${result.skipped}건 스킵)` : ''}
+            {result.added !== undefined
+              ? `✓ 추가 ${result.added}건 · 업데이트 ${result.updated}건 (총 ${result.recCount.toLocaleString()}건)`
+              : `✓ 저장 완료${result.skipped > 0 ? ` (${result.skipped}건 스킵)` : ''}`
+            }
           </span>
         )}
         {!isSaving && result?.ok && dbSaveError && (
@@ -483,6 +497,21 @@ export function CsvUploader() {
               목업으로 초기화
             </button>
           )}
+          {/* 업로드 모드 토글 */}
+          <div className="flex items-center rounded-md border border-gray-200 overflow-hidden text-[10px] font-semibold">
+            <button
+              onClick={() => setUploadMode('replace')}
+              className={`px-2 py-1 transition-colors ${uploadMode === 'replace' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-600'}`}
+            >
+              전체 교체
+            </button>
+            <button
+              onClick={() => setUploadMode('append')}
+              className={`px-2 py-1 transition-colors ${uploadMode === 'append' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-600'}`}
+            >
+              추가 업로드
+            </button>
+          </div>
           <button
             onClick={() => setExpanded(v => !v)}
             className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 transition-colors font-medium"

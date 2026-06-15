@@ -19,6 +19,7 @@ interface AttendanceSourceContextValue {
   lastUploadedAt:     string | null
   dbSaveError:        string | null
   setRawData:         (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult>
+  mergeRawData:       (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult & { addedCount: number; updatedCount: number }>
   clearLiveData:      () => Promise<void>
   recomputeProcessed: () => Promise<void>
 }
@@ -399,6 +400,74 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     return { ...result, employees: normalized }
   }, [policy, loadProcessedFromDB])
 
+  // ── mergeRawData: 기존 DB 데이터 유지 + 신규 파일 병합 ───────────────
+  // (사번 + 날짜) 기준으로 merge — 신규 파일 쪽이 기존 데이터를 덮어씀
+  const mergeRawData = useCallback(async (
+    caps: CapsRow[],
+    erp:  ErpUnifiedRow[],
+  ): Promise<ParseResult & { addedCount: number; updatedCount: number }> => {
+    const newResult     = parseAttendanceData(caps, erp, policy)
+    const newNormalized = normalizeDivisions(newResult.employees)
+
+    // 기존 DB 데이터 로드
+    const { data: existing } = await dbGet()
+
+    // 기존 데이터 없으면 전체 교체와 동일하게 처리
+    if (!existing || existing.rawRecords.length === 0) {
+      setRawCaps(caps)
+      setRawErp(erp)
+      setLiveEmployees(newNormalized)
+      setLiveRecords(newResult.rawRecords)
+      setDbSaveError(null)
+      const ts = await dbPut({ employees: newNormalized, rawRecords: newResult.rawRecords })
+      if (ts) {
+        setLastUploadedAt(ts)
+        lsSave({ employees: newNormalized, rawRecords: newResult.rawRecords, updatedAt: ts })
+      } else {
+        setDbSaveError('DB 저장 실패 — 브라우저에만 저장됨. 새로고침 시 데이터가 사라질 수 있습니다.')
+      }
+      setIsProcessing(true)
+      apiCompute(policy).then(async pt => { if (pt) await loadProcessedFromDB() })
+        .catch(console.error).finally(() => setIsProcessing(false))
+      return { ...newResult, employees: newNormalized, addedCount: newResult.rawRecords.length, updatedCount: 0 }
+    }
+
+    // (employeeId_date) 기준 merge — 신규 우선
+    const existingKeySet = new Set(existing.rawRecords.map(r => `${r.employeeId}_${r.date}`))
+    const mergedMap = new Map<string, RawRecord>()
+    for (const r of existing.rawRecords)    mergedMap.set(`${r.employeeId}_${r.date}`, r)
+    for (const r of newResult.rawRecords)   mergedMap.set(`${r.employeeId}_${r.date}`, r)
+    const mergedRecords = Array.from(mergedMap.values())
+      .sort((a, b) => a.date.localeCompare(b.date) || a.employeeId.localeCompare(b.employeeId))
+
+    // 직원 merge — 신규 우선
+    const empMap = new Map<string, Employee>()
+    for (const e of existing.employees) empMap.set(e.id, e)
+    for (const e of newNormalized)      empMap.set(e.id, e)
+    const mergedEmployees = Array.from(empMap.values())
+
+    const addedCount   = newResult.rawRecords.filter(r => !existingKeySet.has(`${r.employeeId}_${r.date}`)).length
+    const updatedCount = newResult.rawRecords.length - addedCount
+
+    setLiveEmployees(mergedEmployees)
+    setLiveRecords(mergedRecords)
+    setDbSaveError(null)
+
+    const ts = await dbPut({ employees: mergedEmployees, rawRecords: mergedRecords })
+    if (ts) {
+      setLastUploadedAt(ts)
+      lsSave({ employees: mergedEmployees, rawRecords: mergedRecords, updatedAt: ts })
+    } else {
+      setDbSaveError('DB 저장 실패 — 브라우저에만 저장됨. 새로고침 시 데이터가 사라질 수 있습니다.')
+    }
+
+    setIsProcessing(true)
+    apiCompute(policy).then(async pt => { if (pt) await loadProcessedFromDB() })
+      .catch(console.error).finally(() => setIsProcessing(false))
+
+    return { ...newResult, employees: mergedEmployees, rawRecords: mergedRecords, addedCount, updatedCount }
+  }, [policy, loadProcessedFromDB]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── clearLiveData ─────────────────────────────────────────────────────
   const clearLiveData = useCallback(async () => {
     await dbPut(null)
@@ -425,6 +494,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
       lastUploadedAt,
       dbSaveError,
       setRawData,
+      mergeRawData,
       clearLiveData,
       recomputeProcessed,
     }}>
