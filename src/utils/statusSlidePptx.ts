@@ -80,14 +80,13 @@ function divSort<T extends { division: string }>(arr: T[]): T[] {
   })
 }
 
-type AnomalyCounts = { late: number; early: number; shortage: number; notag: number; mixed: number; total: number }
+type AnomalyCounts = { late: number; early: number; shortage: number; notag: number; total: number }
 
-function flagToCategory(flag: string): keyof Omit<AnomalyCounts, 'total'> {
-  if (flag === 'LATE')               return 'late'
-  if (flag === 'EARLY_DEPARTURE')    return 'early'
-  if (flag === 'ATTENDANCE_ANOMALY') return 'shortage'
-  if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') return 'notag'
-  return 'mixed'
+function applyFlag(row: Omit<AnomalyCounts, 'total'>, flag: string): void {
+  if (flag === 'LATE' || flag === 'LATE_AND_EARLY_DEPARTURE' || flag === 'LATE_AND_ANOMALY') row.late++
+  if (flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE') row.early++
+  if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY') row.shortage++
+  if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') row.notag++
 }
 
 const ANOMALY_COLS = [
@@ -95,7 +94,6 @@ const ANOMALY_COLS = [
   { key: 'early'    as const, label: '조기퇴근',      bg: C.orangeBg, fg: C.orangeFg },
   { key: 'shortage' as const, label: '근무시간 미달', bg: C.skyBg,    fg: C.skyFg    },
   { key: 'notag'    as const, label: '미태깅',        bg: C.roseBg,   fg: C.roseFg   },
-  { key: 'mixed'    as const, label: '혼합',          bg: C.violetBg, fg: C.violetFg },
   { key: 'total'    as const, label: '총합계',        bg: C.totalBg,  fg: C.totalFg  },
 ]
 
@@ -298,15 +296,15 @@ export async function buildStatusSlidePptxBuffer(
     for (const r of records) {
       if (!r.flag) continue
       const div = empMap.get(r.employeeId)?.division ?? '—'
-      if (!divMap.has(div)) divMap.set(div, { division: div, late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 })
+      if (!divMap.has(div)) divMap.set(div, { division: div, late: 0, early: 0, shortage: 0, notag: 0, total: 0 })
       const row = divMap.get(div)!
-      row[flagToCategory(r.flag)]++
+      applyFlag(row, r.flag)
       row.total++
     }
     const divRows = divSort([...divMap.values()]).filter(r => r.total >= 10)
     const totals  = divRows.reduce<AnomalyCounts>(
-      (s, r) => ({ late: s.late+r.late, early: s.early+r.early, shortage: s.shortage+r.shortage, notag: s.notag+r.notag, mixed: s.mixed+r.mixed, total: s.total+r.total }),
-      { late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 },
+      (s, r) => ({ late: s.late+r.late, early: s.early+r.early, shortage: s.shortage+r.shortage, notag: s.notag+r.notag, total: s.total+r.total }),
+      { late: 0, early: 0, shortage: 0, notag: 0, total: 0 },
     )
 
     const s = newSlide('부서별 이상치 현황', '이상치 합계 10건 이상 부서만 표시')
@@ -401,9 +399,9 @@ export async function buildStatusSlidePptxBuffer(
       const emp  = empMap.get(r.employeeId)
       const div  = emp?.division ?? '—'
       const name = emp?.name ?? r.employeeId
-      if (!empMap2.has(r.employeeId)) empMap2.set(r.employeeId, { division: div, name, late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 })
+      if (!empMap2.has(r.employeeId)) empMap2.set(r.employeeId, { division: div, name, late: 0, early: 0, shortage: 0, notag: 0, total: 0 })
       const row = empMap2.get(r.employeeId)!
-      row[flagToCategory(r.flag)]++
+      applyFlag(row, r.flag)
       row.total++
     }
     const empRows = [...empMap2.values()]
@@ -414,8 +412,8 @@ export async function buildStatusSlidePptxBuffer(
       })
 
     const totals = empRows.reduce<AnomalyCounts>(
-      (s, r) => ({ late: s.late+r.late, early: s.early+r.early, shortage: s.shortage+r.shortage, notag: s.notag+r.notag, mixed: s.mixed+r.mixed, total: s.total+r.total }),
-      { late: 0, early: 0, shortage: 0, notag: 0, mixed: 0, total: 0 },
+      (s, r) => ({ late: s.late+r.late, early: s.early+r.early, shortage: s.shortage+r.shortage, notag: s.notag+r.notag, total: s.total+r.total }),
+      { late: 0, early: 0, shortage: 0, notag: 0, total: 0 },
     )
 
     const PER_SLIDE = 20
