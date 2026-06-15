@@ -1,6 +1,7 @@
 import PptxGenJS from 'pptxgenjs'
 import type { ProcessedRecord, Employee } from '@/types/tag'
 import { DIVISION_ORDER } from '@/data/orgChart'
+import { computeWorkA, computeDisplayBreakMins, parseTimeToMins } from '@/utils/attendanceCalc'
 
 // ── Palette (hex without #) ──────────────────────────────────────────────────
 const C = {
@@ -67,6 +68,13 @@ function blankCell(wide = false): Cell {
 function shortDate(dateStr: string): string {
   const d = new Date(dateStr + 'T12:00')
   return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+function weekMonday(dateStr: string): string {
+  const d = new Date(dateStr + 'T12:00')
+  const dow = d.getDay()
+  d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 function fmtH(h: number): string {
   return h % 1 === 0 ? `${h}h` : `${h.toFixed(2)}h`
@@ -348,23 +356,70 @@ export async function buildStatusSlidePptxBuffer(
       mainTableEndY = TABLE_Y + tableRows.length * ROW_H
     }
 
-    // ── 주 52시간 초과자 템플릿 ──────────────────────────────────────────────
+    // ── 주 52시간 초과자 (실데이터) ─────────────────────────────────────────
     const over52Y = mainTableEndY + SEP
     addSectionLabel(s, '주 52시간 초과자', over52Y, C.redFg)
+
+    // 직원별·주별 weekday 근무시간 + 휴일근무시간 집계
+    type WeekAgg = { baseH: number; holidayH: number }
+    const empWeekAgg = new Map<string, Map<string, WeekAgg>>()
+    for (const r of records) {
+      const wk = weekMonday(r.date)
+      if (!empWeekAgg.has(r.employeeId)) empWeekAgg.set(r.employeeId, new Map())
+      const wmap = empWeekAgg.get(r.employeeId)!
+      if (!wmap.has(wk)) wmap.set(wk, { baseH: 0, holidayH: 0 })
+      const agg = wmap.get(wk)!
+      if (r.dayType === 'WEEKDAY') {
+        const effIn  = r.effectiveClockIn ?? r.clockIn
+        const wAMins = Math.round(computeWorkA(effIn, r.clockOut) * 60)
+        const ci     = effIn      ? parseTimeToMins(effIn)      : null
+        const co     = r.clockOut ? parseTimeToMins(r.clockOut) : null
+        const brk    = computeDisplayBreakMins(wAMins, ci, co, r.leaveType)
+        const credit = r.isUnpaidLeave ? 0 : (r.erpLeaveAmount ?? 0) * 8
+        agg.baseH += Math.max(0, (wAMins - brk) / 60 + credit)
+      } else if (r.finalStatus === '휴일근무') {
+        agg.holidayH += r.holidayHours ?? 0
+      }
+    }
+
+    // 어느 주든 52h 초과하면 포함 (미포함: 평일만으로 초과 / 포함: 휴일 포함 시 초과)
+    type ViolType = 'no' | 'with'
+    const violators = new Map<string, ViolType>()
+    for (const [empId, wmap] of empWeekAgg) {
+      for (const [, agg] of wmap) {
+        if (agg.baseH > 52) { violators.set(empId, 'no'); break }
+        if (agg.baseH + agg.holidayH > 52 && violators.get(empId) !== 'no')
+          violators.set(empId, 'with')
+      }
+    }
+
+    type Div52Row = { division: string; noNames: string[]; withNames: string[] }
+    const div52Map = new Map<string, Div52Row>()
+    for (const [empId, type] of violators) {
+      const div  = empMap.get(empId)?.division ?? '—'
+      const name = empMap.get(empId)?.name ?? empId
+      if (!div52Map.has(div)) div52Map.set(div, { division: div, noNames: [], withNames: [] })
+      const row = div52Map.get(div)!
+      if (type === 'no') row.noNames.push(name)
+      else               row.withNames.push(name)
+    }
+    const div52Rows = [...div52Map.values()].sort((a, b) => {
+      const ai = DIVISION_ORDER.indexOf(a.division), bi = DIVISION_ORDER.indexOf(b.division)
+      if (ai === -1 && bi === -1) return a.division.localeCompare(b.division, 'ko')
+      return ai === -1 ? 1 : bi === -1 ? -1 : ai - bi
+    })
 
     // 5열: 부서 | 미포함(인원) | 포함(인원) | 미포함(대상자) | 포함(대상자)
     const col52Div  = 2.0
     const col52Cnt  = 0.92
-    const col52Name = (W - col52Div - col52Cnt * 2) / 2   // ~4.35"
+    const col52Name = (W - col52Div - col52Cnt * 2) / 2
     const colW52    = [col52Div, col52Cnt, col52Cnt, col52Name, col52Name]
 
-    // 그룹 헤더 (colspan 적용)
     const header52_0: Cell[] = [
       hCellL('구분'),
       hCell('휴일근로 포함 여부', C.orangeBg, C.orangeFg, { colspan: 2 }),
       hCell('대상자', C.skyBg, C.skyFg, { colspan: 2 }),
     ]
-    // 서브 헤더
     const header52_1: Cell[] = [
       hCellL('부서'),
       hCell('미포함', C.orangeBg, C.orangeFg),
@@ -372,22 +427,39 @@ export async function buildStatusSlidePptxBuffer(
       hCell('미포함', C.skyBg,   C.skyFg),
       hCell('포함',   C.skyBg,   C.skyFg),
     ]
-    const blankRows52: Cell[][] = Array.from({ length: TMPL_ROWS }, () => [
-      blankCell(false),
-      blankCell(false),
-      blankCell(false),
-      blankCell(true),
-      blankCell(true),
-    ])
+
+    let totalNo = 0, totalWith = 0
+    const data52Rows: Cell[][] = div52Rows.map((row, i) => {
+      const bg = { fill: { color: i % 2 ? C.gray50 : C.white } }
+      totalNo   += row.noNames.length
+      totalWith += row.withNames.length
+      return [
+        dCellL(row.division, { bold: true, color: C.gray800, ...bg }),
+        row.noNames.length   ? dCell(String(row.noNames.length),   { bold: true, color: C.orangeFg, ...bg }) : { ...dimCell(), options: { ...dimCell().options, ...bg } },
+        row.withNames.length ? dCell(String(row.withNames.length), { bold: true, color: C.redFg,    ...bg }) : { ...dimCell(), options: { ...dimCell().options, ...bg } },
+        dCellL(row.noNames.join(', '),   { color: C.gray500, fontSize: 8, ...bg }),
+        dCellL(row.withNames.join(', '), { color: C.gray500, fontSize: 8, ...bg }),
+      ]
+    })
+
     const totalRow52: Cell[] = [
       totalCellL('합계'),
-      totalCell(''), totalCell(''), totalCellL(''), totalCellL(''),
+      totalCell(totalNo   ? String(totalNo)   : '—'),
+      totalCell(totalWith ? String(totalWith) : '—'),
+      totalCellL(''), totalCellL(''),
     ]
 
-    s.addTable(
-      [header52_0, header52_1, ...blankRows52, totalRow52] as unknown as Parameters<typeof s.addTable>[0],
-      { ...tableBase, y: over52Y + 0.27, colW: colW52 },
-    )
+    if (div52Rows.length === 0) {
+      s.addText('주 52시간 초과자가 없습니다', {
+        x: LEFT, y: over52Y + 0.3, w: W, h: 0.4,
+        fontSize: 9, color: C.gray400, align: 'center', fontFace: 'Malgun Gothic',
+      })
+    } else {
+      s.addTable(
+        [header52_0, header52_1, ...data52Rows, totalRow52] as unknown as Parameters<typeof s.addTable>[0],
+        { ...tableBase, y: over52Y + 0.27, colW: colW52 },
+      )
+    }
   }
 
   // ── Slide 4+: 개인별 근태이상 (20명씩 분할) ──────────────────────────────
