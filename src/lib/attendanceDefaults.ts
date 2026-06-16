@@ -6,7 +6,10 @@ export const DEFAULT_GLOBAL_EXCLUSIONS = new Set([
 ])
 export const DEFAULT_FIXED_A  = new Set(['E25122301'])
 export const DEFAULT_FIXED_B  = new Set(['E26030501','E24011001'])
-export const DEFAULT_PREGNANT = new Set(['E25060901','E22080101','E25060902'])
+export const DEFAULT_PREGNANT = new Set<string>([
+  // 임신기단축근로 대상자는 DB exception_rules(pregnant_reduced)에서 날짜 범위로 관리
+  // 하드코딩 제거: E25060901, E22080101, E25060902
+])
 
 /** Maps ExceptionRule.ruleType → EmployeeAttributeOverrides fields (server-side replication of context logic). */
 export function buildAttrMapFromRules(

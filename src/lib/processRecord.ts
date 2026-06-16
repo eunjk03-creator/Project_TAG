@@ -163,8 +163,6 @@ export function processRecord(
     }
     // Full-day absence: 연차 or combo leave (erpLeaveAmount >= 1.0)
     if (!r.clockIn && (r.leaveType === '연차' || (r.erpLeaveAmount ?? 0) >= 1.0)) return '연차'
-    if (r.leaveType === '출장')     return '출장'
-    if (r.leaveType === '재택근무') return '재택근무'
     if (r.flag === 'NO_CLOCK_IN')              return '근태이상'
     if (r.flag === 'NO_CLOCK_OUT')             return '근태이상'
     if (r.flag === 'LATE_AND_ANOMALY')         return '근태이상'

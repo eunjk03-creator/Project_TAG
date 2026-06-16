@@ -259,9 +259,6 @@ export default function AdminDashboard() {
       const dow   = new Date(date + 'T12:00').getDay()
       const isHol = (policy.companyHolidays ?? []).some(h => h.date === date)
       const dayType = isHol ? 'HOLIDAY' as const : (dow === 0 || dow === 6) ? 'WEEKEND' as const : 'WEEKDAY' as const
-      const leaveTypeMap: Record<string, import('@/types/tag').ErpLeaveType> = {
-        '재택근무': '재택근무', '출장': '출장',
-      }
       mapped.push({
         employeeId:        empId,
         date,
@@ -270,7 +267,7 @@ export default function AdminDashboard() {
         clockIn:           ov.clockIn  ?? null,
         clockOut:          ov.clockOut ?? null,
         erpOtApplied:      false,
-        leaveType:         ov.erpLeaveType ? (leaveTypeMap[ov.erpLeaveType] ?? null) : null,
+        leaveType:         null,
         verificationNote:  [ov.memo ? `수기 입력: ${ov.memo}` : '수기 입력'],
       })
     }

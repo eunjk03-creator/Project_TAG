@@ -65,8 +65,6 @@ export type FinalStatus =
   | '연차'       // full-day leave (ERP or Slack)
   | '오전반차'   // AM half-day
   | '오후반차'   // PM half-day
-  | '출장'       // business trip
-  | '재택근무'   // remote work
   | '외근'       // off-site work — anomaly cleared by Slack confirmation
   // ── Category 2: Anomaly ─────────────────────────────────────────────────
   | '지각'          // clock-in exceeds flexEnd
@@ -84,7 +82,7 @@ export type FinalStatusCategory = 'NORMAL' | 'ANOMALY' | 'HOLIDAY_WORK' | 'NON_W
 
 export const FINAL_STATUS_CATEGORY: Readonly<Record<FinalStatus, FinalStatusCategory>> = {
   '정상':     'NORMAL',  '연장근로': 'NORMAL',  '연차':     'NORMAL',
-  '오전반차': 'NORMAL',  '오후반차': 'NORMAL',  '출장':     'NORMAL', '재택근무': 'NORMAL', '외근': 'NORMAL',
+  '오전반차': 'NORMAL',  '오후반차': 'NORMAL',  '외근': 'NORMAL',
   '지각':     'ANOMALY', '조기퇴근': 'ANOMALY', '근태이상': 'ANOMALY',
   '지각+조기퇴근': 'ANOMALY', '출퇴근누락': 'ANOMALY',
   '휴일근무': 'HOLIDAY_WORK',
@@ -101,8 +99,6 @@ export type ErpLeaveType =
   | '오후반차'   // afternoon half-day (0.5)
   | '오전반반차' // morning quarter-day (0.25)
   | '오후반반차' // afternoon quarter-day (0.25)
-  | '출장'
-  | '재택근무'
 
 export interface Employee {
   /** Composite primary key: "${employeeId}_${normalizeName(name)}" */
@@ -373,8 +369,8 @@ export const ERP_APPROVED_STATUSES = ['승인', '신청', '상신'] as const
  * TIME-BASED / BLOCKED codes handled elsewhere:
  *   • OT_CODE_SET (dataParser.ts): 연장근로, 시간외근무, 연장근무, 휴일근로 — routed to OT map
  *   • 복직신청: not in this map and not OT → silently discarded by the parser
- *   • 출장 / 재택근무: kept here so records get a leaveType for status display,
- *     but LEAVE_AMOUNT has no entry for them so erpLeaveAmount stays 0.
+ *   • 출장 / 재택근무: ERP로 확인하지 않음. 출장은 Slack 감지(→ 외근), 재택은 수기 관리.
+ *     이 코드들이 ERP에 들어와도 미인식 코드로 스킵됨.
  */
 export const ERP_LEAVE_TYPE_MAP: Record<string, ErpLeaveType> = {
   // ── Standard ──────────────────────────────────────────────────────────────
@@ -382,8 +378,6 @@ export const ERP_LEAVE_TYPE_MAP: Record<string, ErpLeaveType> = {
   오전반차:     '오전반차',
   오후반차:     '오후반차',
   반일연차:     '오후반차',     // PM half-day alias
-  출장:         '출장',
-  재택근무:     '재택근무',
   오전반반차:   '오전반반차',
   오후반반차:   '오후반반차',
   // ── 대체휴가 ─────────────────────────────────────────────────────────────
@@ -408,7 +402,8 @@ export const ERP_LEAVE_TYPE_MAP: Record<string, ErpLeaveType> = {
   // ── 의료 / 출산 / 육아 ───────────────────────────────────────────────────
   난임휴가:        '연차',
   '난임휴가(무급)': '연차',
-  임신기단축근로:  '연차',
+  // 임신기단축근로: ERP 매핑 제거 — 근무형태(매일 6h 출근)이므로 leaveType 불필요.
+  //   isPregnantReduced 예외규칙이 6h 기준 판정을 전담함.
   출산휴가:        '연차',
   육아휴직:        '연차',
   배우자출산휴가:  '연차',
@@ -426,8 +421,6 @@ export const STATUS_COLORS: Record<FinalStatus, string> = {
   '연차':           'bg-blue-100   text-blue-800',
   '오전반차':       'bg-blue-100   text-blue-800',
   '오후반차':       'bg-blue-100   text-blue-800',
-  '출장':           'bg-blue-100   text-blue-800',
-  '재택근무':       'bg-blue-100   text-blue-800',
   '외근':           'bg-blue-100   text-blue-800',
   '지각':           'bg-yellow-100 text-yellow-800',
   '조기퇴근':       'bg-orange-100 text-orange-800',
