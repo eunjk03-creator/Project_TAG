@@ -247,14 +247,17 @@ const empStats = useMemo(() => {
     holiday: number; rawHoliday: number
     anomalies: number
   }> = {}
+
   for (const emp of employees) {
-    const recs = records.filter(r => r.employeeId === emp.id)
-    // exactXxx  = sum of actual values (실제값, shown when showExactTime=true)
-    // roundedXxx = sum of per-day values floored to 30-min (공인시간, shown when showExactTime=false)
-    let exactOt = 0, roundedOt = 0, exactTotal = 0, roundedTotal = 0
+    const recs     = records.filter(r => r.employeeId === emp.id)
+    const isLeader = emp.isLeader ?? false  // Employee 기준 — ProcessedRecord.isLeader는 신뢰 안 함
+
+    let exactOt = 0, roundedOt = 0
+    let exactTotal = 0, roundedTotal = 0
+    let exactNight = 0, roundedNight = 0
+
     for (const r of recs) {
-      // Full-day leave with no physical punch → skip; don't add dummy 8 h to total.
-      // Half-leaves and days with actual clock-in/out are processed normally.
+      // 연차 등 실제 출근 없는 전일 휴가는 총근로에 포함하지 않음
       const isFullDayLeave   = (r.erpLeaveAmount ?? 0) >= 1.0 || r.finalStatus === '연차'
       const hasPhysicalPunch = !!(r.clockIn || r.clockOut)
       if (isFullDayLeave && !hasPhysicalPunch) continue
@@ -263,39 +266,57 @@ const empStats = useMemo(() => {
       const effectiveIn = r.effectiveClockIn ?? r.clockIn
       const wAMins      = Math.round(computeWorkA(effectiveIn, r.clockOut) * 60)
       const ciMins      = effectiveIn ? parseTimeToMins(effectiveIn) : null
-      const coMins      = r.clockOut ? parseTimeToMins(r.clockOut) : null
+      const coMins      = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
       const brkMins     = computeDisplayBreakMins(wAMins, ciMins, coMins, r.leaveType)
       const credit      = r.isUnpaidLeave ? 0 : leaveAmt * 8
       const finalWorkH  = Math.max(0, (wAMins - brkMins) / 60 + credit)
-      const flooredWork = floorTo30(finalWorkH)
 
       if (r.dayType === 'WEEKDAY') {
-        const dailyOt = Math.max(0, finalWorkH - 8.0)
-        exactOt   += dailyOt
-        roundedOt += dailyOt  // 그리드 체크용 — 직책자/비직책자 구분 없이 실근무 초과분 표시
-        exactTotal   += finalWorkH
-        roundedTotal += flooredWork
+        // rawOt = Dinner Grace 이후 실제 OT 분 → 시간 변환 (절삭 전)
+        const rawOt = (r.rawOvertimeMinutes ?? 0) / 60
+
+        // ── 실제값: ERP 게이트 없음, 절삭 없음 ─────────────────────────
+        exactOt    += rawOt
+        exactTotal += finalWorkH
+        exactNight += r.nightHours ?? 0
+
+        // ── 인정시간 ─────────────────────────────────────────────────────
+        if (isLeader) {
+          // 직책자: ERP 게이트 없음, 절삭 없음 (Dinner Grace는 동일 적용)
+          roundedOt    += rawOt
+          roundedTotal += finalWorkH   // 전체 인정 (no floor on weekday)
+          roundedNight += r.nightHours ?? 0
+        } else {
+          // 비직책자: ERP 신청한 날만 OT 인정
+          // r.overtimeHours = Dinner Grace + 30분 절삭 적용된 값
+          const approvedOt = r.erpOtApplied ? r.overtimeHours : 0
+          roundedOt    += approvedOt
+          // 총근로 = (Dinner Grace까지의 근무) + 인정된 OT
+          // = (finalWorkH - rawOt) + approvedOt
+          roundedTotal += finalWorkH - rawOt + approvedOt
+          // 야간: ERP 신청한 날만, 30분 절삭
+          roundedNight += r.erpOtApplied ? floorTo30(r.nightHours ?? 0) : 0
+        }
+
       } else if (r.finalStatus === '휴일근무') {
-        // 휴일근무는 연장(OT) 컬럼이 아닌 휴일 컬럼에만 집계
+        // 휴일근무: OT 컬럼 아닌 총근로에 집계, 직책자도 30분 절삭
         exactTotal   += finalWorkH
-        roundedTotal += flooredWork
+        roundedTotal += floorTo30(finalWorkH)
+
       } else {
-        const holH    = r.holidayHours ?? 0
+        // 주말·공휴일 (출근 없음 or holidayHours만 존재)
+        const holH = r.holidayHours ?? 0
         exactTotal   += holH
         roundedTotal += floorTo30(holH)
       }
     }
-    // Night is a PREMIUM OVERLAY — displayed separately, not added to 연장 OT.
-    const rawNight   = recs.reduce((s, r) => s + (r.nightHours || 0), 0)
-    const night      = recs.reduce((s, r) => {
-      const h = r.nightHours || 0
-      return s + (r.isLeader ? h : floorTo30(h))  // 직책자: 절삭없음, 비직책자: 30분 절삭
-    }, 0)
-    const rawHoliday = recs.reduce((s, r) => s + (r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0), 0)
-    const holiday    = recs.reduce((s, r) => {
+
+    // 휴일 컬럼: 비평일 레코드의 holidayHours 합산, 직책자도 30분 절삭
+    const rawHoliday = recs.reduce(
+      (s, r) => s + (r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0), 0)
+    const roundedHoliday = recs.reduce((s, r) => {
       if (r.dayType === 'WEEKDAY') return s
-      const h = r.holidayHours ?? 0
-      return s + (r.isLeader ? h : floorTo30(h))  // 직책자: 절삭없음, 비직책자: 30분 절삭
+      return s + floorTo30(r.holidayHours ?? 0)
     }, 0)
 
     stats[emp.id] = {
@@ -303,9 +324,9 @@ const empStats = useMemo(() => {
       rawTotal:   exactTotal,
       ot:         roundedOt,
       rawOt:      exactOt,
-      night,
-      rawNight,
-      holiday,
+      night:      roundedNight,
+      rawNight:   exactNight,
+      holiday:    roundedHoliday,
       rawHoliday,
       anomalies: recs.filter(
         r => FINAL_STATUS_CATEGORY[r.finalStatus] === 'ANOMALY' &&
