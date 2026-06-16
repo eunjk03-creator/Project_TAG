@@ -20,6 +20,7 @@ import type { ManualEntryPayload } from '@/components/admin/ManualEntryModal'
 import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
 import { SummaryTab }            from '@/components/admin/SummaryTab'
 import { AllowanceTab }          from '@/components/admin/AllowanceTab'
+import { PeopleAnalyticsTab }    from '@/components/admin/PeopleAnalyticsTab'
 import {
   computeWorkA, computeStatusN,
   computeDisplayBreakMins, parseTimeToMins,
@@ -109,7 +110,7 @@ function detectMonthRange(records: { date: string }[]): { from: string; to: stri
   return { from: `${top[0]}-01`, to: `${top[0]}-${String(last).padStart(2, '0')}` }
 }
 
-type View = 'grid' | 'table' | 'summary' | 'allowance'
+type View = 'grid' | 'table' | 'summary' | 'allowance' | 'analytics'
 
 export default function AdminDashboard() {
   const { policy } = usePolicy()
@@ -973,6 +974,10 @@ export default function AdminDashboard() {
               className={`px-3 py-1.5 rounded-md transition-colors ${view === 'allowance' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
               수당집계
             </button>
+            <button onClick={() => setView('analytics')}
+              className={`px-3 py-1.5 rounded-md transition-colors ${view === 'analytics' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+              인사이트
+            </button>
           </div>
         </div>
       </div>
@@ -1015,8 +1020,8 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* ── All / Employee / Leader tab bar (hidden on allowance view) ── */}
-      {view !== 'allowance' && <div className="px-6 py-2.5 bg-white border-b border-gray-100 shrink-0">
+      {/* ── All / Employee / Leader tab bar (hidden on allowance/analytics view) ── */}
+      {view !== 'allowance' && view !== 'analytics' && <div className="px-6 py-2.5 bg-white border-b border-gray-100 shrink-0">
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit text-sm">
           {([
             { key: 'all'      as const, label: '전체 근태 현황',   count: total.headcount         as number | null },
@@ -1052,7 +1057,7 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {view !== 'allowance' && (
+        {view !== 'allowance' && view !== 'analytics' && (
         <>
         {/* KPI Cards */}
         <div className="px-6 pt-5 pb-4 shrink-0">
@@ -1584,7 +1589,19 @@ export default function AdminDashboard() {
         )}
 
         </>
-        )} {/* end view !== 'allowance' */}
+        )} {/* end view !== 'allowance' && view !== 'analytics' */}
+
+        {/* ── Analytics view ── */}
+        {view === 'analytics' && (
+          <div className="flex-1 min-h-0 overflow-auto">
+            <PeopleAnalyticsTab
+              records={scopedRecords}
+              employees={scopedEmployees}
+              dateFrom={dateRange.from}
+              dateTo={dateRange.to}
+            />
+          </div>
+        )}
 
       </div>
 
