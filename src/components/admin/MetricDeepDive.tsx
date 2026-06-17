@@ -1,22 +1,46 @@
 'use client'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
 import type { DivisionMetrics } from '@/hooks/useManagementMetrics'
 import { SectionComparisonChart } from './SectionComparisonChart'
 
 export type Section = 'total' | 'overtime' | 'anomaly' | 'over209'
+type ViewMode = 'all' | 'employee' | 'leader'
 
 interface Props {
   openSections:     Set<Section>
   onToggle:         (s: Section) => void
   metrics:          DivisionMetrics[]
   total:            Omit<DivisionMetrics, 'division'>
+  employeeMetrics:  DivisionMetrics[]
+  employeeTotal:    Omit<DivisionMetrics, 'division'>
+  leaderMetrics:    DivisionMetrics[]
+  leaderTotal:      Omit<DivisionMetrics, 'division'>
   processedRecords: ProcessedRecord[]
   employees:        Employee[]
   approvedKeys:     Set<string>
   riskThresholds:   RiskThresholds
   selectedBUs:      string[]
   onBUsChange:      (bus: string[]) => void
+  leaderIdSet:      ReadonlySet<string>
+}
+
+interface SectionDerived {
+  highestTotal:   Record<string, number>
+  otOverCount:    Record<string, number>
+  over209Count:   Record<string, number>
+  missedTag:      Record<string, number>
+  lateCount:      Record<string, number>
+  earlyCount:     Record<string, number>
+  shortWorkCount: Record<string, number>
+  severeCount:    Record<string, number>
+  totalOtOver:    number
+  totalOver209:   number
+  totalMissed:    number
+  totalLate:      number
+  totalEarly:     number
+  totalShortWork: number
+  totalSevere:    number
 }
 
 function fmtH(h: number): string {
@@ -39,10 +63,14 @@ const ChevronDown = ({ open }: { open: boolean }) => (
 export function MetricDeepDive({
   openSections, onToggle,
   metrics, total,
+  employeeMetrics, employeeTotal,
+  leaderMetrics,   leaderTotal,
   processedRecords, employees,
   approvedKeys, riskThresholds,
   selectedBUs, onBUsChange,
+  leaderIdSet,
 }: Props) {
+  const [viewMode, setViewMode] = useState<ViewMode>('all')
 
   const derived = useMemo(() => {
     const empDiv: Record<string, string> = {}
@@ -55,50 +83,64 @@ export function MetricDeepDive({
       empOt[r.employeeId]     = (empOt[r.employeeId]     ?? 0) + r.overtimeHours
     }
 
-    const highestTotal: Record<string, number> = {}
-    const otOverCount:  Record<string, number> = {}
-    const over209Count: Record<string, number> = {}
-    for (const e of employees) {
-      const div = e.division
-      const tot = empTotals[e.id] ?? 0
-      const ot  = empOt[e.id]     ?? 0
-      if (highestTotal[div] === undefined || tot > highestTotal[div]) highestTotal[div] = tot
-      if (ot > riskThresholds.otRedH) otOverCount[div] = (otOverCount[div] ?? 0) + 1
-      if (tot >= 209) over209Count[div] = (over209Count[div] ?? 0) + 1
-    }
+    function buildSection(empFilter?: (id: string) => boolean): SectionDerived {
+      const highestTotal: Record<string, number> = {}
+      const otOverCount:  Record<string, number> = {}
+      const over209Count: Record<string, number> = {}
+      for (const e of employees) {
+        if (empFilter && !empFilter(e.id)) continue
+        const div = e.division
+        const tot = empTotals[e.id] ?? 0
+        const ot  = empOt[e.id]     ?? 0
+        if (highestTotal[div] === undefined || tot > highestTotal[div]) highestTotal[div] = tot
+        if (ot > riskThresholds.otRedH) otOverCount[div] = (otOverCount[div] ?? 0) + 1
+        if (tot >= 209) over209Count[div] = (over209Count[div] ?? 0) + 1
+      }
 
-    const missedTag:      Record<string, number> = {}  // NO_CLOCK_IN + NO_CLOCK_OUT
-    const lateCount:      Record<string, number> = {}  // LATE + compound flags
-    const earlyCount:     Record<string, number> = {}  // EARLY_DEPARTURE + LATE_AND_EARLY_DEPARTURE
-    const shortWorkCount: Record<string, number> = {}  // ATTENDANCE_ANOMALY + LATE_AND_ANOMALY
-    for (const r of processedRecords) {
-      if (approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
-      const div = empDiv[r.employeeId]
-      if (!div || !r.flag) continue
-      const f = r.flag
-      if (f === 'LATE' || f === 'LATE_AND_EARLY_DEPARTURE' || f === 'LATE_AND_ANOMALY')
-        lateCount[div] = (lateCount[div] ?? 0) + 1
-      if (f === 'EARLY_DEPARTURE' || f === 'LATE_AND_EARLY_DEPARTURE')
-        earlyCount[div] = (earlyCount[div] ?? 0) + 1
-      if (f === 'ATTENDANCE_ANOMALY' || f === 'LATE_AND_ANOMALY')
-        shortWorkCount[div] = (shortWorkCount[div] ?? 0) + 1
-      if (f === 'NO_CLOCK_IN' || f === 'NO_CLOCK_OUT')
-        missedTag[div] = (missedTag[div] ?? 0) + 1
+      const missedTag:      Record<string, number> = {}
+      const lateCount:      Record<string, number> = {}
+      const earlyCount:     Record<string, number> = {}
+      const shortWorkCount: Record<string, number> = {}
+      for (const r of processedRecords) {
+        if (approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
+        if (empFilter && !empFilter(r.employeeId)) continue
+        const div = empDiv[r.employeeId]
+        if (!div || !r.flag) continue
+        const f = r.flag
+        if (f === 'LATE' || f === 'LATE_AND_EARLY_DEPARTURE' || f === 'LATE_AND_ANOMALY')
+          lateCount[div] = (lateCount[div] ?? 0) + 1
+        if (f === 'EARLY_DEPARTURE' || f === 'LATE_AND_EARLY_DEPARTURE')
+          earlyCount[div] = (earlyCount[div] ?? 0) + 1
+        if (f === 'ATTENDANCE_ANOMALY' || f === 'LATE_AND_ANOMALY')
+          shortWorkCount[div] = (shortWorkCount[div] ?? 0) + 1
+        if (f === 'NO_CLOCK_IN' || f === 'NO_CLOCK_OUT')
+          missedTag[div] = (missedTag[div] ?? 0) + 1
+      }
+
+      return {
+        highestTotal, otOverCount, over209Count,
+        missedTag, lateCount, earlyCount, shortWorkCount,
+        severeCount: shortWorkCount,
+        totalOtOver:    Object.values(otOverCount).reduce((s, v) => s + v, 0),
+        totalOver209:   Object.values(over209Count).reduce((s, v) => s + v, 0),
+        totalMissed:    Object.values(missedTag).reduce((s, v) => s + v, 0),
+        totalLate:      Object.values(lateCount).reduce((s, v) => s + v, 0),
+        totalEarly:     Object.values(earlyCount).reduce((s, v) => s + v, 0),
+        totalShortWork: Object.values(shortWorkCount).reduce((s, v) => s + v, 0),
+        totalSevere:    Object.values(shortWorkCount).reduce((s, v) => s + v, 0),
+      }
     }
 
     return {
-      highestTotal, otOverCount, over209Count,
-      missedTag, lateCount, earlyCount, shortWorkCount,
-      severeCount: shortWorkCount,
-      totalOver209:   Object.values(over209Count).reduce((s, v) => s + v, 0),
-      totalOtOver:    Object.values(otOverCount).reduce((s, v) => s + v, 0),
-      totalMissed:    Object.values(missedTag).reduce((s, v) => s + v, 0),
-      totalLate:      Object.values(lateCount).reduce((s, v) => s + v, 0),
-      totalEarly:     Object.values(earlyCount).reduce((s, v) => s + v, 0),
-      totalShortWork: Object.values(shortWorkCount).reduce((s, v) => s + v, 0),
-      totalSevere:    Object.values(shortWorkCount).reduce((s, v) => s + v, 0),
+      all: buildSection(),
+      emp: buildSection(id => !leaderIdSet.has(id)),
+      ldr: buildSection(id =>  leaderIdSet.has(id)),
     }
-  }, [processedRecords, employees, approvedKeys, riskThresholds.otRedH])
+  }, [processedRecords, employees, approvedKeys, riskThresholds.otRedH, leaderIdSet])
+
+  const displayMetrics = viewMode === 'all' ? metrics : viewMode === 'employee' ? employeeMetrics : leaderMetrics
+  const displayTotal   = viewMode === 'all' ? total   : viewMode === 'employee' ? employeeTotal   : leaderTotal
+  const d              = viewMode === 'all' ? derived.all : viewMode === 'employee' ? derived.emp : derived.ldr
 
   function handleRow(div: string) {
     if (selectedBUs.includes(div)) onBUsChange(selectedBUs.filter(b => b !== div))
@@ -109,10 +151,26 @@ export function MetricDeepDive({
   const isOpenOvertime = openSections.has('overtime')
   const isOpenAnomaly  = openSections.has('anomaly')
 
-  const avgTotal = total.headcount > 0 ? total.totalHours / total.headcount : 0
+  const avgTotal = displayTotal.headcount > 0 ? displayTotal.totalHours / displayTotal.headcount : 0
 
   return (
     <div className="space-y-3">
+
+      {/* ── 직/비직책 토글 ────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-end">
+        <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
+          {(['all', 'employee', 'leader'] as const).map(mode => (
+            <button key={mode} onClick={() => setViewMode(mode)}
+              className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${
+                viewMode === mode
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}>
+              {mode === 'all' ? '전체' : mode === 'employee' ? '사원' : '직책자'}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* ── 총 근로시간 ──────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -123,7 +181,7 @@ export function MetricDeepDive({
               총 근로시간
             </span>
             <span className="text-xs text-gray-400 tabular-nums">
-              {fmtH(total.totalHours)} · 1인 평균 {fmtH(avgTotal)}
+              {fmtH(displayTotal.totalHours)} · 1인 평균 {fmtH(avgTotal)}
             </span>
             <ChevronDown open={isOpenTotal} />
           </button>
@@ -143,10 +201,10 @@ export function MetricDeepDive({
                   </tr>
                 </thead>
                 <tbody>
-                  {metrics.map((m, i) => {
+                  {displayMetrics.map((m, i) => {
                     const active = selectedBUs.includes(m.division)
                     const avg    = m.headcount > 0 ? m.totalHours / m.headcount : 0
-                    const top    = derived.highestTotal[m.division] ?? 0
+                    const top    = d.highestTotal[m.division] ?? 0
                     return (
                       <tr
                         key={m.division}
@@ -178,8 +236,8 @@ export function MetricDeepDive({
                   })}
                   <tr className="bg-gray-100 border-t-2 border-gray-300 font-semibold text-[12px]">
                     <td className="px-4 py-2.5 text-gray-700">전체</td>
-                    <td className="px-4 py-2.5 text-center text-gray-700 tabular-nums">{total.headcount}명</td>
-                    <td className="px-4 py-2.5 text-center text-gray-700 tabular-nums">{fmtH(total.totalHours)}</td>
+                    <td className="px-4 py-2.5 text-center text-gray-700 tabular-nums">{displayTotal.headcount}명</td>
+                    <td className="px-4 py-2.5 text-center text-gray-700 tabular-nums">{fmtH(displayTotal.totalHours)}</td>
                     <td className="px-4 py-2.5 text-center tabular-nums">
                       <span className={avgTotal > riskThresholds.totalAmberH ? 'text-amber-600' : 'text-gray-700'}>
                         {fmtH(avgTotal)}
@@ -194,13 +252,13 @@ export function MetricDeepDive({
               <div className="px-4 pb-5">
                 <SectionComparisonChart
                   section="total"
-                  metrics={metrics}
+                  metrics={displayMetrics}
                   selectedBUs={selectedBUs}
                   riskThresholds={riskThresholds}
-                  highestTotal={derived.highestTotal}
-                  otOverCount={derived.otOverCount}
-                  missedTag={derived.missedTag}
-                  lateCount={derived.lateCount}
+                  highestTotal={d.highestTotal}
+                  otOverCount={d.otOverCount}
+                  missedTag={d.missedTag}
+                  lateCount={d.lateCount}
                 />
               </div>
             )}
@@ -217,7 +275,7 @@ export function MetricDeepDive({
               연장근로
             </span>
             <span className="text-xs text-gray-400 tabular-nums">
-              {fmtH(total.otHours)} · 1인 평균 {fmtH(total.avgOtPerPerson)}
+              {fmtH(displayTotal.otHours)} · 1인 평균 {fmtH(displayTotal.avgOtPerPerson)}
             </span>
             <ChevronDown open={isOpenOvertime} />
           </button>
@@ -225,7 +283,7 @@ export function MetricDeepDive({
 
         <div className={`grid transition-all duration-300 ease-in-out ${isOpenOvertime ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
           <div className="overflow-hidden">
-            <div className="border-t border-gray-100">
+            <div className="border-t border-gray-100 overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500">
@@ -238,10 +296,10 @@ export function MetricDeepDive({
                   </tr>
                 </thead>
                 <tbody>
-                  {metrics.map((m, i) => {
+                  {displayMetrics.map((m, i) => {
                     const active  = selectedBUs.includes(m.division)
-                    const over    = derived.otOverCount[m.division]  ?? 0
-                    const over209 = derived.over209Count[m.division] ?? 0
+                    const over    = d.otOverCount[m.division]  ?? 0
+                    const over209 = d.over209Count[m.division] ?? 0
                     return (
                       <tr
                         key={m.division}
@@ -291,23 +349,23 @@ export function MetricDeepDive({
                   })}
                   <tr className="bg-gray-100 border-t-2 border-gray-300 font-semibold text-[12px]">
                     <td className="px-4 py-2.5 text-gray-700">전체</td>
-                    <td className="px-4 py-2.5 text-center text-gray-700 tabular-nums">{total.headcount}명</td>
+                    <td className="px-4 py-2.5 text-center text-gray-700 tabular-nums">{displayTotal.headcount}명</td>
                     <td className="px-4 py-2.5 text-center tabular-nums">
-                      <span className="text-amber-600">{fmtH(total.otHours)}</span>
+                      <span className="text-amber-600">{fmtH(displayTotal.otHours)}</span>
                     </td>
                     <td className="px-4 py-2.5 text-center tabular-nums">
-                      <span className={total.avgOtPerPerson > riskThresholds.otRedH ? 'text-red-600' : 'text-gray-700'}>
-                        {fmtH(total.avgOtPerPerson)}
+                      <span className={displayTotal.avgOtPerPerson > riskThresholds.otRedH ? 'text-red-600' : 'text-gray-700'}>
+                        {fmtH(displayTotal.avgOtPerPerson)}
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-center tabular-nums">
-                      {derived.totalOtOver > 0
-                        ? <span className={derived.totalOtOver >= 3 ? 'text-red-600' : 'text-orange-500'}>{derived.totalOtOver}명</span>
+                      {d.totalOtOver > 0
+                        ? <span className={d.totalOtOver >= 3 ? 'text-red-600' : 'text-orange-500'}>{d.totalOtOver}명</span>
                         : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-4 py-2.5 text-center tabular-nums">
-                      {derived.totalOver209 > 0
-                        ? <span className={derived.totalOver209 >= 3 ? 'text-red-700' : 'text-orange-600'}>{derived.totalOver209}명</span>
+                      {d.totalOver209 > 0
+                        ? <span className={d.totalOver209 >= 3 ? 'text-red-700' : 'text-orange-600'}>{d.totalOver209}명</span>
                         : <span className="text-gray-300">—</span>}
                     </td>
                   </tr>
@@ -318,13 +376,13 @@ export function MetricDeepDive({
               <div className="px-4 pb-5">
                 <SectionComparisonChart
                   section="overtime"
-                  metrics={metrics}
+                  metrics={displayMetrics}
                   selectedBUs={selectedBUs}
                   riskThresholds={riskThresholds}
-                  highestTotal={derived.highestTotal}
-                  otOverCount={derived.otOverCount}
-                  missedTag={derived.missedTag}
-                  lateCount={derived.lateCount}
+                  highestTotal={d.highestTotal}
+                  otOverCount={d.otOverCount}
+                  missedTag={d.missedTag}
+                  lateCount={d.lateCount}
                 />
               </div>
             )}
@@ -341,7 +399,7 @@ export function MetricDeepDive({
               이상치
             </span>
             <span className="text-xs text-gray-400 tabular-nums">
-              {total.anomalies}건 · 미태깅 {derived.totalMissed} · 지각 {derived.totalLate} · 조기퇴근 {derived.totalEarly} · 근태이상 {derived.totalSevere}
+              {displayTotal.anomalies}건 · 미태깅 {d.totalMissed} · 지각 {d.totalLate} · 조기퇴근 {d.totalEarly} · 근태이상 {d.totalSevere}
             </span>
             <ChevronDown open={isOpenAnomaly} />
           </button>
@@ -362,12 +420,12 @@ export function MetricDeepDive({
                   </tr>
                 </thead>
                 <tbody>
-                  {metrics.map((m, i) => {
+                  {displayMetrics.map((m, i) => {
                     const active    = selectedBUs.includes(m.division)
-                    const late      = derived.lateCount[m.division]      ?? 0
-                    const early     = derived.earlyCount[m.division]     ?? 0
-                    const shortWork = derived.shortWorkCount[m.division] ?? 0
-                    const missed    = derived.missedTag[m.division]      ?? 0
+                    const late      = d.lateCount[m.division]      ?? 0
+                    const early     = d.earlyCount[m.division]     ?? 0
+                    const shortWork = d.shortWorkCount[m.division] ?? 0
+                    const missed    = d.missedTag[m.division]      ?? 0
                     return (
                       <tr
                         key={m.division}
@@ -407,19 +465,19 @@ export function MetricDeepDive({
                   <tr className="bg-gray-100 border-t-2 border-gray-300 font-semibold text-[12px]">
                     <td className="px-4 py-2.5 text-gray-700">전체</td>
                     <td className="px-3 py-2.5 text-center tabular-nums">
-                      {derived.totalLate > 0 ? <span className="text-amber-600">{derived.totalLate}건</span> : <span className="text-gray-300">—</span>}
+                      {d.totalLate > 0 ? <span className="text-amber-600">{d.totalLate}건</span> : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center tabular-nums">
-                      {derived.totalEarly > 0 ? <span className="text-orange-500">{derived.totalEarly}건</span> : <span className="text-gray-300">—</span>}
+                      {d.totalEarly > 0 ? <span className="text-orange-500">{d.totalEarly}건</span> : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center tabular-nums">
-                      {derived.totalShortWork > 0 ? <span className="text-red-600">{derived.totalShortWork}건</span> : <span className="text-gray-300">—</span>}
+                      {d.totalShortWork > 0 ? <span className="text-red-600">{d.totalShortWork}건</span> : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center tabular-nums">
-                      {derived.totalMissed > 0 ? <span className="text-red-500">{derived.totalMissed}건</span> : <span className="text-gray-300">—</span>}
+                      {d.totalMissed > 0 ? <span className="text-red-500">{d.totalMissed}건</span> : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center tabular-nums">
-                      {total.anomalies > 0 ? <span className="text-gray-800">{total.anomalies}건</span> : <span className="text-gray-300">—</span>}
+                      {displayTotal.anomalies > 0 ? <span className="text-gray-800">{displayTotal.anomalies}건</span> : <span className="text-gray-300">—</span>}
                     </td>
                   </tr>
                 </tbody>
@@ -429,15 +487,15 @@ export function MetricDeepDive({
               <div className="px-4 pb-5">
                 <SectionComparisonChart
                   section="anomaly"
-                  metrics={metrics}
+                  metrics={displayMetrics}
                   selectedBUs={selectedBUs}
                   riskThresholds={riskThresholds}
-                  highestTotal={derived.highestTotal}
-                  otOverCount={derived.otOverCount}
-                  missedTag={derived.missedTag}
-                  lateCount={derived.lateCount}
-                  earlyCount={derived.earlyCount}
-                  severeCount={derived.severeCount}
+                  highestTotal={d.highestTotal}
+                  otOverCount={d.otOverCount}
+                  missedTag={d.missedTag}
+                  lateCount={d.lateCount}
+                  earlyCount={d.earlyCount}
+                  severeCount={d.severeCount}
                 />
               </div>
             )}

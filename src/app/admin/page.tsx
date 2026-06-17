@@ -1230,12 +1230,17 @@ export default function AdminDashboard() {
               onToggle={toggleSection}
               metrics={activeMetrics}
               total={activeTotal}
+              employeeMetrics={employeeMetrics}
+              employeeTotal={employeeTotal}
+              leaderMetrics={leaderMetrics}
+              leaderTotal={leaderTotal}
               processedRecords={scopedRecords}
               employees={scopedEmployees}
               approvedKeys={approvedKeys}
               riskThresholds={riskThresholds}
               selectedBUs={selectedBUs}
               onBUsChange={setSelectedBUs}
+              leaderIdSet={leaderIdSet}
             />
           </div>
         )}

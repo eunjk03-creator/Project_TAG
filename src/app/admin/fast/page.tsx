@@ -437,12 +437,17 @@ export default function FastDashboard() {
             onToggle={toggleSection}
             metrics={activeMetrics}
             total={activeTotal}
+            employeeMetrics={employeeMetrics}
+            employeeTotal={employeeTotal}
+            leaderMetrics={leaderMetrics}
+            leaderTotal={leaderTotal}
             processedRecords={scopedRecords}
             employees={activeEmployees}
             approvedKeys={approvedKeys}
             riskThresholds={HR_THRESHOLDS}
             selectedBUs={selectedBUs}
             onBUsChange={setSelectedBUs}
+            leaderIdSet={leaderIdSet}
           />
         </div>
       )}
