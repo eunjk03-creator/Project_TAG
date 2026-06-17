@@ -103,7 +103,7 @@ function recordHours(r: ProcessedRecord): { totalH: number; otH: number } {
 function buildMetrics(
   division: string,
   empIds: Set<string>,
-  headcount: number,
+  plannedHeadcount: number,
   records: ProcessedRecord[],
   approvedKeys: Set<string>,
   bizDays: number,
@@ -111,6 +111,9 @@ function buildMetrics(
   empRawIdMap: Map<string, string>,
 ): DivisionMetrics {
   const recs = records.filter(r => empIds.has(r.employeeId))
+
+  // 실제 해당 기간에 레코드가 존재하는 직원 수 — 퇴사자/미입사자 자동 제외
+  const headcount = new Set(recs.map(r => r.employeeId)).size
 
   let totalHours = 0
   let weekdayOtH = 0
@@ -131,7 +134,7 @@ function buildMetrics(
     if (r.flag !== null && r.flag !== undefined) anomalies++
   }
 
-  const capacity          = bizDays * headcount * 8
+  const capacity          = bizDays * plannedHeadcount * 8
   const avgOtPerPerson    = headcount > 0 ? otHours   / headcount : 0
   const workloadIntensity = capacity  > 0 ? (totalHours / capacity) * 100 : 0
   const anomalyFrequency  = headcount > 0 ? anomalies / headcount : 0
