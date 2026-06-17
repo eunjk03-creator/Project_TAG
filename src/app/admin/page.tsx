@@ -428,6 +428,20 @@ export default function AdminDashboard() {
     [resolutions],
   )
 
+  // 기간 내 재직 중인 직원만 headcount 산정에 포함
+  // - 퇴사자: resignedFrom이 기간 시작 이전이면 제외 (기간 중 퇴사는 포함)
+  // - 미입사자: 입사일이 기간 종료 이후이면 제외
+  const metricsEmployees = useMemo(
+    () => scopedEmployees.filter(e => {
+      const attrs = finalAttrMap.get(e.id)
+      if (attrs?.isResigned && attrs.resignedFrom && attrs.resignedFrom < dateRange.from) return false
+      const hd = hireDateMap.get(e.id)
+      if (hd && hd > dateRange.to) return false
+      return true
+    }),
+    [scopedEmployees, finalAttrMap, hireDateMap, dateRange.from, dateRange.to],
+  )
+
   // ── Management metrics ────────────────────────────────────────────────────
   const {
     bizDays,
@@ -435,7 +449,7 @@ export default function AdminDashboard() {
     employeeMetrics, employeeTotal,
     leaderMetrics,   leaderTotal,
   } = useManagementMetrics(
-    scopedRecords, scopedEmployees, approvedKeys,
+    scopedRecords, metricsEmployees, approvedKeys,
     dateRange.from, dateRange.to, finalAttrMap,
   )
 
