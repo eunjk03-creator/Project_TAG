@@ -363,8 +363,9 @@ export function AllowanceTab() {
       const attrs = employeeAttrMap.get(emp.id)
       if (attrs?.isGlobalExclusion || attrs?.isResigned) continue
 
-      const isLeader   = attrs?.isLeader === true
       const empRecords = recsByEmp.get(emp.id) ?? []
+      // DB 규칙(manager_exemption) OR 직급명 자동감지(dataParser LEADER_TITLES) 둘 다 인정
+      const isLeader   = attrs?.isLeader === true || emp.isLeader === true
 
       // 입사월 기준 활성 월 수 계산 (입사한 달 포함)
       const hireYM = (() => {
