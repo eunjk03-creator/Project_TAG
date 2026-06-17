@@ -4,7 +4,7 @@ import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
 import type { DivisionMetrics } from '@/hooks/useManagementMetrics'
 import { SectionComparisonChart } from './SectionComparisonChart'
 
-export type Section = 'total' | 'overtime' | 'anomaly'
+export type Section = 'total' | 'overtime' | 'anomaly' | 'over209'
 
 interface Props {
   openSections:     Set<Section>

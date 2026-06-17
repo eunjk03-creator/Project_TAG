@@ -953,6 +953,40 @@ export default function AdminDashboard() {
     }
   }, [activeMetrics, activeTotal])
 
+  // 209h 초과 인원 집계 (현재 activeTab 기준)
+  const over209Stats = useMemo(() => {
+    const empById = new Map(scopedEmployees.map(e => [e.id, e]))
+    const empTotals = new Map<string, { hours: number; division: string }>()
+    for (const r of scopedRecords) {
+      const emp = empById.get(r.employeeId)
+      if (!emp) continue
+      // activeTab 필터 적용
+      if (activeTab === 'leader'   &&  !leaderIdSet.has(emp.id)) continue
+      if (activeTab === 'employee' && leaderIdSet.has(emp.id))   continue
+      if (globalExclusionIds.has(emp.id)) continue
+      // 전일 연차 무출근은 제외 (EmployeeCalendarGrid 동일 로직)
+      const isFullDayLeave = (r.erpLeaveAmount ?? 0) >= 1.0 || r.finalStatus === '연차'
+      if (isFullDayLeave && !r.clockIn && !r.clockOut) continue
+      const effectiveIn = r.effectiveClockIn ?? r.clockIn
+      const wAMins  = Math.round(computeWorkA(effectiveIn, r.clockOut) * 60)
+      const ciMins  = effectiveIn ? parseTimeToMins(effectiveIn) : null
+      const coMins  = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
+      const brkMins = computeDisplayBreakMins(wAMins, ciMins, coMins, r.leaveType)
+      const credit  = r.isUnpaidLeave ? 0 : (r.erpLeaveAmount ?? 0) * 8
+      const addH    = r.dayType === 'WEEKDAY'
+        ? Math.max(0, (wAMins - brkMins) / 60 + credit)
+        : r.finalStatus === '휴일근무' ? Math.max(0, (wAMins - brkMins) / 60) : 0
+      const cur = empTotals.get(r.employeeId) ?? { hours: 0, division: emp.division ?? '—' }
+      cur.hours += addH
+      empTotals.set(r.employeeId, cur)
+    }
+    const over209 = [...empTotals.values()].filter(v => v.hours >= 209)
+    const byDiv = new Map<string, number>()
+    for (const v of over209) byDiv.set(v.division, (byDiv.get(v.division) ?? 0) + 1)
+    const sorted = [...byDiv.entries()].sort((a, b) => b[1] - a[1])
+    return { count: over209.length, byDiv: sorted, topDiv: sorted[0]?.[0] ?? null }
+  }, [scopedRecords, scopedEmployees, activeTab, leaderIdSet, globalExclusionIds])
+
   if (!isMounted) return null
 
   return (
@@ -1072,7 +1106,7 @@ export default function AdminDashboard() {
         <>
         {/* KPI Cards */}
         <div className="px-6 pt-5 pb-4 shrink-0">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-4 gap-4">
 
             {/* Card 1 — 총 근로시간 */}
             <div className={`bg-white rounded-xl border p-4 transition-colors ${openSections.has('total') ? 'border-blue-300 ring-1 ring-blue-200' : 'border-gray-200'}`}>
@@ -1167,6 +1201,57 @@ export default function AdminDashboard() {
                 className="mt-2.5 text-xs text-red-500 hover:text-red-700 font-medium transition-colors">
                 📊 지표 분석 {openSections.has('anomaly') ? '▴' : '▾'}
               </button>
+            </div>
+
+            {/* Card 4 — 209h 초과 인원 */}
+            <div className={`bg-white rounded-xl border p-4 transition-colors ${openSections.has('over209') ? 'border-orange-300 ring-1 ring-orange-200' : 'border-gray-200'}`}>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs font-medium text-gray-500">209h 초과 인원</p>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium truncate max-w-[72px]">{deptLabel}</span>
+              </div>
+              <p className={`text-2xl font-bold mt-1 tabular-nums ${over209Stats.count > 0 ? 'text-orange-500' : 'text-gray-900'}`}>
+                {over209Stats.count}명
+              </p>
+              <div className="mt-2 space-y-0.5">
+                <p className="text-xs text-gray-400">
+                  전체 <span className="text-gray-600 font-medium tabular-nums">{activeTotal.headcount}</span>명 중
+                </p>
+                {over209Stats.topDiv ? (
+                  <p className="text-xs text-gray-400 truncate">
+                    최다 <span className="text-orange-600 font-medium">{over209Stats.topDiv}</span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-400">해당 없음</p>
+                )}
+              </div>
+              <div className="mt-2.5 flex items-center gap-2">
+                {over209Stats.count > 0 && (
+                  <button
+                    onClick={() => { setGridHoursFilter('over209'); setView('grid'); setTimeout(() => gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80) }}
+                    className="text-xs text-orange-500 hover:text-orange-700 font-medium transition-colors"
+                  >
+                    그리드 조회 →
+                  </button>
+                )}
+                <button onClick={() => toggleSection('over209')}
+                  className="ml-auto text-xs text-gray-400 hover:text-gray-600 font-medium transition-colors">
+                  부서별 {openSections.has('over209') ? '▴' : '▾'}
+                </button>
+              </div>
+              {openSections.has('over209') && (
+                <div className="mt-3 border-t border-gray-100 pt-3 space-y-1 max-h-36 overflow-y-auto">
+                  {over209Stats.byDiv.length === 0 ? (
+                    <p className="text-xs text-gray-400">해당 인원 없음</p>
+                  ) : over209Stats.byDiv.map(([div, cnt]) => (
+                    <button key={div}
+                      onClick={() => { setSelectedBUs([div]); setGridHoursFilter('over209'); setView('grid') }}
+                      className="w-full flex items-center justify-between text-xs py-0.5 px-1.5 rounded hover:bg-orange-50 transition-colors">
+                      <span className="text-gray-600 hover:text-orange-700 truncate">{div}</span>
+                      <span className="font-semibold tabular-nums text-orange-600 ml-2 shrink-0">{cnt}명</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
           </div>
