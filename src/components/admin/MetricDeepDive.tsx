@@ -57,12 +57,14 @@ export function MetricDeepDive({
 
     const highestTotal: Record<string, number> = {}
     const otOverCount:  Record<string, number> = {}
+    const over209Count: Record<string, number> = {}
     for (const e of employees) {
       const div = e.division
       const tot = empTotals[e.id] ?? 0
       const ot  = empOt[e.id]     ?? 0
       if (highestTotal[div] === undefined || tot > highestTotal[div]) highestTotal[div] = tot
       if (ot > riskThresholds.otRedH) otOverCount[div] = (otOverCount[div] ?? 0) + 1
+      if (tot >= 209) over209Count[div] = (over209Count[div] ?? 0) + 1
     }
 
     const missedTag:      Record<string, number> = {}  // NO_CLOCK_IN + NO_CLOCK_OUT
@@ -85,9 +87,10 @@ export function MetricDeepDive({
     }
 
     return {
-      highestTotal, otOverCount,
+      highestTotal, otOverCount, over209Count,
       missedTag, lateCount, earlyCount, shortWorkCount,
       severeCount: shortWorkCount,
+      totalOver209:   Object.values(over209Count).reduce((s, v) => s + v, 0),
       totalOtOver:    Object.values(otOverCount).reduce((s, v) => s + v, 0),
       totalMissed:    Object.values(missedTag).reduce((s, v) => s + v, 0),
       totalLate:      Object.values(lateCount).reduce((s, v) => s + v, 0),
@@ -231,12 +234,14 @@ export function MetricDeepDive({
                     <th className="text-center px-4 py-2.5">총 연장근로</th>
                     <th className="text-center px-4 py-2.5">1인 평균 연장</th>
                     <th className="text-center px-4 py-2.5 text-orange-500">{`>${riskThresholds.otRedH}h 초과인원`}</th>
+                    <th className="text-center px-4 py-2.5 text-orange-600">209h 초과</th>
                   </tr>
                 </thead>
                 <tbody>
                   {metrics.map((m, i) => {
-                    const active = selectedBUs.includes(m.division)
-                    const over   = derived.otOverCount[m.division] ?? 0
+                    const active  = selectedBUs.includes(m.division)
+                    const over    = derived.otOverCount[m.division]  ?? 0
+                    const over209 = derived.over209Count[m.division] ?? 0
                     return (
                       <tr
                         key={m.division}
@@ -276,6 +281,11 @@ export function MetricDeepDive({
                             ? <span className={`font-bold ${over >= 3 ? 'text-red-600' : 'text-orange-500'}`}>{over}명</span>
                             : <span className="text-gray-300">—</span>}
                         </td>
+                        <td className="px-4 py-2.5 text-center tabular-nums">
+                          {over209 > 0
+                            ? <span className={`font-bold ${over209 >= 3 ? 'text-red-700' : 'text-orange-600'}`}>{over209}명</span>
+                            : <span className="text-gray-300">—</span>}
+                        </td>
                       </tr>
                     )
                   })}
@@ -293,6 +303,11 @@ export function MetricDeepDive({
                     <td className="px-4 py-2.5 text-center tabular-nums">
                       {derived.totalOtOver > 0
                         ? <span className={derived.totalOtOver >= 3 ? 'text-red-600' : 'text-orange-500'}>{derived.totalOtOver}명</span>
+                        : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-center tabular-nums">
+                      {derived.totalOver209 > 0
+                        ? <span className={derived.totalOver209 >= 3 ? 'text-red-700' : 'text-orange-600'}>{derived.totalOver209}명</span>
                         : <span className="text-gray-300">—</span>}
                     </td>
                   </tr>
