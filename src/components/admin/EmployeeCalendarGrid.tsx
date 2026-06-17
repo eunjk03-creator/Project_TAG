@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
-import { computeWorkA, computeDisplayBreakMins, parseTimeToMins } from '@/utils/attendanceCalc'
+import { computeWorkA, computeDisplayBreakMins, parseTimeToMins, computeLeaderOtMins } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
@@ -151,6 +151,8 @@ type Props = {
   onHoursFilterChange?: (filter: 'all' | 'over52' | 'over209') => void
   /** Called when sort changes — parent should re-sort all employees before slicing to page */
   onSortChange?: (key: 'name' | 'ot' | 'night' | 'holiday' | 'anomaly', dir: 'asc' | 'desc' | 'none') => void
+  /** DB 예외규칙 포함 직책자 ID set — emp.isLeader(직급명 자동감지)와 통합하여 isLeader 판별 */
+  leaderIdSet?: ReadonlySet<string>
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -170,6 +172,7 @@ export function EmployeeCalendarGrid({
   onEmptyCellClick,
   onHoursFilterChange,
   onSortChange,
+  leaderIdSet,
 }: Props) {
   const companyHolSet   = useMemo(() => new Set(companyHolidays.map(h => h.date)), [companyHolidays])
   const companyHolLabel = useMemo(() => new Map(companyHolidays.map(h => [h.date, h.label])), [companyHolidays])
@@ -250,7 +253,8 @@ const empStats = useMemo(() => {
 
   for (const emp of employees) {
     const recs     = records.filter(r => r.employeeId === emp.id)
-    const isLeader = emp.isLeader ?? false  // Employee 기준 — ProcessedRecord.isLeader는 신뢰 안 함
+    // DB 예외규칙(leaderIdSet) OR 직급명 자동감지(emp.isLeader) 둘 다 인정
+    const isLeader = leaderIdSet ? leaderIdSet.has(emp.id) : (emp.isLeader ?? false)
 
     let exactOt = 0, roundedOt = 0
     let exactTotal = 0, roundedTotal = 0
@@ -282,9 +286,10 @@ const empStats = useMemo(() => {
 
         // ── 인정시간 ─────────────────────────────────────────────────────
         if (isLeader) {
-          // 직책자: ERP 게이트 없음, 절삭 없음 (Dinner Grace는 동일 적용)
-          roundedOt    += rawOt
-          roundedTotal += finalWorkH   // 전체 인정 (no floor on weekday)
+          // 직책자: raw clockIn 기준, AllowanceTab과 동일 공식 (effectiveClockIn/DinnerGrace 없음)
+          const rawWA = Math.round(computeWorkA(r.clockIn, r.clockOut) * 60)
+          roundedOt    += computeLeaderOtMins(rawWA, leaveAmt, r.finalStatus ?? '') / 60
+          roundedTotal += finalWorkH
           roundedNight += r.nightHours ?? 0
         } else {
           // 비직책자: ERP 신청한 날만 OT 인정

@@ -1495,6 +1495,7 @@ export default function AdminDashboard() {
                 onEmptyCellClick={(empId, date) => setManualCell({ employeeId: empId, date })}
                 onHoursFilterChange={f => { setGridHoursFilter(f); setGridPage(0) }}
                 onSortChange={(key, dir) => { setGridSortKey(key); setGridSortDir(dir); setGridPage(0) }}
+                leaderIdSet={leaderIdSet}
               />
             </div>
           </div>
