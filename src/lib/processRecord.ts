@@ -115,6 +115,8 @@ export function processRecord(
     ...record,
     dayType,
     ...(slackLeaveInjected ? { leaveType: effectiveLeaveType, erpLeaveAmount: effectiveLeaveAmount } : {}),
+    // 임신기단축근로는 ERP 기간신청 데이터 — leaveType/erpLeaveAmount를 일별 근태에 반영하지 않음
+    ...(_pregActive ? { leaveType: undefined, erpLeaveAmount: undefined } : {}),
     effectiveClockIn: null,
     regularHours:  0,
     overtimeHours: 0,
