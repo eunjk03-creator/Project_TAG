@@ -170,7 +170,6 @@ export function processRecord(
     if (r.flag === 'LATE_AND_EARLY_DEPARTURE') return '지각+조기퇴근'
     if (r.flag === 'LATE')                     return '지각'
     if (r.flag === 'EARLY_DEPARTURE')          return '조기퇴근'
-    if (r.leaveType === '연차')     return '연차'
     if (r.leaveType === '오전반차') return '오전반차'
     if (r.leaveType === '오후반차') return '오후반차'
     if (r.overtimeHours > 0)        return '연장근로'
