@@ -41,8 +41,9 @@ interface GridRow {
   anomalyTags:    string[]
   // Zone 2 — payroll reference (GAS leave-last formula, 30-min floor)
   systemOtH:      number
-  payrollOtH:     number   // Col 16: 급여용연장 (hours)
-  payrollNightH:  number   // Col 17: 급여용야간 (hours)
+  payrollOtH:      number   // Col 16: 급여용연장 (hours)
+  payrollNightH:   number   // Col 17: 급여용야간 (hours)
+  payrollHolidayH: number   // Col 18: 급여용휴일 (hours)
   erpOtStatus:    '신청' | '미신청' | '—'   // payrollOtH 기준 3-case
   auditFlag:      boolean
   note:           string
@@ -188,9 +189,10 @@ const OPTIONAL_COL_GROUPS = [
   {
     label: '급여 참조',
     cols: [
-      { id: 'payrollOtH',    label: '급여용연장' },
-      { id: 'payrollNightH', label: '급여용야간' },
-      { id: 'erpOtApplied',  label: 'ERP연장신청' },
+      { id: 'payrollOtH',      label: '급여용연장' },
+      { id: 'payrollNightH',   label: '급여용야간' },
+      { id: 'payrollHolidayH', label: '급여용휴일' },
+      { id: 'erpOtApplied',    label: 'ERP연장신청' },
     ],
   },
 ]
@@ -208,7 +210,7 @@ const COL_LABELS: Record<string, string> = {
   normalTags: '정상정보',
   anomalyTags: '비정상정보',
   systemOtH: '초과근로', payrollOtH: '급여용연장',
-  payrollNightH: '급여용야간', erpOtApplied: 'ERP연장신청',
+  payrollNightH: '급여용야간', payrollHolidayH: '급여용휴일', erpOtApplied: 'ERP연장신청',
 }
 
 const col = createColumnHelper<GridRow>()
@@ -498,12 +500,20 @@ export function AttendanceResultTable({
       // 직책자 포함 동일 공식: 체류 − 10h(출근+8h+점심1h+저녁1h), 30분 절삭
       // 수당 지급 여부는 AllowanceTab에서 별도 처리
       const systemOtH      = Math.max(0, finalWorkH - 8.0)
+      // 직책자 OT: AllowanceTab과 동일하게 raw clockIn 기준 (effectiveClockIn 아님)
+      const leaderRawWAMins = r.isLeader
+        ? Math.round(computeWorkA(r.clockIn, r.clockOut) * 60)
+        : gasWorkAMins
       const gasPayOtMins   = r.isLeader
-        ? computeLeaderOtMins(gasWorkAMins, leaveAmt, displayStatus)   // 출근+10h 초과, 절삭 없음
-        : computeGasPayOtMins(gasWorkAMins, leaveAmt, displayStatus)   // 출근+10h 초과, 30분 절삭
+        ? computeLeaderOtMins(leaderRawWAMins, leaveAmt, displayStatus)  // 출근+10h 초과, 절삭 없음
+        : computeGasPayOtMins(gasWorkAMins, leaveAmt, displayStatus)     // 출근+10h 초과, 30분 절삭
       const gasNightMins   = computeGasNightMins(r.clockOut)
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60
+      // 휴일근로: AllowanceTab과 동일하게 raw clockIn 기준, 30분 단위 절삭
+      const payrollHolidayH = r.dayType !== 'WEEKDAY' && r.clockIn && r.clockOut
+        ? Math.floor(Math.round(computeWorkA(r.clockIn, r.clockOut) * 60) / 30) * 30 / 60
+        : 0
       const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
       const isOtExempt = r.isLeader === true || otExemptIds?.has(r.employeeId) === true
       const erpOtStatus: '신청' | '미신청' | '—' =
@@ -519,7 +529,7 @@ export function AttendanceResultTable({
         gasWorkAMins, breakH: displayBreakMins / 60, gasWorkBMins,
         finalWorkH, displayStatus,
         attendanceStatus, normalTags, anomalyTags,
-        systemOtH, payrollOtH, payrollNightH,
+        systemOtH, payrollOtH, payrollNightH, payrollHolidayH,
         erpOtStatus,
         auditFlag,
         note: noteMap?.get(`${r.employeeId}_${r.date}`) ?? '',
@@ -707,6 +717,12 @@ export function AttendanceResultTable({
       id: 'payrollNightH', header: () => <ColTip label="급여용야간" tip="22시 이후 근무시간, 30분 단위 절사" />, size: 90, minSize: 72,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-semibold text-indigo-600">{fmtH(i.getValue())}</span>
+        : <span className="text-gray-300">—</span>,
+    }),
+    col.accessor('payrollHolidayH', {
+      id: 'payrollHolidayH', header: () => <ColTip label="급여용휴일" tip="휴일 실근무시간, 30분 단위 절사" />, size: 90, minSize: 72,
+      cell: i => i.getValue() > 0
+        ? <span className="tabular-nums text-xs font-semibold text-emerald-600">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('erpOtStatus', {

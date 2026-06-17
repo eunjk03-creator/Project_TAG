@@ -216,26 +216,49 @@ export function processRecord(
     )
     const hasLeaveContext = !!r.leaveType
 
-    // 출근 시각을 [flexStart, flexEnd] 범위로 클램핑
+    // AM/PM 반차 여부 — 외근 보정 범위를 제한하는 데 사용
+    const isAMLeave = effectiveLeaveType === '오전반차' || effectiveLeaveType === '오전반반차'
+    const isPMLeave = effectiveLeaveType === '오후반차' || effectiveLeaveType === '오후반반차'
+
+    // AM 반차 기준 출근 시각: 반반차 → 11:00, 반차 → 14:00
+    const amLeaveThresholdMins =
+      effectiveLeaveType === '오전반반차' ? parseTime('11:00') :
+      effectiveLeaveType === '오전반차'   ? parseTime('14:00') :
+      flexEndMins
+
+    // 출근 시각 결정
+    // AM 반차: CAPS가 기준시 이전이면 실 기록 사용, 이후(지각)이면 기준시로 클램핑
+    // AM 반차 미태깅: 기준시(11:00 또는 14:00)를 출근으로 인정 (기존 09:00 대신)
     const rawInRaw  = r.effectiveClockIn ?? r.clockIn ?? null
     const effInMins = rawInRaw
-      ? Math.min(Math.max(parseTime(rawInRaw), flexStartMins), flexEndMins)
-      : flexEndMins
+      ? isAMLeave
+        ? Math.min(Math.max(parseTime(rawInRaw), flexStartMins), amLeaveThresholdMins)
+        : Math.min(Math.max(parseTime(rawInRaw), flexStartMins), flexEndMins)
+      : isAMLeave ? amLeaveThresholdMins : flexEndMins
 
     // 퇴근 시각: 외근이면 18:00까지 근무한 것으로 간주
-    // - 퇴근 없음 or 퇴근 < 18:00 → 18:00 고정
-    // - 퇴근 ≥ 18:00 (야근) → 실제 퇴근 사용
-    const stdEndMins     = parseTime('18:00')
-    const actualOutMins  = r.clockOut ? parseTime(r.clockOut) : null
-    const effOutMins     = (actualOutMins !== null && actualOutMins > stdEndMins)
-      ? actualOutMins
-      : stdEndMins
-    const effOutStr      = fmtMins(effOutMins)
+    // PM 반차: 실 퇴근 그대로 사용 (18:00 floor 제거)
+    //   미태깅이면 반차 기준 퇴근 시각을 추정하고 verificationNote에 명시
+    const stdEndMins    = parseTime('18:00')
+    const actualOutMins = r.clockOut ? parseTime(r.clockOut) : null
+    const effOutMins: number = (() => {
+      if (actualOutMins !== null) {
+        return isPMLeave ? actualOutMins : (actualOutMins > stdEndMins ? actualOutMins : stdEndMins)
+      }
+      if (isPMLeave) {
+        // 미태깅 + PM 반차: 반차 기준 퇴근 예상 시각 (실근무 필요시간 + 점심)
+        const workMinsReq = Math.round((1 - effectiveLeaveAmount) * 8 * 60)
+        const lunchInSpan = effInMins < lunchStartMins
+        return effInMins + workMinsReq + (lunchInSpan ? lunchEndMins - lunchStartMins : 0)
+      }
+      return stdEndMins
+    })()
+    const effOutStr = fmtMins(effOutMins)
 
-    const rawStay        = effOutMins - effInMins
-    const brk            = computeDisplayBreakMins(rawStay, effInMins, effOutMins, effectiveLeaveType)
-    const net            = Math.max(0, rawStay - brk)
-    const lunchDed       = effOutMins > lunchEndMins && effInMins < lunchStartMins
+    const rawStay  = effOutMins - effInMins
+    const brk      = computeDisplayBreakMins(rawStay, effInMins, effOutMins, effectiveLeaveType)
+    const net      = Math.max(0, rawStay - brk)
+    const lunchDed = effOutMins > lunchEndMins && effInMins < lunchStartMins
 
     // 체류시간 기반 플래그(근무시간 미달·조기퇴근)는 외근 보정 후 재평가
     // 지각 플래그는 출근 태도 문제이므로 유지
@@ -247,8 +270,13 @@ export function processRecord(
       preservedFlag === 'LATE_AND_EARLY_DEPARTURE' ? 'LATE' :
       preservedFlag
 
-    const lunchDuration  = lunchEndMins - lunchStartMins
-    const offsiteStdOut  = effInMins + effectiveStdH * 60 + (lunchDed ? lunchDuration : 0)
+    const lunchDuration = lunchEndMins - lunchStartMins
+    // 반차 있을 때 외근 기준 소정시간 = 실근무 필요시간 (leaveAmount 반영)
+    // 없으면 정책 소정시간 그대로
+    const offsiteEffStdH = effectiveLeaveAmount > 0
+      ? (1 - effectiveLeaveAmount) * effectiveStdH
+      : effectiveStdH
+    const offsiteStdOut  = effInMins + offsiteEffStdH * 60 + (lunchDed ? lunchDuration : 0)
     const dinnerEndMins_ = offsiteStdOut + policy.dinnerGraceMinutes
     const rawOtMins      = Math.max(0, effOutMins - dinnerEndMins_)
     const otMins         = Math.floor(rawOtMins / policy.otUnitMinutes) * policy.otUnitMinutes
@@ -258,11 +286,16 @@ export function processRecord(
     const nightWorkEnd   = Math.min(effOutMins, nightEndMins)
     const nightHours     = Math.max(0, nightWorkEnd - nightWorkStart) / 60
 
+    // PM 반차 + 미태깅인 경우 추정 퇴근 시각을 note에 명시
+    const pmEstimateNote = (isPMLeave && actualOutMins === null)
+      ? ` / ${effectiveLeaveType} 기준 퇴근 추정: ${effOutStr} (태그 보완 필요)`
+      : ''
+
     return {
       ...r,
       clockOut:         effOutStr,
       effectiveClockIn: fmtMins(effInMins),
-      regularHours:     Math.min(net, effectiveStdH * 60) / 60,
+      regularHours:     Math.min(net, offsiteEffStdH * 60) / 60,
       overtimeHours,
       ...(rawOtMins > 0 && { rawOvertimeMinutes: rawOtMins }),
       nightHours,
@@ -271,7 +304,7 @@ export function processRecord(
       dinnerDeducted,
       flag:             newFlag,
       finalStatus:      '외근',
-      verificationNote: [...cleanedNotes, `✅ 슬랙 외근 공유 확인: ${memoCtx}${dupSuffix}`],
+      verificationNote: [...cleanedNotes, `✅ 슬랙 외근 공유 확인: ${memoCtx}${dupSuffix}${pmEstimateNote}`],
     }
   }
 
