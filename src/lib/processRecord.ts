@@ -214,8 +214,6 @@ export function processRecord(
     const cleanedNotes   = (r.verificationNote ?? []).filter(n =>
       n !== '출근기록없음' && n !== '퇴근기록없음',
     )
-    const hasLeaveContext = !!r.leaveType
-
     // AM/PM 반차 여부 — 외근 보정 범위를 제한하는 데 사용
     const isAMLeave = effectiveLeaveType === '오전반차' || effectiveLeaveType === '오전반반차'
     const isPMLeave = effectiveLeaveType === '오후반차' || effectiveLeaveType === '오후반반차'
@@ -246,10 +244,17 @@ export function processRecord(
         return isPMLeave ? actualOutMins : (actualOutMins > stdEndMins ? actualOutMins : stdEndMins)
       }
       if (isPMLeave) {
-        // 미태깅 + PM 반차: 반차 기준 퇴근 예상 시각 (실근무 필요시간 + 점심)
+        // 미태깅 + PM 반차: 반차 기준 퇴근 예상 시각 (실근무 필요시간 + 휴게)
+        // 점심 구간(12:30~13:30)이 근무 범위에 걸리는 만큼만 휴게로 추가
+        // 오후반차(4h): naiveOut=13:00 ≤ lunchEnd(13:30) → +30분 → 13:30
+        // 오후반반차(6h): naiveOut=15:00 > lunchEnd → +60분 → 16:00
         const workMinsReq = Math.round((1 - effectiveLeaveAmount) * 8 * 60)
+        const naiveOut    = effInMins + workMinsReq
         const lunchInSpan = effInMins < lunchStartMins
-        return effInMins + workMinsReq + (lunchInSpan ? lunchEndMins - lunchStartMins : 0)
+        const breakEst    = !lunchInSpan                  ? 0
+          : naiveOut <= lunchEndMins                      ? 30
+          : lunchEndMins - lunchStartMins
+        return naiveOut + breakEst
       }
       return stdEndMins
     })()
@@ -260,16 +265,10 @@ export function processRecord(
     const net      = Math.max(0, rawStay - brk)
     const lunchDed = effOutMins > lunchEndMins && effInMins < lunchStartMins
 
-    // 체류시간 기반 플래그(근무시간 미달·조기퇴근)는 외근 보정 후 재평가
-    // 지각 플래그는 출근 태도 문제이므로 유지
-    // 단, AM 반차(오전반반차/오전반차) + 외근 조합은 effectiveClockIn이 기준시로 보정되므로 지각 해제
-    const preservedFlag = hasLeaveContext ? r.flag : null
-    let newFlag: SieveFlag = preservedFlag
-    if (newFlag === 'ATTENDANCE_ANOMALY')        newFlag = null   // 외근으로 근무시간 해제
-    if (newFlag === 'EARLY_DEPARTURE')           newFlag = null   // 외근으로 조기퇴근 해제
-    if (newFlag === 'LATE_AND_ANOMALY')          newFlag = 'LATE' // 근무시간 부분만 해제
-    if (newFlag === 'LATE_AND_EARLY_DEPARTURE')  newFlag = 'LATE' // 조기퇴근 부분만 해제
-    if (isAMLeave && newFlag === 'LATE')         newFlag = null   // AM반차+외근: 기준시 보정으로 지각 해제
+    // 외근 Slack 확인 시 모든 이상 플래그 해제
+    // effectiveClockIn/Out이 이미 보정됐으므로 태그 누락·지각은 외근으로 증빙됨
+    // (LATE, NO_CLOCK_IN, NO_CLOCK_OUT, ATTENDANCE_ANOMALY, EARLY_DEPARTURE 전부 해제)
+    const newFlag: SieveFlag = null
 
     const lunchDuration = lunchEndMins - lunchStartMins
     // 반차 있을 때 외근 기준 소정시간 = 실근무 필요시간 (leaveAmount 반영)
