@@ -492,7 +492,13 @@ export function AttendanceResultTable({
       const attendanceStatus: '정상' | '비정상' = anomalyTags.length === 0 ? '정상' : '비정상'
 
       const normalTags: string[] = []
-      if (r.finalStatus === '외근') normalTags.push('외근')
+      if (r.finalStatus === '외근') {
+        normalTags.push('외근')
+        const lt = r.leaveType
+        if (lt === '오전반차' || lt === '오후반차' || lt === '오전반반차' || lt === '오후반반차') {
+          normalTags.push(lt)
+        }
+      }
       if (r.finalStatus === '휴일근무') normalTags.push('휴일근로')
       if (r.overtimeHours > 0) normalTags.push('연장근로')
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
@@ -669,11 +675,19 @@ export function AttendanceResultTable({
       cell: i => {
         const tags = i.getValue() as string[]
         if (!tags.length) return <span className="text-gray-200 text-[10px]">—</span>
+        const LEAVE_TYPES = new Set(['오전반차', '오후반차', '오전반반차', '오후반반차'])
         return (
           <span className="flex flex-wrap gap-0.5">
-            {tags.map(t => (
-              <span key={t} className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">{t}</span>
-            ))}
+            {tags.map(t => {
+              const cls = t === '외근' || t === '휴일근로' || t === '연장근로' || t === '일반'
+                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                : LEAVE_TYPES.has(t)
+                ? 'bg-teal-50 text-teal-700 border-teal-200'
+                : 'bg-blue-50 text-blue-700 border-blue-200'
+              return (
+                <span key={t} className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded border ${cls}`}>{t}</span>
+              )
+            })}
           </span>
         )
       },

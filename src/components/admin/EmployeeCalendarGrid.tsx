@@ -1012,7 +1012,13 @@ const empStats = useMemo(() => {
 
                       const tags: { cls: string; text: string }[] = []
                       if (fs === '연차')      tags.push({ cls: TAG.dayLeave,  text: '연차'       })
-                      if (fs === '외근')      tags.push({ cls: TAG.bizTrip,   text: '외근'       })
+                      if (fs === '외근') {
+                        tags.push({ cls: TAG.bizTrip, text: '외근' })
+                        const lt = rec?.leaveType
+                        if (lt === '오전반차' || lt === '오후반차' || lt === '오전반반차' || lt === '오후반반차') {
+                          tags.push({ cls: TAG.amLeave, text: lt })
+                        }
+                      }
                       if (fs === '휴일근무')  tags.push({ cls: TAG.holiday,   text: '휴일근로'   })
                       if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY')
                                              tags.push({ cls: TAG.anomaly,   text: '근무시간 미달' })
