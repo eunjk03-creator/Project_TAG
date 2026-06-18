@@ -262,16 +262,17 @@ const GAS_LUNCH_END   = 810  // 13:30
 
 /**
  * Engine B display break (집계·엑셀 출력용).
- * Always returns one of {0, 30, 60, 120} minutes.
+ * Returns one of {0, 30, 60, 120} minutes.
  *
  * Bracket (근무A 구간):
  *   < 4h  → 0분
  *   4–8h  → 30분 (단, 점심 12:30~13:30을 60분 완전히 걸치면 60분)
  *   8–12h → 60분
- *   ≥12h  → 120분
+ *   ≥12h  → 120분 (점심+저녁)
  *
- * GAS와 동일한 방식: 법정 bracket과 실제 점심 겹침 중 큰 값 사용.
- * leaveType 파라미터는 API 호환성 유지용 (내부에서 미사용).
+ * 반차/반반차 저녁 추가:
+ *   GAS 임계값(effectiveClockIn + 6h/반차, 8h/반반차)을 clockOut이 넘으면
+ *   저녁까지 근무한 것으로 보아 120분으로 올림.
  */
 export function computeDisplayBreakMins(
   workAMins:    number | null,
@@ -280,19 +281,42 @@ export function computeDisplayBreakMins(
   leaveType?:   string | null,
 ): number {
   if (!workAMins || workAMins <= 0) return 0
-  if (workAMins >= 720) return 120          // 12h 이상
-  if (workAMins >= 480) return 60           // 8h 이상 ~ 12h 미만
-  if (workAMins >= 240) {                   // 4h 이상 ~ 8h 미만 → 기본 30분
-    // 점심시간(12:30~13:30) 60분을 완전히 걸쳤으면 60분
+
+  // Base bracket
+  let baseMins: number
+  if (workAMins >= 720) {
+    baseMins = 120                          // 12h 이상 → 이미 점심+저녁
+  } else if (workAMins >= 480) {
+    baseMins = 60                           // 8–12h → 점심
+  } else if (workAMins >= 240) {
+    // 4–8h → 기본 30분, 점심 60분 완전 겹침 시 60분
     if (clockInMins !== null && clockOutMins !== null) {
       const lunchOverlap = Math.max(0,
         Math.min(clockOutMins, GAS_LUNCH_END) - Math.max(clockInMins, GAS_LUNCH_START)
       )
-      if (lunchOverlap >= 60) return 60
+      baseMins = lunchOverlap >= 60 ? 60 : 30
+    } else {
+      baseMins = 30
     }
-    return 30
+  } else {
+    baseMins = 0
   }
-  return 0                                  // 4h 미만
+
+  // 반차/반반차 저녁 휴게: GAS 임계값 초과 시 120분으로 올림
+  // 반차  = effectiveClockIn + 6h (4h 실근무 + 점심 1h + 저녁 1h)
+  // 반반차 = effectiveClockIn + 8h (6h 실근무 + 점심 1h + 저녁 1h)
+  if (baseMins < 120 && leaveType && clockInMins !== null && clockOutMins !== null) {
+    const isHalf    = leaveType.includes('반차') && !leaveType.includes('반반차')
+    const isQuarter = leaveType.includes('반반차')
+    if (isHalf || isQuarter) {
+      const dinnerThreshMins = clockInMins + (isHalf ? 360 : 480)
+      if (clockOutMins > dinnerThreshMins) {
+        baseMins = 120  // 점심 + 저녁
+      }
+    }
+  }
+
+  return baseMins
 }
 
 export function computeGasOtThreshMins(leaveDays: number): number {

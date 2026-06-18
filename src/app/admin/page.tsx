@@ -540,7 +540,7 @@ export default function AdminDashboard() {
       const effIn      = r.effectiveClockIn ?? r.clockIn
       const ci         = effIn      ? parseTimeToMins(effIn)      : null
       const co         = r.clockOut ? parseTimeToMins(r.clockOut) : null
-      const breakMins  = computeDisplayBreakMins(wAMins, ci, co)
+      const breakMins  = computeDisplayBreakMins(wAMins, ci, co, r.leaveType)
       const leaveCredit = (r.isUnpaidLeave ? 0 : leaveAmt) * 8
       const finalWorkH = Math.max(0, wAMins - breakMins) / 60 + leaveCredit
       const ds: string | null =
@@ -567,7 +567,7 @@ export default function AdminDashboard() {
       const effIn      = r.effectiveClockIn ?? r.clockIn
       const ci         = effIn      ? parseTimeToMins(effIn)      : null
       const co         = r.clockOut ? parseTimeToMins(r.clockOut) : null
-      const breakMins  = computeDisplayBreakMins(wAMins, ci, co)
+      const breakMins  = computeDisplayBreakMins(wAMins, ci, co, r.leaveType)
       const leaveCredit = (r.isUnpaidLeave ? 0 : leaveAmt) * 8
       const finalWorkH = Math.max(0, wAMins - breakMins) / 60 + leaveCredit
       totalH += finalWorkH
@@ -961,6 +961,38 @@ export default function AdminDashboard() {
     }
   }, [activeMetrics, activeTotal, employeeTotal, leaderTotal])
 
+  // 기간 내 개인 누적 근로시간이 209h 초과하는 인원 집계 (현재 탭 기준)
+  const over209Stats = useMemo(() => {
+    const tabEmpIds = activeTab === 'all' ? null : new Set(activeEmployees.map(e => e.id))
+    const empHours = new Map<string, number>()
+
+    for (const r of scopedRecords) {
+      if (tabEmpIds && !tabEmpIds.has(r.employeeId)) continue
+      if (r.dayType !== 'WEEKDAY') continue
+      const leaveAmt = r.erpLeaveAmount ?? 0
+      const workA    = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
+      const wAMins   = Math.round(workA * 60)
+      const effIn    = r.effectiveClockIn ?? r.clockIn
+      const ci       = effIn      ? parseTimeToMins(effIn)      : null
+      const co       = r.clockOut ? parseTimeToMins(r.clockOut) : null
+      const brk      = computeDisplayBreakMins(wAMins, ci, co, r.leaveType)
+      const finalWorkH = Math.max(0, wAMins - brk) / 60 + (r.isUnpaidLeave ? 0 : leaveAmt) * 8
+      empHours.set(r.employeeId, (empHours.get(r.employeeId) ?? 0) + finalWorkH)
+    }
+
+    const divCount = new Map<string, number>()
+    let count = 0
+    const empDivMap = new Map(scopedEmployees.map(e => [e.id, e.division]))
+    for (const [id, h] of empHours) {
+      if (h <= 209) continue
+      count++
+      const div = empDivMap.get(id)
+      if (div) divCount.set(div, (divCount.get(div) ?? 0) + 1)
+    }
+    const top = [...divCount.entries()].sort((a, b) => b[1] - a[1])[0]
+    return { count, topDiv: top?.[0] ?? null }
+  }, [scopedRecords, activeTab, activeEmployees, scopedEmployees])
+
   if (!isMounted) return null
 
   return (
@@ -1080,7 +1112,7 @@ export default function AdminDashboard() {
         <>
         {/* KPI Cards */}
         <div className="px-6 pt-5 pb-4 shrink-0">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-4 gap-4">
 
             {/* Card 1 — 총 근로시간 */}
             <div className={`bg-white rounded-xl border p-4 transition-colors ${openSections.has('total') ? 'border-blue-300 ring-1 ring-blue-200' : 'border-gray-200'}`}>
@@ -1198,7 +1230,39 @@ export default function AdminDashboard() {
               </button>
             </div>
 
-
+            {/* Card 4 — 209h 초과 인원 */}
+            <div className={`rounded-xl border p-4 transition-colors ${
+              over209Stats.count > 0
+                ? openSections.has('over209') ? 'bg-orange-50 border-orange-400 ring-1 ring-orange-200' : 'bg-orange-50 border-orange-200'
+                : openSections.has('over209') ? 'bg-white border-orange-300 ring-1 ring-orange-200' : 'bg-white border-gray-200'
+            }`}>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs font-medium text-gray-500">209h 초과</p>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium truncate max-w-[72px]">{deptLabel}</span>
+              </div>
+              <p className={`text-2xl font-bold mt-1 tabular-nums ${over209Stats.count > 0 ? 'text-orange-600' : 'text-gray-900'}`}>
+                {over209Stats.count}명
+              </p>
+              <div className="mt-2 space-y-0.5">
+                <p className="text-xs text-gray-400">
+                  전체 <span className="font-medium text-gray-600 tabular-nums">{activeTotal.headcount}명</span> 중
+                  <span className={`ml-1 font-medium tabular-nums ${over209Stats.count > 0 ? 'text-orange-600' : 'text-gray-600'}`}>
+                    {activeTotal.headcount > 0 ? ((over209Stats.count / activeTotal.headcount) * 100).toFixed(1) : 0}%
+                  </span>
+                </p>
+                {over209Stats.count > 0 && over209Stats.topDiv ? (
+                  <p className="text-xs text-gray-400 truncate">
+                    최다 <span className="text-orange-600 font-medium">{over209Stats.topDiv}</span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-400">초과 인원 없음</p>
+                )}
+              </div>
+              <button onClick={() => toggleSection('over209')}
+                className="mt-2.5 text-xs text-orange-500 hover:text-orange-700 font-medium transition-colors">
+                📊 지표 분석 {openSections.has('over209') ? '▴' : '▾'}
+              </button>
+            </div>
 
           </div>
         </div>
