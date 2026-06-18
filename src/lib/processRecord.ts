@@ -262,13 +262,14 @@ export function processRecord(
 
     // 체류시간 기반 플래그(근무시간 미달·조기퇴근)는 외근 보정 후 재평가
     // 지각 플래그는 출근 태도 문제이므로 유지
+    // 단, AM 반차(오전반반차/오전반차) + 외근 조합은 effectiveClockIn이 기준시로 보정되므로 지각 해제
     const preservedFlag = hasLeaveContext ? r.flag : null
-    const newFlag: SieveFlag =
-      preservedFlag === 'ATTENDANCE_ANOMALY'       ? null   :
-      preservedFlag === 'EARLY_DEPARTURE'          ? null   :
-      preservedFlag === 'LATE_AND_ANOMALY'         ? 'LATE' :
-      preservedFlag === 'LATE_AND_EARLY_DEPARTURE' ? 'LATE' :
-      preservedFlag
+    let newFlag: SieveFlag = preservedFlag
+    if (newFlag === 'ATTENDANCE_ANOMALY')        newFlag = null   // 외근으로 근무시간 해제
+    if (newFlag === 'EARLY_DEPARTURE')           newFlag = null   // 외근으로 조기퇴근 해제
+    if (newFlag === 'LATE_AND_ANOMALY')          newFlag = 'LATE' // 근무시간 부분만 해제
+    if (newFlag === 'LATE_AND_EARLY_DEPARTURE')  newFlag = 'LATE' // 조기퇴근 부분만 해제
+    if (isAMLeave && newFlag === 'LATE')         newFlag = null   // AM반차+외근: 기준시 보정으로 지각 해제
 
     const lunchDuration = lunchEndMins - lunchStartMins
     // 반차 있을 때 외근 기준 소정시간 = 실근무 필요시간 (leaveAmount 반영)
