@@ -182,8 +182,8 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
         const ci         = effIn      ? parseTimeToMins(effIn)      : null
         const co         = r.clockOut ? parseTimeToMins(r.clockOut) : null
         const breakMins  = computeDisplayBreakMins(wAMins, ci, co, r.leaveType)
-        const leaveCredit = (r.isUnpaidLeave ? 0 : (r.erpLeaveAmount ?? 0)) * 8
-        a.baseH += Math.max(0, wAMins - breakMins) / 60 + leaveCredit
+        // 52h 법적 한도는 실근로시간 기준 — 연차 등 유급휴가는 포함하지 않음
+        a.baseH += Math.max(0, wAMins - breakMins) / 60
       } else {
         a.holidayH += r.holidayHours
       }
