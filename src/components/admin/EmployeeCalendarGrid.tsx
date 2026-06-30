@@ -293,8 +293,8 @@ const empStats = useMemo(() => {
           roundedOt    += computeLeaderOtMins(rawWA, leaveAmt, r.finalStatus ?? '') / 60
           roundedTotal += finalWorkH
           roundedNight += r.nightHours ?? 0
-          // 평가용 직책자: 실근로 그대로 (절삭 없음)
-          const leaderEvalOt = Math.max(0, netWorkH - 8)
+          // 평가용 직책자: AllowanceTab과 동일 — computeLeaderOtMins, 절삭 없음
+          const leaderEvalOt = computeLeaderOtMins(rawWA, leaveAmt, r.finalStatus ?? '') / 60
           evalOt    += leaderEvalOt
           evalTotal += netWorkH
         } else {
@@ -307,8 +307,8 @@ const empStats = useMemo(() => {
           roundedTotal += finalWorkH - rawOt + approvedOt
           // 야간: ERP 신청한 날만, 30분 절삭
           roundedNight += r.erpOtApplied ? floorTo30(r.nightHours ?? 0) : 0
-          // 평가용 비직책자: ERP 상신한 날만 연장 인정, 30분 절삭
-          const nonLeaderEvalOt = r.erpOtApplied ? floorTo30(Math.max(0, netWorkH - 8)) : 0
+          // 평가용 비직책자: AllowanceTab과 동일 — r.overtimeHours(Dinner Grace+30분 절삭) 그대로 사용
+          const nonLeaderEvalOt = r.erpOtApplied ? r.overtimeHours : 0
           evalOt    += nonLeaderEvalOt
           evalTotal += floorTo30(Math.min(netWorkH, 8)) + nonLeaderEvalOt
         }
