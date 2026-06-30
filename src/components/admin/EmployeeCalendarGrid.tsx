@@ -318,15 +318,15 @@ const empStats = useMemo(() => {
         // 휴일근무: OT 컬럼 아닌 총근로에 집계, 직책자도 30분 절삭
         exactTotal   += finalWorkH
         roundedTotal += floorTo30(finalWorkH)
-        // 평가용: 직책자 그대로, 비직책자 30분 절삭
-        evalTotal    += isLeader ? netWorkH : floorTo30(netWorkH)
+        // 평가용 휴일근무: 직책자/비직책자 모두 30분 절삭 (수당 기준 동일)
+        evalTotal    += floorTo30(netWorkH)
 
       } else {
         // 주말·공휴일 (출근 없음 or holidayHours만 존재)
         const holH = r.holidayHours ?? 0
         exactTotal   += holH
         roundedTotal += floorTo30(holH)
-        evalTotal    += isLeader ? holH : floorTo30(holH)
+        evalTotal    += floorTo30(holH)
       }
     }
 
@@ -337,7 +337,7 @@ const empStats = useMemo(() => {
       if (r.dayType === 'WEEKDAY') return s
       return s + floorTo30(r.holidayHours ?? 0)
     }, 0)
-    const evalHoliday = isLeader ? rawHoliday : roundedHoliday
+    const evalHoliday = roundedHoliday
 
     stats[emp.id] = {
       total:      roundedTotal,
