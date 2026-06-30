@@ -307,10 +307,10 @@ const empStats = useMemo(() => {
           roundedTotal += finalWorkH - rawOt + approvedOt
           // 야간: ERP 신청한 날만, 30분 절삭
           roundedNight += r.erpOtApplied ? floorTo30(r.nightHours ?? 0) : 0
-          // 평가용 비직책자: OT 30분 절삭, leaveCredit 없음
+          // 평가용 비직책자: 하루 전체에 30분 절삭 적용 → 총근로가 항상 00/30분 단위
           const nonLeaderEvalOt = floorTo30(Math.max(0, netWorkH - 8))
           evalOt    += nonLeaderEvalOt
-          evalTotal += Math.min(netWorkH, 8) + nonLeaderEvalOt
+          evalTotal += floorTo30(netWorkH)
         }
         evalNight += r.nightHours ?? 0
 
