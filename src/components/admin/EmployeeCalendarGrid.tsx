@@ -690,6 +690,7 @@ const empStats = useMemo(() => {
               const empRecs   = lookup[emp.id] ?? {}
               const s         = empStats[emp.id] ?? { total: 0, ot: 0, night: 0, holiday: 0, anomalies: 0 }
               const isTopRisk = topRiskIds?.has(emp.id) ?? false
+              const isLeader  = leaderIdSet ? leaderIdSet.has(emp.id) : (emp.isLeader ?? false)
               const isEven    = rowIdx % 2 === 0
               const baseBg    = isEven ? 'bg-white' : 'bg-gray-50'
 
@@ -706,10 +707,16 @@ const empStats = useMemo(() => {
                       style={{ left: L1, width: W_NAME, minWidth: W_NAME }}
                       rowSpan={4}>
                       <button onClick={() => onNameClick(emp.id)} className="text-left block w-full">
-                        <p className="text-[11px] font-semibold text-gray-800 hover:text-blue-600 transition-colors leading-tight truncate"
-                          style={{ maxWidth: W_NAME - 20 }}>
-                          {emp.name}
-                        </p>
+                        <div className="flex items-center gap-1 min-w-0" style={{ maxWidth: W_NAME - 20 }}>
+                          <span className="text-[11px] font-semibold text-gray-800 hover:text-blue-600 transition-colors leading-tight truncate">
+                            {emp.name}
+                          </span>
+                          {isLeader && (
+                            <span className="shrink-0 text-[8px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded px-1 py-px leading-tight">
+                              직책
+                            </span>
+                          )}
+                        </div>
                         {emp.jobTitle && (
                           <p className="text-[9px] text-gray-400 mt-0.5 leading-tight truncate"
                             style={{ maxWidth: W_NAME - 20 }}>
