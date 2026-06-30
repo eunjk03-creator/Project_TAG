@@ -140,7 +140,7 @@ export default function AdminDashboard() {
   const GRID_PAGE_SIZE = 40
   const [riskView,    setRiskView]    = useState<RiskView>('hr')
   const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader'>('all')
-  const [showExactTime, setShowExactTime] = useState(false)
+  const [timeMode, setTimeMode] = useState<'recognized' | 'exact' | 'evaluation'>('recognized')
   const [tableColVisibility, setTableColVisibility] = useState<Record<string, boolean>>({
     normalTags:    true,
     anomalyTags:   true,
@@ -961,38 +961,6 @@ export default function AdminDashboard() {
     }
   }, [activeMetrics, activeTotal, employeeTotal, leaderTotal])
 
-  // 기간 내 개인 누적 근로시간이 209h 초과하는 인원 집계 (현재 탭 기준)
-  const over209Stats = useMemo(() => {
-    const tabEmpIds = activeTab === 'all' ? null : new Set(activeEmployees.map(e => e.id))
-    const empHours = new Map<string, number>()
-
-    for (const r of scopedRecords) {
-      if (tabEmpIds && !tabEmpIds.has(r.employeeId)) continue
-      if (r.dayType !== 'WEEKDAY') continue
-      const leaveAmt = r.erpLeaveAmount ?? 0
-      const workA    = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
-      const wAMins   = Math.round(workA * 60)
-      const effIn    = r.effectiveClockIn ?? r.clockIn
-      const ci       = effIn      ? parseTimeToMins(effIn)      : null
-      const co       = r.clockOut ? parseTimeToMins(r.clockOut) : null
-      const brk      = computeDisplayBreakMins(wAMins, ci, co, r.leaveType)
-      const finalWorkH = Math.max(0, wAMins - brk) / 60 + (r.isUnpaidLeave ? 0 : leaveAmt) * 8
-      empHours.set(r.employeeId, (empHours.get(r.employeeId) ?? 0) + finalWorkH)
-    }
-
-    const divCount = new Map<string, number>()
-    let count = 0
-    const empDivMap = new Map(scopedEmployees.map(e => [e.id, e.division]))
-    for (const [id, h] of empHours) {
-      if (h <= 209) continue
-      count++
-      const div = empDivMap.get(id)
-      if (div) divCount.set(div, (divCount.get(div) ?? 0) + 1)
-    }
-    const top = [...divCount.entries()].sort((a, b) => b[1] - a[1])[0]
-    return { count, topDiv: top?.[0] ?? null }
-  }, [scopedRecords, activeTab, activeEmployees, scopedEmployees])
-
   if (!isMounted) return null
 
   return (
@@ -1230,39 +1198,6 @@ export default function AdminDashboard() {
               </button>
             </div>
 
-            {/* Card 4 — 209h 초과 인원 */}
-            <div className={`rounded-xl border p-4 transition-colors ${
-              over209Stats.count > 0
-                ? openSections.has('over209') ? 'bg-orange-50 border-orange-400 ring-1 ring-orange-200' : 'bg-orange-50 border-orange-200'
-                : openSections.has('over209') ? 'bg-white border-orange-300 ring-1 ring-orange-200' : 'bg-white border-gray-200'
-            }`}>
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-xs font-medium text-gray-500">209h 초과</p>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium truncate max-w-[72px]">{deptLabel}</span>
-              </div>
-              <p className={`text-2xl font-bold mt-1 tabular-nums ${over209Stats.count > 0 ? 'text-orange-600' : 'text-gray-900'}`}>
-                {over209Stats.count}명
-              </p>
-              <div className="mt-2 space-y-0.5">
-                <p className="text-xs text-gray-400">
-                  전체 <span className="font-medium text-gray-600 tabular-nums">{activeTotal.headcount}명</span> 중
-                  <span className={`ml-1 font-medium tabular-nums ${over209Stats.count > 0 ? 'text-orange-600' : 'text-gray-600'}`}>
-                    {activeTotal.headcount > 0 ? ((over209Stats.count / activeTotal.headcount) * 100).toFixed(1) : 0}%
-                  </span>
-                </p>
-                {over209Stats.count > 0 && over209Stats.topDiv ? (
-                  <p className="text-xs text-gray-400 truncate">
-                    최다 <span className="text-orange-600 font-medium">{over209Stats.topDiv}</span>
-                  </p>
-                ) : (
-                  <p className="text-xs text-gray-400">초과 인원 없음</p>
-                )}
-              </div>
-              <button onClick={() => toggleSection('over209')}
-                className="mt-2.5 text-xs text-orange-500 hover:text-orange-700 font-medium transition-colors">
-                📊 지표 분석 {openSections.has('over209') ? '▴' : '▾'}
-              </button>
-            </div>
 
           </div>
         </div>
@@ -1543,22 +1478,31 @@ export default function AdminDashboard() {
               <span className="text-gray-400 whitespace-nowrap">시간 기준</span>
               <div className="flex items-center bg-gray-100 rounded-lg p-0.5 font-medium">
                 <button
-                  onClick={() => setShowExactTime(false)}
+                  onClick={() => setTimeMode('recognized')}
                   className={`px-2.5 py-1 rounded-md transition-all ${
-                    !showExactTime ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                    timeMode === 'recognized' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
                   }`}
-                  title="급여 계산 기준 시간 (30분 단위 절사)"
+                  title="급여 계산 기준 시간 (ERP 인정 OT + 30분 절사)"
                 >
                   인정 시간
                 </button>
                 <button
-                  onClick={() => setShowExactTime(true)}
+                  onClick={() => setTimeMode('exact')}
                   className={`px-2.5 py-1 rounded-md transition-all ${
-                    showExactTime ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                    timeMode === 'exact' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
                   }`}
                   title="태그 기록 기준 실제 근무 시간 (절사 없음)"
                 >
                   실제 값
+                </button>
+                <button
+                  onClick={() => setTimeMode('evaluation')}
+                  className={`px-2.5 py-1 rounded-md transition-all ${
+                    timeMode === 'evaluation' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                  title="실근로시간 기준 — 유급휴가 크레딧 제외, 비직책자 30분 절삭"
+                >
+                  평가용
                 </button>
               </div>
             </div>
@@ -1600,7 +1544,7 @@ export default function AdminDashboard() {
                 topRiskIds={topRiskIds}
                 riskMode={selectedBUs.length === 1}
                 riskThresholds={riskThresholds}
-                showExactTime={showExactTime}
+                timeMode={timeMode}
                 companyHolidays={policy.companyHolidays}
                 onOrgFilterChange={(div, team) => {
                   setSelectedDivisions(div ? [div] : [])
@@ -1734,7 +1678,7 @@ export default function AdminDashboard() {
                 : modalRecord.leaveType ?? undefined
             )
           }
-          showExactTime={showExactTime}
+          showExactTime={timeMode === 'exact'}
           onClose={() => setModalCell(null)}
           onSave={handleModalSave}
           onDelete={() => handleDeleteRecord(modalCell.employeeId, modalCell.date)}

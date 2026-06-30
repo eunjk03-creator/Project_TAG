@@ -581,7 +581,7 @@ export default function FastDashboard() {
               topRiskIds={new Set()}
               riskMode={false}
               riskThresholds={HR_THRESHOLDS}
-              showExactTime={false}
+              timeMode="recognized"
               companyHolidays={policy.companyHolidays}
             />
           </div>
