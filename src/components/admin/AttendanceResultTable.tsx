@@ -510,9 +510,9 @@ export function AttendanceResultTable({
       const gasNightMins   = computeGasNightMins(r.clockOut)
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60
-      // 휴일근로: AllowanceTab과 동일하게 raw clockIn 기준, 30분 단위 절삭
-      const payrollHolidayH = r.dayType !== 'WEEKDAY' && r.clockIn && r.clockOut
-        ? Math.floor(Math.round(computeWorkA(r.clockIn, r.clockOut) * 60) / 30) * 30 / 60
+      // 휴일근로: 근로B(holidayHours = 경과-휴게) 기준 30분 절삭 — AllowanceTab과 동일
+      const payrollHolidayH = r.dayType !== 'WEEKDAY'
+        ? Math.floor(Math.round((r.holidayHours ?? 0) * 60) / 30) * 30 / 60
         : 0
       const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
       const isOtExempt = r.isLeader === true || otExemptIds?.has(r.employeeId) === true
