@@ -275,16 +275,19 @@ const empStats = useMemo(() => {
       const credit     = r.isUnpaidLeave ? 0 : leaveAmt * 8
       // 실제값: 테이블 근로B와 동일 (grace zone 포함)
       const finalWorkH = Math.max(0, (wAMins - brkMins) / 60 + credit)
-      // 인정/평가용: 저녁 grace zone(clockIn+9h ~ +10h) 미인정 — 그리드 전용 계산
+      // 인정/평가용: 저녁 grace zone 미인정 — 그리드 전용 계산
+      // grace zone 기준은 출근시각 + 소정근로에 따라 결정
       const netWorkH = (() => {
-        if (ciMins !== null && coMins !== null && !r.leaveType) {
-          const graceStart = ciMins + 540  // clockIn + 9h (표준퇴근)
-          const graceEnd   = ciMins + 600  // clockIn + 10h (OT 기산점)
-          if (coMins > graceEnd)   return Math.max(0, (wAMins - 120) / 60)  // 점심+저녁
-          if (coMins > graceStart) return 8                                   // grace zone → 8h 고정
-          return Math.max(0, (wAMins - 60) / 60)                              // 점심만
-        }
-        return Math.max(0, (wAMins - brkMins) / 60)  // 반차/반반차·시간없음: 기존 로직
+        if (ciMins === null || coMins === null) return Math.max(0, (wAMins - brkMins) / 60)
+        const isHalf    = r.leaveType?.includes('반차') && !r.leaveType?.includes('반반차')
+        const isQuarter = r.leaveType?.includes('반반차')
+        // graceStart = 표준퇴근(소정근로+점심1h), graceEnd = OT 기산점(+1h), graceCap = 소정근로시간
+        const graceStart = ciMins + (isHalf ? 300 : isQuarter ? 420 : 540)  // +5h / +7h / +9h
+        const graceEnd   = ciMins + (isHalf ? 360 : isQuarter ? 480 : 600)  // +6h / +8h / +10h
+        const graceCap   = isHalf ? 4 : isQuarter ? 6 : 8
+        if (coMins > graceEnd)   return Math.max(0, (wAMins - 120) / 60)  // 점심+저녁
+        if (coMins > graceStart) return graceCap                            // grace zone → 소정근로 고정
+        return Math.max(0, (wAMins - 60) / 60)                              // 점심만
       })()
 
       if (r.dayType === 'WEEKDAY') {
