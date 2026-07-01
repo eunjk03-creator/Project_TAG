@@ -271,43 +271,53 @@ const empStats = useMemo(() => {
       const wAMins      = Math.round(computeWorkA(effectiveIn, r.clockOut) * 60)
       const ciMins      = effectiveIn ? parseTimeToMins(effectiveIn) : null
       const coMins      = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
-      const brkMins     = computeDisplayBreakMins(wAMins, ciMins, coMins, r.leaveType)
-      const credit      = r.isUnpaidLeave ? 0 : leaveAmt * 8
-      const finalWorkH  = Math.max(0, (wAMins - brkMins) / 60 + credit)
-      // 평가용: leaveCredit 없는 순수 실근로시간 (근로B)
-      const netWorkH    = Math.max(0, (wAMins - brkMins) / 60)
+      const brkMins    = computeDisplayBreakMins(wAMins, ciMins, coMins, r.leaveType)
+      const credit     = r.isUnpaidLeave ? 0 : leaveAmt * 8
+      // 실제값: 테이블 근로B와 동일 (grace zone 포함)
+      const finalWorkH = Math.max(0, (wAMins - brkMins) / 60 + credit)
+      // 인정/평가용: 저녁 grace zone(clockIn+9h ~ +10h) 미인정 — 그리드 전용 계산
+      const netWorkH = (() => {
+        if (ciMins !== null && coMins !== null && !r.leaveType) {
+          const graceStart = ciMins + 540  // clockIn + 9h (표준퇴근)
+          const graceEnd   = ciMins + 600  // clockIn + 10h (OT 기산점)
+          if (coMins > graceEnd)   return Math.max(0, (wAMins - 120) / 60)  // 점심+저녁
+          if (coMins > graceStart) return 8                                   // grace zone → 8h 고정
+          return Math.max(0, (wAMins - 60) / 60)                              // 점심만
+        }
+        return Math.max(0, (wAMins - brkMins) / 60)  // 반차/반반차·시간없음: 기존 로직
+      })()
 
       if (r.dayType === 'WEEKDAY') {
         // rawOt = Dinner Grace 이후 실제 OT 분 → 시간 변환 (절삭 전)
         const rawOt = (r.rawOvertimeMinutes ?? 0) / 60
 
         // ── 실제값: ERP 게이트 없음, 절삭 없음 ─────────────────────────
-        exactOt    += rawOt
         exactTotal += finalWorkH
         exactNight += r.nightHours ?? 0
 
         // ── 인정시간 ─────────────────────────────────────────────────────
         if (isLeader) {
-          // 직책자: raw clockIn 기준, AllowanceTab과 동일 공식 (effectiveClockIn/DinnerGrace 없음)
-          const rawWA = Math.round(computeWorkA(r.clockIn, r.clockOut) * 60)
-          roundedOt    += computeLeaderOtMins(rawWA, leaveAmt, r.finalStatus ?? '') / 60
-          roundedTotal += finalWorkH
+          // 직책자: effectiveClockIn 기준 (08:00 클램핑 적용), 세 모드 모두 동일 기준
+          const clampedWA = Math.round(computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut) * 60)
+          const leaderOt  = computeLeaderOtMins(clampedWA, leaveAmt, r.finalStatus ?? '') / 60
+          exactOt      += leaderOt
+          roundedOt    += leaderOt
+          roundedTotal += netWorkH + credit  // grace zone 미인정 (인정/평가 공통)
           roundedNight += r.nightHours ?? 0
-          // 평가용 직책자: AllowanceTab과 동일 — computeLeaderOtMins, 절삭 없음
-          const leaderEvalOt = computeLeaderOtMins(rawWA, leaveAmt, r.finalStatus ?? '') / 60
+          // 평가용 직책자: 동일 기준
+          const leaderEvalOt = leaderOt
           evalOt    += leaderEvalOt
           evalTotal += netWorkH
         } else {
           // 비직책자: ERP 신청한 날만 OT 인정
           // r.overtimeHours = Dinner Grace + 30분 절삭 적용된 값
+          exactOt      += rawOt
           const approvedOt = r.erpOtApplied ? r.overtimeHours : 0
           roundedOt    += approvedOt
-          // 총근로 = (Dinner Grace까지의 근무) + 인정된 OT
-          // = (finalWorkH - rawOt) + approvedOt
-          roundedTotal += finalWorkH - rawOt + approvedOt
+          // 인정시간 총근로 = 평가용 로직 + leaveCredit
+          roundedTotal += floorTo30(Math.min(netWorkH, 8)) + credit + approvedOt
           // 야간: ERP 신청한 날만, 30분 절삭
           roundedNight += r.erpOtApplied ? floorTo30(r.nightHours ?? 0) : 0
-          // 평가용 비직책자: AllowanceTab과 동일 — r.overtimeHours(Dinner Grace+30분 절삭) 그대로 사용
           const nonLeaderEvalOt = r.erpOtApplied ? r.overtimeHours : 0
           evalOt    += nonLeaderEvalOt
           evalTotal += floorTo30(Math.min(netWorkH, 8)) + nonLeaderEvalOt

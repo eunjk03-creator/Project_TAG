@@ -283,11 +283,13 @@ export function computeDisplayBreakMins(
   if (!workAMins || workAMins <= 0) return 0
 
   // Base bracket
+  // 저녁 휴게(60분)는 표준퇴근(clockIn+9h) 이후 퇴근 시 공제 — 연차없음 기준
+  // 반차/반반차는 아래 별도 임계값으로 처리
   let baseMins: number
   if (workAMins >= 720) {
-    baseMins = 120                          // 12h 이상 → 이미 점심+저녁
+    baseMins = 120                           // 12h+ → 점심+저녁 (저녁 grace zone 처리는 그리드에서 별도)
   } else if (workAMins >= 480) {
-    baseMins = 60                           // 8–12h → 점심
+    baseMins = 60                            // 8–9h → 점심
   } else if (workAMins >= 240) {
     // 4–8h → 기본 30분, 점심 60분 완전 겹침 시 60분
     if (clockInMins !== null && clockOutMins !== null) {
