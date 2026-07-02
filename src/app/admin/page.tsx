@@ -588,7 +588,11 @@ export default function AdminDashboard() {
   }, [scopedRecords, approvedKeys, displayStatusMap])
 
   // ── Filters ───────────────────────────────────────────────────────────────
-  const searchQuery = DAY_ALIASES[search.trim().toLowerCase()] ?? search.trim().toLowerCase()
+  const searchQuery = (() => {
+    const raw = search.trim().toLowerCase()
+    if (DAY_ALIASES[raw]) return DAY_ALIASES[raw]
+    return raw.normalize('NFC').replace(/\s+/g, '')  // NFC + 공백 제거 → Employee.name과 동일 정규화
+  })()
 
   const isAnyFilterActive = !!search || selectedDivisions.length > 0 || selectedStatuses.length > 0 || selectedBUs.length > 0
 

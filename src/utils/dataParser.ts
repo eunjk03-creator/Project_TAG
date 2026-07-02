@@ -495,7 +495,9 @@ function extractEmployees(capsData: CapsRow[]): Employee[] {
     const r = row as unknown as Record<string, string>
 
     const rawId = normalizeId(r['사원번호'])
-    const name  = String(r['이름'] ?? r['성명'] ?? '').trim()
+    // 컬럼명에 숨은 공백·인코딩 차이 대응: '이름' 키를 공백 제거 후 fuzzy 매칭
+    const nameKey = Object.keys(r).find(k => k.replace(/\s+/g, '') === '이름') ?? '이름'
+    const name    = normalizeName(r[nameKey] ?? r['성명'] ?? '')
     if (!rawId || !name) continue
 
     // Rule: invalid IDs and excluded departments are silently dropped at parse time
@@ -503,7 +505,7 @@ function extractEmployees(capsData: CapsRow[]): Employee[] {
     if (!isValidEmpId(rawId) || EXCLUDED_DEPTS.has(dept)) continue
 
     // Composite primary key: employeeId + name → unique per person.
-    const compositeKey = `${rawId}_${normalizeName(name)}`
+    const compositeKey = `${rawId}_${name}`
 
     if (seen.has(compositeKey)) continue  // same person appearing in multiple rows — skip
 
@@ -515,7 +517,7 @@ function extractEmployees(capsData: CapsRow[]): Employee[] {
     seen.set(compositeKey, {
       id:    compositeKey,  // canonical unique key used for ALL downstream lookups
       rawId,               // original 사원번호 — display only
-      name,
+      name,                // normalizeName 적용 (NFC + 공백 제거)
       division,
       team,
       jobTitle,
@@ -588,7 +590,8 @@ export function parseAttendanceData(
 
     // ── Build composite key — the only key used for ALL lookups ────────────
     const rawId   = String(r['사원번호'] ?? '').trim()
-    const rowName = normalizeName(r['이름'] ?? r['성명'])
+    const nameKey = Object.keys(r).find(k => k.replace(/\s+/g, '') === '이름') ?? '이름'
+    const rowName = normalizeName(r[nameKey] ?? r['성명'])
     if (!rawId || !rowName) { skippedCount++; continue }
 
     // Silent skip for excluded depts / invalid IDs — these were never added to employeeMap,
