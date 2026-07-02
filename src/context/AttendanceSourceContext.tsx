@@ -18,10 +18,11 @@ interface AttendanceSourceContextValue {
   isProcessing:       boolean
   lastUploadedAt:     string | null
   dbSaveError:        string | null
-  setRawData:         (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult>
-  mergeRawData:       (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult & { addedCount: number; updatedCount: number }>
-  clearLiveData:      () => Promise<void>
-  recomputeProcessed: () => Promise<void>
+  setRawData:            (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult>
+  mergeRawData:          (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult & { addedCount: number; updatedCount: number }>
+  deleteRecordsByKeys:   (keys: Set<string>) => Promise<{ deletedCount: number }>
+  clearLiveData:         () => Promise<void>
+  recomputeProcessed:    () => Promise<void>
 }
 
 const AttendanceSourceContext = createContext<AttendanceSourceContextValue | null>(null)
@@ -376,6 +377,11 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     setLiveEmployees(normalized)
     setLiveRecords(result.rawRecords)
     setDbSaveError(null)
+    // Clear stale processed records so the client-side fallback uses fresh rawRecords
+    // while the server recomputes. Without this, old serverProcessed (with stale
+    // erpOtApplied values) would block the client-side path.
+    setProcessedRecords(null)
+    lsClearProcessed()
 
     const ts = await dbPut({ employees: normalized, rawRecords: result.rawRecords })
     if (ts) {
@@ -419,6 +425,8 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
       setLiveEmployees(newNormalized)
       setLiveRecords(newResult.rawRecords)
       setDbSaveError(null)
+      setProcessedRecords(null)
+      lsClearProcessed()
       const ts = await dbPut({ employees: newNormalized, rawRecords: newResult.rawRecords })
       if (ts) {
         setLastUploadedAt(ts)
@@ -452,6 +460,8 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     setLiveEmployees(mergedEmployees)
     setLiveRecords(mergedRecords)
     setDbSaveError(null)
+    setProcessedRecords(null)
+    lsClearProcessed()
 
     const ts = await dbPut({ employees: mergedEmployees, rawRecords: mergedRecords })
     if (ts) {
@@ -467,6 +477,30 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
 
     return { ...newResult, employees: mergedEmployees, rawRecords: mergedRecords, addedCount, updatedCount }
   }, [policy, loadProcessedFromDB]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── deleteRecordsByKeys: 특정 레코드만 DB에서 삭제 ───────────────────
+  const deleteRecordsByKeys = useCallback(async (keys: Set<string>): Promise<{ deletedCount: number }> => {
+    const current = liveRecords ?? []
+    const remaining = current.filter(r => !keys.has(`${r.employeeId}_${r.date}`))
+    const deletedCount = current.length - remaining.length
+    if (deletedCount === 0) return { deletedCount: 0 }
+
+    setLiveRecords(remaining)
+    setDbSaveError(null)
+    const ts = await dbPut({ employees: liveEmployees ?? [], rawRecords: remaining })
+    if (ts) {
+      setLastUploadedAt(ts)
+      lsSave({ employees: liveEmployees ?? [], rawRecords: remaining, updatedAt: ts })
+    } else {
+      setDbSaveError('DB 저장 실패')
+    }
+
+    setIsProcessing(true)
+    apiCompute(policy).then(async pt => { if (pt) await loadProcessedFromDB() })
+      .catch(console.error).finally(() => setIsProcessing(false))
+
+    return { deletedCount }
+  }, [liveRecords, liveEmployees, policy, loadProcessedFromDB])
 
   // ── clearLiveData ─────────────────────────────────────────────────────
   const clearLiveData = useCallback(async () => {
@@ -495,6 +529,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
       dbSaveError,
       setRawData,
       mergeRawData,
+      deleteRecordsByKeys,
       clearLiveData,
       recomputeProcessed,
     }}>

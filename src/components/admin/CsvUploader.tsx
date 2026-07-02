@@ -4,6 +4,7 @@ import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useSlack, type SlackConfig } from '@/context/SlackContext'
+import { normalizeDate } from '@/utils/dataParser'
 import type { CapsRow, ErpUnifiedRow } from '@/types/tag'
 
 // ── Required columns for each file type ──────────────────────────────────
@@ -19,7 +20,7 @@ type SlotState =
   | { phase: 'error';  name: string; msg: string }
 
 type ApplyResult =
-  | { ok: true;  empCount: number; recCount: number; skipped: number; added?: number; updated?: number }
+  | { ok: true;  empCount: number; recCount: number; skipped: number; added?: number; updated?: number; erpOtMatchCount?: number }
   | { ok: false; msg: string }
 
 // ── Low-level file → rows parser ──────────────────────────────────────────
@@ -297,9 +298,21 @@ function SlackPanel() {
 const MAX_CAPS = 5
 const MAX_ERP  = 5
 
+// ── CAPS 로우에서 DB 삭제 키 추출 (employeeId_date 형식) ─────────────────
+function extractCapsKeys(rows: Record<string, string>[]): Set<string> {
+  const keys = new Set<string>()
+  for (const r of rows) {
+    const empId = (r['사원번호'] ?? '').trim()
+    const name  = (r['이름']    ?? '').trim()
+    const date  = normalizeDate(r['근무일자'])
+    if (empId && name && date) keys.add(`${empId}_${name}_${date}`)
+  }
+  return keys
+}
+
 // ── Main export ───────────────────────────────────────────────────────────
 export function CsvUploader() {
-  const { mergeRawData, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, isProcessing } = useAttendanceSource()
+  const { mergeRawData, deleteRecordsByKeys, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, isProcessing } = useAttendanceSource()
 
   // CAPS: 복수 파일 지원 (최대 MAX_CAPS)
   const capsDataRefs = useRef<(Record<string, string>[] | null)[]>([null])
@@ -329,14 +342,51 @@ export function CsvUploader() {
     setErpSlots(prev => [...prev, { phase: 'idle' }])
   }
 
-  function removeCapsSlot(idx: number) {
-    if (capsSlots.length <= 1) return
+  async function removeCapsSlot(idx: number) {
+    const slot = capsSlots[idx]
+    // ready 상태면 해당 파일의 레코드를 DB에서도 삭제
+    if (slot.phase === 'ready' && capsDataRefs.current[idx]) {
+      const keys = extractCapsKeys(capsDataRefs.current[idx]!)
+      if (keys.size > 0) {
+        setIsSaving(true)
+        try {
+          await deleteRecordsByKeys(keys)
+          setResult(null)
+        } finally {
+          setIsSaving(false)
+        }
+      }
+    }
+    if (capsSlots.length <= 1) {
+      capsDataRefs.current[idx] = null
+      setCapsSlot(idx, { phase: 'idle' })
+      return
+    }
     capsDataRefs.current = capsDataRefs.current.filter((_, i) => i !== idx)
     setCapsSlots(prev => prev.filter((_, i) => i !== idx))
-    setResult(null)
   }
-  function removeErpSlot(idx: number) {
-    if (erpSlots.length <= 1) return
+  async function removeErpSlot(idx: number) {
+    const slot = erpSlots[idx]
+    // ERP는 기존 레코드의 휴가/OT 플래그에 반영된 상태 → 남은 파일로 재계산
+    if (slot.phase === 'ready') {
+      erpDataRefs.current[idx] = null
+      if (erpSlots.length <= 1) {
+        setErpSlot(idx, { phase: 'idle' })
+      } else {
+        setErpSlots(prev => prev.filter((_, i) => i !== idx))
+        erpDataRefs.current = erpDataRefs.current.filter((_, i) => i !== idx)
+      }
+      setResult(null)
+      // 남은 CAPS + ERP로 재계산 트리거
+      await applyAll()
+      return
+    }
+    if (erpSlots.length <= 1) {
+      erpDataRefs.current[idx] = null
+      setErpSlot(idx, { phase: 'idle' })
+      setResult(null)
+      return
+    }
     erpDataRefs.current = erpDataRefs.current.filter((_, i) => i !== idx)
     setErpSlots(prev => prev.filter((_, i) => i !== idx))
     setResult(null)
@@ -352,11 +402,11 @@ export function CsvUploader() {
     const mergedErp  = allErp.flat()
     setIsSaving(true)
     try {
-      const { employees: emps, rawRecords: recs, skippedCount, addedCount, updatedCount } = await mergeRawData(
+      const { employees: emps, rawRecords: recs, skippedCount, addedCount, updatedCount, erpOtMatchCount } = await mergeRawData(
         mergedCaps as unknown as CapsRow[],
         mergedErp  as unknown as ErpUnifiedRow[],
       )
-      setResult({ ok: true, empCount: emps.length, recCount: recs.length, skipped: skippedCount, added: addedCount, updated: updatedCount })
+      setResult({ ok: true, empCount: emps.length, recCount: recs.length, skipped: skippedCount, added: addedCount, updated: updatedCount, erpOtMatchCount })
       setExpanded(false)
     } catch (e) {
       setResult({ ok: false, msg: (e as Error).message })
@@ -469,8 +519,20 @@ export function CsvUploader() {
           </span>
         )}
         {!isSaving && result?.ok && !dbSaveError && (
-          <span className="text-[11px] text-emerald-600 font-medium whitespace-nowrap">
+          <span className="text-[11px] text-emerald-600 font-medium whitespace-nowrap flex items-center gap-2">
             ✓ 추가 {result.added ?? 0}건 · 업데이트 {result.updated ?? 0}건 (총 {result.recCount.toLocaleString()}건)
+            {result.erpOtMatchCount !== undefined && (
+              <span
+                className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                  result.erpOtMatchCount > 0
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-amber-100 text-amber-700'
+                }`}
+                title="ERP 연장근로 신청 매칭 건수 (0이면 OT 파일 미포함 또는 컬럼 불일치)"
+              >
+                연장신청 {result.erpOtMatchCount}건 매칭
+              </span>
+            )}
           </span>
         )}
         {!isSaving && result?.ok && dbSaveError && (
@@ -488,6 +550,22 @@ export function CsvUploader() {
             <span className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
             처리 중…
           </span>
+        )}
+
+        {/* 접힌 상태에서 업로드된 파일명 표시 */}
+        {!expanded && (
+          <div className="flex items-center gap-1 flex-wrap min-w-0">
+            {(capsSlots.filter(s => s.phase === 'ready') as Extract<SlotState, { phase: 'ready' }>[]).map((s, i) => (
+              <span key={`caps-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-50 text-[10px] text-sky-600 font-medium max-w-[130px]" title={s.name}>
+                <span className="truncate">{s.name}</span>
+              </span>
+            ))}
+            {(erpSlots.filter(s => s.phase === 'ready') as Extract<SlotState, { phase: 'ready' }>[]).map((s, i) => (
+              <span key={`erp-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-[10px] text-amber-600 font-medium max-w-[130px]" title={s.name}>
+                <span className="truncate">{s.name}</span>
+              </span>
+            ))}
+          </div>
         )}
 
         <div className="ml-auto flex items-center gap-2 shrink-0">
@@ -547,7 +625,7 @@ export function CsvUploader() {
                         onFile={f => processCapsFile(f, idx)}
                       />
                     </div>
-                    {capsSlots.length > 1 && (
+                    {slot.phase !== 'idle' && (
                       <button
                         onClick={() => removeCapsSlot(idx)}
                         className="mt-1 text-gray-300 hover:text-red-400 transition-colors text-lg leading-none shrink-0"
@@ -588,7 +666,7 @@ export function CsvUploader() {
                         onFile={f => processErpFile(f, idx)}
                       />
                     </div>
-                    {erpSlots.length > 1 && (
+                    {slot.phase !== 'idle' && (
                       <button
                         onClick={() => removeErpSlot(idx)}
                         className="mt-1 text-gray-300 hover:text-red-400 transition-colors text-lg leading-none shrink-0"

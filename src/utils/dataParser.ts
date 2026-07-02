@@ -530,9 +530,10 @@ function extractEmployees(capsData: CapsRow[]): Employee[] {
 // ── Main export ───────────────────────────────────────────────────────────
 
 export interface ParseResult {
-  employees:    Employee[]
-  rawRecords:   RawRecord[]
-  skippedCount: number
+  employees:      Employee[]
+  rawRecords:     RawRecord[]
+  skippedCount:   number
+  erpOtMatchCount: number   // records where erpOtApplied = true — 0 means OT map empty or no key match
 }
 
 export function parseAttendanceData(
@@ -802,5 +803,16 @@ export function parseAttendanceData(
   // Flush merged dual-affiliation records
   for (const record of dualAffilStage.values()) rawRecords.push(record)
 
-  return { employees, rawRecords, skippedCount }
+  const erpOtMatchCount = rawRecords.filter(r => r.erpOtApplied).length
+
+  if (typeof window !== 'undefined') {
+    console.log(
+      `[TAG] ERP 연장근로 매칭 결과: ${erpOtMatchCount}건 / 전체 ${rawRecords.length}건 (연장 맵 ${otMap.size}건)`,
+    )
+    if (erpOtMatchCount === 0 && otMap.size > 0) {
+      console.warn('[TAG] ⚠ OT 맵에 항목은 있으나 CAPS 레코드와 날짜·사번이 매칭되지 않음 — 날짜 포맷 또는 사번 형식 확인 필요')
+    }
+  }
+
+  return { employees, rawRecords, skippedCount, erpOtMatchCount }
 }
