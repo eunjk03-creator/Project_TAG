@@ -582,7 +582,17 @@ export function processRecord(
   const effectiveTargetMins = leaveMinRequired ?? effectiveStdH * 60
   const standardOutMins     = effectiveInMins + effectiveTargetMins +
     (lunchDeducted ? lunchEndMins - lunchStartMins : 0)
-  const dinnerEndMins       = standardOutMins + policy.dinnerGraceMinutes
+
+  // OT 기산점 하한선: 반차 사용 여부와 무관하게 하루치 표준근무 이전에는 OT 미산정.
+  // 오전반차는 실제 출근이 오후이므로 기준 시작을 flexEndMins(09:00)로 고정.
+  const _isAMLeave  = effectiveLeaveType === '오전반차' || effectiveLeaveType === '오전반반차'
+  const _refInMins  = _isAMLeave ? flexEndMins : effectiveInMins
+  const _fullDayOut = _refInMins + effectiveStdH * 60
+    + (_refInMins < lunchStartMins ? lunchEndMins - lunchStartMins : 0)
+  const dinnerEndMins = Math.max(
+    standardOutMins + policy.dinnerGraceMinutes,
+    _fullDayOut    + policy.dinnerGraceMinutes,
+  )
   const dinnerDeducted      = outMins > standardOutMins
 
   const regularHours   = Math.min(Math.max(elapsed, 0), effectiveTargetMins) / 60

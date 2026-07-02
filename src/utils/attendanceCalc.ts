@@ -343,7 +343,7 @@ export function computeGasPayOtMins(
   leaveDays:  number,
   status:     string | null | undefined,
 ): number {
-  if (status?.includes('외근')) return 0
+  void status
   const allowance = leaveDays >= 0.5 ? 360 : leaveDays >= 0.25 ? 480 : 600
   return Math.max(0, Math.floor((workAMins - allowance) / 30) * 30)
 }
@@ -354,7 +354,7 @@ export function computeLeaderOtMins(
   leaveDays:    number,
   status:       string | null | undefined,
 ): number {
-  if (status?.includes('외근')) return 0
+  void status
   const allowance = leaveDays >= 0.5 ? 360 : leaveDays >= 0.25 ? 480 : 600
   return Math.max(0, rawWorkAMins - allowance)
 }
