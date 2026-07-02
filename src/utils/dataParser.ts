@@ -463,14 +463,19 @@ function buildOtMap(
     const status = String(r['승인상태'] ?? '').trim()
     if (!isAcceptedStatus(status)) continue
 
-    const code  = String(r['근태코드'] ?? '').trim()
-    const hours = parseInjeongTime(r['인정시간'])
+    // 컬럼명 fuzzy 매칭 — buildLeaveMap과 동일하게 (공백/전각문자 차이 대응)
+    const codeKey     = Object.keys(r).find(k => k.replace(/\s+/g, '') === '근태코드')  ?? '근태코드'
+    const injeongKey  = Object.keys(r).find(k => k.replace(/\s+/g, '') === '인정시간')  ?? '인정시간'
+    const startKey    = Object.keys(r).find(k => k.replace(/\s+/g, '') === '시작일')    ?? '시작일'
+
+    const code  = String(r[codeKey]  ?? '').normalize('NFKC').trim()
+    const hours = parseInjeongTime(r[injeongKey])
 
     // Include as OT if code matches OR if non-zero approved hours exist
     const isOT = OT_CODE_SET.has(code) || hours > 0
     if (!isOT) continue
 
-    const startDate = normalizeDate(r['시작일'])
+    const startDate = normalizeDate(r[startKey])
     if (!startDate) continue
 
     const k    = key(compositeKey, startDate)
@@ -566,6 +571,15 @@ export function parseAttendanceData(
       const sample = [...leaveMap.keys()].slice(0, 3)
       console.log('[TAG] 휴가 맵 샘플 키:', sample)
     }
+    if (otMap.size === 0 && erpData.length > 0) {
+      console.warn('[TAG] ⚠ ERP 파일은 있는데 연장 맵이 0건 — 근태코드·승인상태·시작일 컬럼명 확인 필요')
+      const firstRow = erpData[0] as unknown as Record<string, string>
+      console.warn('[TAG] ERP 첫 행 컬럼명 (OT 디버그):', Object.keys(firstRow))
+    }
+    if (otMap.size > 0) {
+      const sample = [...otMap.keys()].slice(0, 3)
+      console.log('[TAG] 연장 맵 샘플 키:', sample)
+    }
   }
 
   for (const row of capsData) {
@@ -634,8 +648,11 @@ export function parseAttendanceData(
     }
 
     const { dayType, dayLabel } = getDayInfo(normDate, companyHolsMap)
-    const clockIn     = normalizeTime(r['출근'] || null)
-    const rawClockOut = normalizeTime(r['퇴근'] || null)
+    // CAPS exports "0:00" (or "00:00") as a zero-fill placeholder for absent days — treat as null
+    const rawIn       = (r['출근'] ?? '').trim()
+    const rawOut      = (r['퇴근'] ?? '').trim()
+    const clockIn     = (rawIn  === '0:00' || rawIn  === '00:00') ? null : normalizeTime(rawIn  || null)
+    const rawClockOut = (rawOut === '0:00' || rawOut === '00:00') ? null : normalizeTime(rawOut || null)
     // Auto-detect next-day clock-out: CAPS sometimes exports plain "01:30" (no '+').
     // If the numeric value is strictly less than clock-in, it must be past midnight.
     const clockOut: string | null =
