@@ -302,7 +302,7 @@ const empStats = useMemo(() => {
         if (isLeader) {
           // 직책자: effectiveClockIn 기준 (08:00 클램핑 적용), 세 모드 모두 동일 기준
           const clampedWA = Math.round(computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut) * 60)
-          const leaderOt  = computeLeaderOtMins(clampedWA, leaveAmt, r.finalStatus ?? '') / 60
+          const leaderOt  = computeLeaderOtMins(clampedWA, leaveAmt, r.finalStatus ?? '', r.effectiveClockIn ?? r.clockIn) / 60
           exactOt      += leaderOt
           roundedOt    += leaderOt
           roundedTotal += netWorkH + credit  // grace zone 미인정 (인정/평가 공통)

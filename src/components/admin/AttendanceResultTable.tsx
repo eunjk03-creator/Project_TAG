@@ -497,16 +497,33 @@ export function AttendanceResultTable({
       if (r.overtimeHours > 0) normalTags.push('연장근로')
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
       // Zone 2 — GAS formula payroll metrics (leave-last)
-      // 직책자 포함 동일 공식: 체류 − 10h(출근+8h+점심1h+저녁1h), 30분 절삭
-      // 수당 지급 여부는 AllowanceTab에서 별도 처리
-      const systemOtH      = Math.max(0, finalWorkH - 8.0)
-      // 직책자 OT: AllowanceTab과 동일하게 raw clockIn 기준 (effectiveClockIn 아님)
-      const leaderRawWAMins = r.isLeader
-        ? Math.round(computeWorkA(r.clockIn, r.clockOut) * 60)
-        : gasWorkAMins
+      // 오전반차/반반차: 표준출근시각으로 클램핑 (조기출근 OT 과산정 방지)
+      const otStdInMins: number | null =
+        r.leaveType === '오전반차'   ? 840 :
+        r.leaveType === '오전반반차' ? 660 :
+        null
+      const toOtClampedStr = (inMins: number | null): string | null => {
+        if (inMins === null) return null
+        const clamped = otStdInMins !== null ? Math.max(inMins, otStdInMins) : inMins
+        return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`
+      }
+      // 일반 직원: effectiveClockIn 클램핑
+      const otClockIn      = toOtClampedStr(clockInMins)
+      const otWorkAMins    = (otClockIn && clockOutMins !== null)
+        ? Math.max(0, clockOutMins - parseTimeToMins(otClockIn))
+        : 0
+      // 직책자: raw clockIn 클램핑
+      const leaderRawInMins   = r.clockIn ? parseTimeToMins(r.clockIn) : null
+      const leaderOtClockIn   = toOtClampedStr(leaderRawInMins)
+      const leaderOtWorkAMins = (leaderOtClockIn && clockOutMins !== null)
+        ? Math.max(0, clockOutMins - parseTimeToMins(leaderOtClockIn))
+        : 0
+      // 초과근로: 급여용 연장과 동일 산식(경과-allowance), 절삭 없음
+      const systemOtMins   = computeLeaderOtMins(r.isLeader ? leaderOtWorkAMins : otWorkAMins, leaveAmt, displayStatus, r.isLeader ? leaderOtClockIn : otClockIn)
+      const systemOtH      = systemOtMins / 60
       const gasPayOtMins   = r.isLeader
-        ? computeLeaderOtMins(leaderRawWAMins, leaveAmt, displayStatus)  // 출근+10h 초과, 절삭 없음
-        : computeGasPayOtMins(gasWorkAMins, leaveAmt, displayStatus)     // 출근+10h 초과, 30분 절삭
+        ? computeLeaderOtMins(leaderOtWorkAMins, leaveAmt, displayStatus, leaderOtClockIn)  // 절삭 없음
+        : computeGasPayOtMins(otWorkAMins, leaveAmt, displayStatus, otClockIn)              // 30분 절삭
       const gasNightMins   = computeGasNightMins(r.clockOut)
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60

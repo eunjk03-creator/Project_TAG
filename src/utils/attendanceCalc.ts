@@ -193,16 +193,29 @@ export function computePayrollMetrics(p: {
 }): PayrollMetrics {
   const { effectiveClockIn, clockOut, leaveType, finalWorkH, nightHours } = p
 
-  const systemOtH = Math.max(0, finalWorkH - 8.0)
-
+  let systemOtH = 0
   let payrollOtH = 0
   if (effectiveClockIn && clockOut) {
-    const elapsed = computeWorkA(effectiveClockIn, clockOut)
-    const threshold: number =
-      (leaveType === '오전반반차' || leaveType === '오후반반차') ? 8.0 :
-      (leaveType === '오전반차'   || leaveType === '오후반차')   ? 6.0 :
-      10.0
+    // 오전반차/반반차: 표준출근시각으로 클램핑 (조기출근 OT 과산정 방지)
+    const otStdInMins: number | null =
+      leaveType === '오전반차'   ? 840 :
+      leaveType === '오전반반차' ? 660 :
+      null
+    const rawInMins = parseTimeToMins(effectiveClockIn)
+    const otInMins  = otStdInMins !== null ? Math.max(rawInMins, otStdInMins) : rawInMins
+    const outMins   = parseTimeToMins(clockOut)
+    const elapsed   = Math.max(0, (outMins - otInMins) / 60)
+    const otClockIn = `${String(Math.floor(otInMins / 60)).padStart(2, '0')}:${String(otInMins % 60).padStart(2, '0')}`
+    // 소정근로 (실근무 기준, 저녁 미포함)
+    const stdWorkH: number =
+      (leaveType === '오전반반차' || leaveType === '오후반반차') ? 6.0 :
+      (leaveType === '오전반차'   || leaveType === '오후반차')   ? 4.0 :
+      8.0
+    // 점심 공제 (클램핑된 출근 기준)
+    const lunchDeductH = computeLunchDeductMins(otClockIn) / 60
+    const threshold = stdWorkH + lunchDeductH + 1.0  // +저녁 1h
     const rawOT = Math.max(0, elapsed - threshold)
+    systemOtH  = rawOT
     payrollOtH = Math.floor(rawOT / 0.5) * 0.5
   }
 
@@ -334,17 +347,29 @@ export function computeGasNightMins(clockOut: string | null | undefined): number
   return Math.floor((outMins - 1320) / 30) * 30
 }
 
+// 출근 시각 기반 점심 공제 계산 (방법 A)
+// clockIn < 12:30 → 60분, clockIn > 13:30 → 0분, 사이 → 비례
+function computeLunchDeductMins(clockIn?: string | null): number {
+  if (!clockIn) return 60
+  const inMins = parseTimeToMins(clockIn)
+  if (inMins >= GAS_LUNCH_END)  return 0
+  if (inMins > GAS_LUNCH_START) return GAS_LUNCH_END - inMins
+  return 60
+}
+
 // Returns payroll-eligible OT minutes (Col 16) using the GAS leave-last formula.
-// OOO rows are forced to 0 regardless of workAMins.
-// Allowance: leaveDays>=0.5 → 360 min, >=0.25 → 480 min, else → 600 min.
+// allowance = 실근무 + 점심공제(출근시각 기반) + 저녁60분
+//   반차  → 4h(240min), 반반차 → 6h(360min), 기본 → 8h(480min)
 // Result is floored to the nearest 30-min unit.
 export function computeGasPayOtMins(
   workAMins:  number,
   leaveDays:  number,
   status:     string | null | undefined,
+  clockIn?:   string | null,
 ): number {
   void status
-  const allowance = leaveDays >= 0.5 ? 360 : leaveDays >= 0.25 ? 480 : 600
+  const stdWorkMins = leaveDays >= 0.5 ? 240 : leaveDays >= 0.25 ? 360 : 480
+  const allowance   = stdWorkMins + computeLunchDeductMins(clockIn) + 60
   return Math.max(0, Math.floor((workAMins - allowance) / 30) * 30)
 }
 
@@ -353,8 +378,10 @@ export function computeLeaderOtMins(
   rawWorkAMins: number,
   leaveDays:    number,
   status:       string | null | undefined,
+  clockIn?:     string | null,
 ): number {
   void status
-  const allowance = leaveDays >= 0.5 ? 360 : leaveDays >= 0.25 ? 480 : 600
+  const stdWorkMins = leaveDays >= 0.5 ? 240 : leaveDays >= 0.25 ? 360 : 480
+  const allowance   = stdWorkMins + computeLunchDeductMins(clockIn) + 60
   return Math.max(0, rawWorkAMins - allowance)
 }

@@ -387,9 +387,9 @@ export function AllowanceTab() {
         const mm = r.date.slice(5, 7)
         if (r.dayType === 'WEEKDAY') {
           if (isLeader) {                                                            // 직책자: 체류-10h 기준, 절삭없음
-            const leaveAmt = r.erpLeaveAmount ?? 0
-            const rawWA    = Math.round(computeWorkA(r.clockIn, r.clockOut) * 60)
-            otByMonth[mm] += computeLeaderOtMins(rawWA, leaveAmt, r.finalStatus) / 60
+            const leaveAmt  = r.erpLeaveAmount ?? 0
+            const clampedWA = Math.round(computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut) * 60)
+            otByMonth[mm]  += computeLeaderOtMins(clampedWA, leaveAmt, r.finalStatus, r.effectiveClockIn ?? r.clockIn) / 60
           } else if (r.erpOtApplied) {                                             // 비직책자: ERP 상신자만
             otByMonth[mm] += r.overtimeHours
           }
