@@ -4,6 +4,24 @@
  */
 import * as XLSX from 'xlsx-js-style'
 import type { ProcessedRecord, Employee, SieveFlag } from '@/types/tag'
+import { parseTimeToMins, compute4141BreakMins, computeEffInMins } from '@/utils/attendanceCalc'
+
+// ── 인정시간 크레딧 ON 기준 근무시간 ─────────────────────────────────────────────
+// 그리드 인정시간 크레딧 ON과 동일 계산: effectiveClockIn(반차보정) + 4/1/4/1 휴게 + 연차크레딧
+function recognizedHours(r: ProcessedRecord): number {
+  const isSlackInj    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+  const isErpApproved = r.leaveType ? !isSlackInj : true
+  const credit        = (isErpApproved && !r.isUnpaidLeave && r.erpLeaveAmount) ? r.erpLeaveAmount * 8 : 0
+
+  const ciRaw = r.clockIn  ? parseTimeToMins(r.clockIn)  : null
+  const co    = r.clockOut ? parseTimeToMins(r.clockOut) : null
+  if (ciRaw === null || co === null) return credit
+
+  const ciEff  = computeEffInMins(ciRaw, r.leaveType, isErpApproved)
+  const elapsed = Math.max(0, co - ciEff)
+  const net     = Math.max(0, elapsed - compute4141BreakMins(elapsed)) / 60
+  return net + credit
+}
 
 // ── 타입 ─────────────────────────────────────────────────────────────────────
 
@@ -172,7 +190,7 @@ function buildAnomSheet(
       rowHpt.push({ hpt: 15, level: 1, hidden: 1 }); R++
 
       recs.forEach(r => {
-        const workH = +(r.regularHours + r.overtimeHours).toFixed(2)
+        const workH = +recognizedHours(r).toFixed(2)
         ;['', r.date, r.clockIn ?? '미태깅', r.clockOut ?? '미태깅',
           r.erpLeaveAmount ?? '', r.leaveType ?? '',
           workH, ANOM_LABEL[r.flag!] ?? ''].forEach((v, ci) => {
@@ -212,7 +230,7 @@ function buildOvertimeSheet(records: ProcessedRecord[], empMap: Map<string, Empl
   const weekly: Map<string, Map<string, number>> = new Map()
 
   records.forEach(r => {
-    const h = r.regularHours + r.overtimeHours
+    const h = recognizedHours(r)
     if (h <= 0) return
     const emp = empMap.get(r.employeeId)
     if (!emp) return
@@ -388,7 +406,7 @@ function buildTypeSheet(
 
   filtered.forEach(r => {
     const emp  = empMap.get(r.employeeId)
-    const workH = +(r.regularHours + r.overtimeHours).toFixed(2)
+    const workH = +recognizedHours(r).toFixed(2)
     ;[emp?.division ?? '', emp?.rawId ?? r.employeeId, emp?.name ?? r.employeeId,
       r.date, r.clockIn ?? '미태깅', r.clockOut ?? '미태깅',
       r.erpLeaveAmount ?? '', r.leaveType ?? '',
@@ -425,7 +443,7 @@ function buildHolidaySheet(records: ProcessedRecord[], empMap: Map<string, Emplo
     if (!personMap.has(r.employeeId)) personMap.set(r.employeeId, { name: emp.name, cnt: 0, totalH: 0, rows: [] })
     const p = personMap.get(r.employeeId)!
     p.cnt++
-    p.totalH += r.regularHours + r.overtimeHours
+    p.totalH += recognizedHours(r)
     p.rows.push(r)
   })
   const persons = Array.from(personMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'ko'))
@@ -481,7 +499,7 @@ function buildHolidaySheet(records: ProcessedRecord[], empMap: Map<string, Emplo
       sc(ws, 1, R, r.date,                        S('FFFFFF', false, '555555', 'center', 9))
       sc(ws, 2, R, r.clockIn  ?? '미태깅',         S('FFFFFF', false, '555555', 'center', 9))
       sc(ws, 3, R, r.clockOut ?? '미태깅',         S('FFFFFF', false, '555555', 'center', 9))
-      sc(ws, 4, R, +(r.regularHours + r.overtimeHours).toFixed(2), S('FFFFFF', false, '555555', 'center', 9))
+      sc(ws, 4, R, +recognizedHours(r).toFixed(2), S('FFFFFF', false, '555555', 'center', 9))
       rowHpt.push({ hpt: 16, level: 1, hidden: 1 }); R++
     })
   })
