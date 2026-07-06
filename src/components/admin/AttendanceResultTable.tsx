@@ -811,9 +811,9 @@ export function AttendanceResultTable({
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
 
       {/* ── 인정시간 / 실제값 탭 ───────────────────────────────────────────── */}
-      <div className="px-4 pt-2.5 pb-1.5 border-b border-gray-100 flex items-center gap-3 flex-wrap">
+      <div className="px-4 pt-2.5 pb-1.5 border-b border-gray-100 flex flex-col gap-1.5">
         {/* 탭 전환 */}
-        <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-[11px] font-medium">
+        <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-[11px] font-medium w-fit">
           {(['인정시간', '실제값'] as const).map(tab => (
             <button
               key={tab}
@@ -829,10 +829,9 @@ export function AttendanceResultTable({
           ))}
         </div>
 
-        {/* 크레딧 토글 — 인정시간 모드에서만 표시 */}
+        {/* 크레딧 토글 — 인정시간 탭 바로 아래 */}
         {timeView === '인정시간' && (
           <div className="flex items-center gap-1 text-[11px]">
-            <span className="text-gray-400 mr-0.5">크레딧</span>
             {(['연차', '반차', '반반차'] as const).map(label => (
               <button
                 key={label}
@@ -848,8 +847,6 @@ export function AttendanceResultTable({
             ))}
           </div>
         )}
-
-        <div className="flex-1" />
       </div>
 
       {/* ── Slim toolbar ──────────────────────────────────────────────────── */}
