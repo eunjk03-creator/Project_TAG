@@ -140,6 +140,7 @@ export default function AdminDashboard() {
   const [riskView,    setRiskView]    = useState<RiskView>('hr')
   const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader'>('all')
   const [timeMode, setTimeMode] = useState<'recognized' | 'exact'>('recognized')
+  const [gridCreditsOn, setGridCreditsOn] = useState(true)
   const [tableColVisibility, setTableColVisibility] = useState<Record<string, boolean>>({
     normalTags:    true,
     anomalyTags:   true,
@@ -1473,28 +1474,42 @@ export default function AdminDashboard() {
             </div>
 
             {/* 시간 기준 토글 — 그리드 전용 */}
-            <div className="flex items-center gap-1.5 text-[11px] shrink-0">
-              <span className="text-gray-400 whitespace-nowrap">시간 기준</span>
-              <div className="flex items-center bg-gray-100 rounded-lg p-0.5 font-medium">
-                <button
-                  onClick={() => setTimeMode('recognized')}
-                  className={`px-2.5 py-1 rounded-md transition-all ${
-                    timeMode === 'recognized' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                  }`}
-                  title="급여 계산 기준 시간 (ERP 인정 OT + 30분 절사)"
-                >
-                  인정 시간
-                </button>
-                <button
-                  onClick={() => setTimeMode('exact')}
-                  className={`px-2.5 py-1 rounded-md transition-all ${
-                    timeMode === 'exact' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                  }`}
-                  title="태그 기록 기준 실제 근무 시간 (절사 없음)"
-                >
-                  실제 값
-                </button>
+            <div className="flex flex-col gap-1 shrink-0">
+              <div className="flex items-center gap-1.5 text-[11px]">
+                <span className="text-gray-400 whitespace-nowrap">시간 기준</span>
+                <div className="flex items-center bg-gray-100 rounded-lg p-0.5 font-medium">
+                  <button
+                    onClick={() => setTimeMode('recognized')}
+                    className={`px-2.5 py-1 rounded-md transition-all ${
+                      timeMode === 'recognized' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                    }`}
+                    title="급여 계산 기준 시간 (ERP 인정 OT + 30분 절사)"
+                  >
+                    인정 시간
+                  </button>
+                  <button
+                    onClick={() => setTimeMode('exact')}
+                    className={`px-2.5 py-1 rounded-md transition-all ${
+                      timeMode === 'exact' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                    }`}
+                    title="태그 기록 기준 실제 근무 시간 (절사 없음)"
+                  >
+                    실제 값
+                  </button>
+                </div>
               </div>
+              {timeMode === 'recognized' && (
+                <button
+                  onClick={() => setGridCreditsOn(v => !v)}
+                  className={`w-fit text-[10px] font-semibold px-2 py-0.5 rounded border transition-colors ${
+                    gridCreditsOn
+                      ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                      : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  크레딧 {gridCreditsOn ? 'ON' : 'OFF'}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1535,6 +1550,7 @@ export default function AdminDashboard() {
                 riskMode={selectedBUs.length === 1}
                 riskThresholds={riskThresholds}
                 timeMode={timeMode}
+                creditsOn={gridCreditsOn}
                 companyHolidays={policy.companyHolidays}
                 onOrgFilterChange={(div, team) => {
                   setSelectedDivisions(div ? [div] : [])
