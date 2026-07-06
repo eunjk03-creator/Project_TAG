@@ -42,7 +42,9 @@ interface GridRow {
   anomalyTags:    string[]
   // Zone 2 — payroll reference (GAS leave-last formula, 30-min floor)
   systemOtH:      number
-  payrollOtH:      number   // Col 16: 급여용연장 (hours)
+  payrollOtH:      number   // Col 16: 급여용연장 (hours) — Slack 패널티 시 0
+  slackOtH:        number   // Slack 주입 시 이론적 OT (표시용 dim red)
+  isSlackLeave:    boolean  // leaveType이 Slack 주입된 경우
   payrollNightH:   number   // Col 17: 급여용야간 (hours)
   payrollHolidayH: number   // Col 18: 급여용휴일 (hours)
   erpOtStatus:    '신청' | '미신청' | '—'   // payrollOtH 기준 3-case
@@ -510,6 +512,13 @@ export function AttendanceResultTable({
       const gasPayOtMins   = r.isLeader
         ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
         : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0)
+      // Slack 주입 시 이론적 OT (ERP 승인으로 가정) — 표시 전용, 총계 미반영
+      const isSlackLeave   = !!(r.leaveType && isSlackInjected)
+      const slackOtH       = isSlackLeave
+        ? (r.isLeader
+          ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true) / 60
+          : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, true) / 60 : 0))
+        : 0
       // 급여용 야간: 직책자=절삭없음, 일반=30분 절삭
       const gasNightMins   = computeGasNightMins(r.clockOut, r.isLeader ?? false)
       const payrollOtH     = gasPayOtMins / 60
@@ -536,7 +545,7 @@ export function AttendanceResultTable({
         gasWorkAMins, breakH: displayBreakMins / 60, gasWorkBMins,
         finalWorkH, displayStatus,
         attendanceStatus, normalTags, anomalyTags,
-        systemOtH, payrollOtH, payrollNightH, payrollHolidayH,
+        systemOtH, payrollOtH, slackOtH, isSlackLeave, payrollNightH, payrollHolidayH,
         erpOtStatus,
         auditFlag,
         note: noteMap?.get(`${r.employeeId}_${r.date}`) ?? '',
@@ -716,9 +725,14 @@ export function AttendanceResultTable({
     }),
     col.accessor('payrollOtH', {
       id: 'payrollOtH', header: () => <ColTip label="급여용연장" tip="근로A − 10h 초과분, 30분 단위 절사 (10h = 8h근무 + 점심1h + 저녁1h)" />, size: 90, minSize: 72,
-      cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
-        : <span className="text-gray-300">—</span>,
+      cell: i => {
+        const row = i.row.original
+        if (row.isSlackLeave && row.slackOtH > 0)
+          return <span className="tabular-nums text-xs font-medium text-red-300 line-through" title="연차 ERP 미신청 — 급여 미산입">{fmtH(row.slackOtH)}</span>
+        return i.getValue() > 0
+          ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
+          : <span className="text-gray-300">—</span>
+      },
     }),
     col.accessor('payrollNightH', {
       id: 'payrollNightH', header: () => <ColTip label="급여용야간" tip="22시 이후 근무시간, 30분 단위 절사" />, size: 90, minSize: 72,
