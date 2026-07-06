@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
-import { parseTimeToMins, compute4141BreakMins, computeEffClockIn } from '@/utils/attendanceCalc'
+import { parseTimeToMins, compute4141BreakMins, computeEffClockIn, computeEffInMins } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
@@ -383,11 +383,21 @@ const empStats = useMemo(() => {
       const empRecs = recsByEmp.get(e.id) ?? []
       const weekTotals: Record<string, number> = {}
       for (const r of empRecs) {
-        const ci = r.clockIn ? parseTimeToMins(r.clockIn) : null
-        const co = r.clockOut ? parseTimeToMins(r.clockOut) : null
-        const el = (ci !== null && co !== null) ? Math.max(0, co - ci) : 0
-        const netH = Math.max(0, (el - compute4141BreakMins(el)) / 60)
-        const addH = r.dayType === 'WEEKDAY' ? netH : (r.holidayHours ?? 0)
+        // 인정시간(크레딧 ON) 기준 — 엑셀 법정근로초과 시트와 동일 계산
+        const isSlackInj    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+        const isErpApproved = r.leaveType ? !isSlackInj : true
+        const credit        = (isErpApproved && !r.isUnpaidLeave && r.erpLeaveAmount)
+          ? r.erpLeaveAmount * 8 : 0
+        const ciRaw = r.clockIn  ? parseTimeToMins(r.clockIn)  : null
+        const co    = r.clockOut ? parseTimeToMins(r.clockOut) : null
+        let addH: number
+        if (ciRaw === null || co === null) {
+          addH = credit
+        } else {
+          const ciEff   = computeEffInMins(ciRaw, r.leaveType, isErpApproved)
+          const elapsed = Math.max(0, co - ciEff)
+          addH = Math.max(0, elapsed - compute4141BreakMins(elapsed)) / 60 + credit
+        }
         const wk = weekKey(r.date)
         weekTotals[wk] = (weekTotals[wk] ?? 0) + addH
       }
