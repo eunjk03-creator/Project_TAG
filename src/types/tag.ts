@@ -95,6 +95,7 @@ export const FINAL_STATUS_CATEGORY: Readonly<Record<FinalStatus, FinalStatusCate
  */
 export type ErpLeaveType =
   | '연차'
+  | '반차'       // combined half-day (0.5) — 오전+오후 반반차 합산 결과
   | '오전반차'   // morning half-day (0.5)
   | '오후반차'   // afternoon half-day (0.5)
   | '오전반반차' // morning quarter-day (0.25)

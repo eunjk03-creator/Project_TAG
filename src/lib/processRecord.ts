@@ -215,12 +215,14 @@ export function processRecord(
       n !== '출근기록없음' && n !== '퇴근기록없음',
     )
     // AM/PM 반차 여부 — 외근 보정 범위를 제한하는 데 사용
-    const isAMLeave = effectiveLeaveType === '오전반차' || effectiveLeaveType === '오전반반차'
-    const isPMLeave = effectiveLeaveType === '오후반차' || effectiveLeaveType === '오후반반차'
+    // '반차' = 오전반반차+오후반반차 합산 → AM+PM 모두 해당
+    const isAMLeave = effectiveLeaveType === '오전반차' || effectiveLeaveType === '오전반반차' || effectiveLeaveType === '반차'
+    const isPMLeave = effectiveLeaveType === '오후반차' || effectiveLeaveType === '오후반반차' || effectiveLeaveType === '반차'
 
-    // AM 반차 기준 출근 시각: 반반차 → 11:00, 반차 → 14:00
+    // AM 반차 기준 출근 시각: 반반차/반차 → 11:00, 오전반차 → 14:00
     const amLeaveThresholdMins =
       effectiveLeaveType === '오전반반차' ? parseTime('11:00') :
+      effectiveLeaveType === '반차'       ? parseTime('11:00') :
       effectiveLeaveType === '오전반차'   ? parseTime('14:00') :
       flexEndMins
 
@@ -554,6 +556,7 @@ export function processRecord(
 
   const effectiveLateThreshold =
     effectiveLeaveType === '오전반반차' ? parseTime('11:00') :
+    effectiveLeaveType === '반차'       ? parseTime('11:00') :
     effectiveLeaveType === '오전반차'   ? parseTime('14:00') :
     flexEndMins
 
