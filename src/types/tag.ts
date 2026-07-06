@@ -139,6 +139,11 @@ export interface RawRecord {
   isUnpaidLeave?: boolean
   /** Original ERP 근태코드 before mapping (e.g. '배우자 출산휴가', '리프레쉬휴가(3년)') */
   rawLeaveCode?: string
+  /** Individual ERP leave codes actually submitted for this date, in submission order.
+   *  `leaveType`/`erpLeaveAmount` collapse same-day multi-request combos (e.g. 오전반차+오후반차
+   *  → '연차' 1.0) for calculation purposes — this array preserves the original 1+ requests
+   *  so the UI can show exactly what was applied for, not just the merged total. */
+  leaveCodesDetail?: ErpLeaveType[]
 }
 
 export interface ProcessedRecord extends RawRecord {

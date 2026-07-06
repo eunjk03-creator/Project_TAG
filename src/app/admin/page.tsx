@@ -93,20 +93,17 @@ function getOrgPath(emp: Employee): string {
   return parts.join(' / ')
 }
 
-/** Returns the full-month DateRange for the month that has the most records. */
+/** Returns the DateRange spanning the earliest to latest record date (data keeps accumulating, so this only ever grows). */
 function detectMonthRange(records: { date: string }[]): { from: string; to: string } | null {
-  if (records.length === 0) return null
-  const counts: Record<string, number> = {}
+  let min: string | null = null
+  let max: string | null = null
   for (const r of records) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date)) continue
-    const ym = r.date.slice(0, 7)
-    counts[ym] = (counts[ym] ?? 0) + 1
+    if (!min || r.date < min) min = r.date
+    if (!max || r.date > max) max = r.date
   }
-  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]
-  if (!top) return null
-  const [y, m] = top[0].split('-').map(Number)
-  const last   = new Date(y, m, 0).getDate()
-  return { from: `${top[0]}-01`, to: `${top[0]}-${String(last).padStart(2, '0')}` }
+  if (!min || !max) return null
+  return { from: min, to: max }
 }
 
 type View = 'grid' | 'table' | 'summary' | 'allowance'

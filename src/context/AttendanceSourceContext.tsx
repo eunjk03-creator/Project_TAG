@@ -280,16 +280,27 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
         } catch { /* network error — use cache */ }
 
         // Background: sync DB processed data
+        // Skip if processed_data is older than the raw upload — it means a prior apiCompute
+        // failed after the last merge, and loading stale data would hide the new records.
         try {
           const { data: pd, updatedAt: pdTs } = await dbGetProcessed()
           if (cancelled) return
-          const currentPdAt = cachedProcessed?.processedAt ?? ''
-          if (pd?.processed?.length && (!currentPdAt || (pdTs && pdTs > currentPdAt))) {
+          const currentPdAt   = cachedProcessed?.processedAt ?? ''
+          const rawUploadedAt = cached.updatedAt ?? ''
+          const isStale       = !!(pdTs && rawUploadedAt && pdTs < rawUploadedAt)
+          if (!isStale && pd?.processed?.length && (!currentPdAt || (pdTs && pdTs > currentPdAt))) {
             if (!cancelled) {
               setProcessedRecords(pd.processed)
               setProcessedAt(pdTs ?? pd.processedAt)
               lsSaveProcessed({ processed: pd.processed, processedAt: pd.processedAt, cachedAt: new Date().toISOString() })
             }
+          } else if (isStale && !cancelled) {
+            // Stale processed data detected on load: trigger background recompute silently
+            setIsProcessing(true)
+            apiCompute(policy)
+              .then(async pt => { if (pt) await loadProcessedFromDB() })
+              .catch(console.error)
+              .finally(() => { if (!cancelled) setIsProcessing(false) })
           }
         } catch { /* network error — use cache */ }
         return
@@ -311,10 +322,20 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
         }
 
         const { data: pd, updatedAt: pdTs } = pdResult
-        if (pd?.processed?.length) {
+        // Skip stale processed data: if raw upload is newer than last computation,
+        // the processed data doesn't include the new records.
+        const isStale = !!(pdTs && updatedAt && pdTs < updatedAt)
+        if (!isStale && pd?.processed?.length) {
           setProcessedRecords(pd.processed)
           setProcessedAt(pdTs ?? pd.processedAt)
           lsSaveProcessed({ processed: pd.processed, processedAt: pd.processedAt, cachedAt: new Date().toISOString() })
+        } else if (isStale && data?.rawRecords?.length && !cancelled) {
+          // Stale processed data detected on fresh load: trigger background recompute
+          setIsProcessing(true)
+          apiCompute(policy)
+            .then(async pt => { if (pt) await loadProcessedFromDB() })
+            .catch(console.error)
+            .finally(() => { if (!cancelled) setIsProcessing(false) })
         }
       } catch (err) {
         console.error('[AttendanceSourceContext] DB load failed:', err)

@@ -87,6 +87,21 @@ function floorTo30(h: number): number {
   return Math.floor(h * 2) / 2
 }
 
+/** Splits a day's individually-submitted leave codes into AM/PM display buckets.
+ *  Codes with no 오전/오후 marker (e.g. a standalone '연차'/'반차' request) are
+ *  ambiguous and shown in both buckets, matching the legacy single-code behavior. */
+function splitComboLeaveCodes(codes: string[]): { am: string[]; pm: string[] } {
+  const am: string[] = []
+  const pm: string[] = []
+  for (const c of codes) {
+    const isAM = c.includes('오전')
+    const isPM = c.includes('오후')
+    if (isAM || (!isAM && !isPM)) am.push(c)
+    if (isPM || (!isAM && !isPM)) pm.push(c)
+  }
+  return { am, pm }
+}
+
 // ── Statutory limit helpers ────────────────────────────────────────────────
 
 /** Returns the statutory hour ceiling based on the date-range length. */
@@ -829,6 +844,9 @@ const empStats = useMemo(() => {
                       const showContent = !isWknd && status !== 'ABSENT'
                       const isLeaveDay = rec?.finalStatus === '연차'
                       const hasVacWrongDay = rec?.verificationNote?.includes('휴가 중 출근') ?? false
+                      // 하루에 ERP 신청 2건 이상(예: 오전반차+오후반차=연차)이면 합산 라벨 대신 실제 신청 코드를 보여줌
+                      const comboCodes = (rec?.leaveCodesDetail?.length ?? 0) >= 2 ? rec!.leaveCodesDetail! : null
+                      const amCombo    = comboCodes ? splitComboLeaveCodes(comboCodes).am : []
 
                       return (
                         <td key={date}
@@ -838,7 +856,14 @@ const empStats = useMemo(() => {
                           style={{ width: W_DATE, minWidth: W_DATE }}>
                           {showContent ? (
                             isLeaveDay && !hasVacWrongDay ? (
-                              <span className="text-gray-200 text-[10px] select-none">—</span>
+                              amCombo.length > 0 ? (
+                                <div className="w-full flex flex-col items-center gap-0.5 py-0.5">
+                                  <span className="text-gray-200 text-[10px] select-none">—</span>
+                                  <InfoTag cls={TAG.amLeave} text={amCombo.join('+')} />
+                                </div>
+                              ) : (
+                                <span className="text-gray-200 text-[10px] select-none">—</span>
+                              )
                             ) : (
                               <button
                                 onClick={() => onCellClick(emp.id, date)}
@@ -864,7 +889,9 @@ const empStats = useMemo(() => {
                                   )
                                 })()}
                                 {(rec?.flag ?? '').includes('LATE') && <InfoTag cls={TAG.late} text="지각" />}
-                                {rec?.leaveType && (rec.leaveType === '반차' || !rec.leaveType.includes('오후')) && (
+                                {amCombo.length > 0 ? (
+                                  <InfoTag cls={TAG.amLeave} text={amCombo.join('+')} />
+                                ) : rec?.leaveType && (rec.leaveType === '반차' || !rec.leaveType.includes('오후')) && (
                                   <InfoTag cls={TAG.amLeave} text={rec.leaveType} />
                                 )}
                               </button>
@@ -907,6 +934,8 @@ const empStats = useMemo(() => {
                       const isWknd = status === 'WEEKEND'
                       const showContent = !isWknd && status !== 'ABSENT'
                       const isLeaveDay = rec?.finalStatus === '연차'
+                      const comboCodes = (rec?.leaveCodesDetail?.length ?? 0) >= 2 ? rec!.leaveCodesDetail! : null
+                      const pmCombo    = comboCodes ? splitComboLeaveCodes(comboCodes).pm : []
 
                       return (
                         <td key={date}
@@ -916,7 +945,14 @@ const empStats = useMemo(() => {
                           style={{ width: W_DATE, minWidth: W_DATE }}>
                           {showContent ? (
                             isLeaveDay ? (
-                              <span className="text-gray-200 text-[10px] select-none">—</span>
+                              pmCombo.length > 0 ? (
+                                <div className="w-full flex flex-col items-center gap-0.5 py-0.5">
+                                  <span className="text-gray-200 text-[10px] select-none">—</span>
+                                  <InfoTag cls={TAG.pmLeave} text={pmCombo.join('+')} />
+                                </div>
+                              ) : (
+                                <span className="text-gray-200 text-[10px] select-none">—</span>
+                              )
                             ) : (
                               <button
                                 onClick={() => onCellClick(emp.id, date)}
@@ -929,7 +965,9 @@ const empStats = useMemo(() => {
                                 </span>
                                 {(rec?.flag === 'EARLY_DEPARTURE' || rec?.flag === 'LATE_AND_EARLY_DEPARTURE') &&
                                   <InfoTag cls={TAG.earlyExit} text="조기퇴근" />}
-                                {rec?.leaveType && (rec.leaveType === '반차' || rec.leaveType.includes('오후')) && (
+                                {pmCombo.length > 0 ? (
+                                  <InfoTag cls={TAG.pmLeave} text={pmCombo.join('+')} />
+                                ) : rec?.leaveType && (rec.leaveType === '반차' || rec.leaveType.includes('오후')) && (
                                   <InfoTag cls={TAG.pmLeave} text={rec.leaveType} />
                                 )}
                               </button>
