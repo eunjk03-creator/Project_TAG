@@ -13,9 +13,9 @@ import type { ProcessedRecord, Employee } from '@/types/tag'
 import { EMPLOYEES } from '@/data/orgChart'
 import {
   parseTimeToMins,
-  computeWorkA, computeBreakH, computeDisplayBreakMins,
   computeGasNightMins,
   computePayOtMins, computeLeaderPayOtMins, computeHolidayPayMins,
+  compute4141BreakMins,
 } from '@/utils/attendanceCalc'
 
 // ── Row shape ─────────────────────────────────────────────────────────────
@@ -431,11 +431,11 @@ export function AttendanceResultTable({
   const over52hEmployeeIds = useMemo(() => {
     const weekly = new Map<string, number>()
     for (const r of records) {
-      const wAMins      = Math.round(computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut) * 60)
       const ci          = (r.effectiveClockIn ?? r.clockIn) ? parseTimeToMins((r.effectiveClockIn ?? r.clockIn)!) : null
       const co          = r.clockOut ? parseTimeToMins(r.clockOut) : null
-      const breakMins   = computeDisplayBreakMins(wAMins, ci, co, r.leaveType)
-      const wBMins      = Math.max(0, wAMins - breakMins)
+      const elapsed     = (ci !== null && co !== null) ? Math.max(0, co - ci) : 0
+      const breakMins   = compute4141BreakMins(elapsed)
+      const wBMins      = Math.max(0, elapsed - breakMins)
       const leaveCredit = r.isUnpaidLeave ? 0 : (r.erpLeaveAmount ?? 0) * 8
       const h           = wBMins / 60 + leaveCredit
       if (h <= 0) continue
@@ -466,18 +466,20 @@ export function AttendanceResultTable({
       const isExactMode     = timeView === '실제값'
       const isSlackInjected = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
       const effectiveIn     = isExactMode ? r.clockIn : (r.effectiveClockIn ?? r.clockIn)
-      const workA           = computeWorkA(effectiveIn, r.clockOut)
-      const gasWorkAMins    = Math.round(workA * 60)
       const clockInMins     = effectiveIn ? parseTimeToMins(effectiveIn) : null
       const clockOutMins    = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
       const isHoliday       = r.dayType !== 'WEEKDAY'
-      const displayBreakMins = isHoliday ? r.breakMinutes : computeDisplayBreakMins(gasWorkAMins, clockInMins, clockOutMins, r.leaveType)
-      const gasWorkBMins    = Math.max(0, gasWorkAMins - displayBreakMins)
+      // 4/1/4/1 슬라이딩 휴게: 분단위 연속값 (점심 +4h~+5h, 저녁 +9h~+10h)
+      const elapsedMins     = (clockInMins !== null && clockOutMins !== null) ? Math.max(0, clockOutMins - clockInMins) : 0
+      const displayBreakMins = isHoliday ? (r.breakMinutes ?? 0) : compute4141BreakMins(elapsedMins)
       // 인정시간+creditsOn+ERP상신(Slack 미주입)일 때만 연차 크레딧 합산
       const leaveCredit  = (!isExactMode && creditsOn && !r.isUnpaidLeave && !isSlackInjected)
         ? leaveAmt * 8
         : 0
-      const finalWorkH   = isHoliday ? r.holidayHours : Math.max(0, gasWorkBMins / 60 + leaveCredit)
+      // 근로A = 순 근로시간(elapsed − break), 근로B = 근로A + 연차크레딧
+      const gasWorkAMins = Math.max(0, elapsedMins - displayBreakMins)
+      const gasWorkBMins = Math.max(0, gasWorkAMins + Math.round(leaveCredit * 60))
+      const finalWorkH   = isHoliday ? (r.holidayHours ?? 0) : gasWorkBMins / 60
       const leaveSource: string =
         isSlackInjected              ? 'Slack' :
         r.leaveType                  ? 'ERP' :
