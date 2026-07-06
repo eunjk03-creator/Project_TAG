@@ -256,6 +256,7 @@ function key(empId: string, date: string): string {
 /** Fractional day value for each counted leave type. */
 const LEAVE_AMOUNT: Partial<Record<ErpLeaveType, number>> = {
   '연차':      1.0,
+  '반차':      0.5,
   '오전반차':  0.5,
   '오후반차':  0.5,
   '오전반반차': 0.25,
@@ -419,7 +420,10 @@ function buildLeaveMap(
         const existing   = accumMap.get(k)
         const prevAmount = existing?.amount ?? 0
         const newAmount  = Math.min(1.0, prevAmount + perDayAmount)
-        const newType: ErpLeaveType = newAmount >= 1.0 ? '연차' : effectiveType
+        const newType: ErpLeaveType =
+          newAmount >= 1.0 ? '연차' :
+          (newAmount >= 0.5 && (effectiveType === '오전반반차' || effectiveType === '오후반반차')) ? '반차' :
+          effectiveType
         accumMap.set(k, { amount: newAmount, type: newType, isUnpaid: (existing?.isUnpaid ?? false) || isUnpaid, rawCode: code })
       }
       if (cur === endDate) break
