@@ -20,7 +20,6 @@ import type { ManualEntryPayload } from '@/components/admin/ManualEntryModal'
 import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
 import { SummaryTab }            from '@/components/admin/SummaryTab'
 import { AllowanceTab }          from '@/components/admin/AllowanceTab'
-import { PeopleAnalyticsTab }    from '@/components/admin/PeopleAnalyticsTab'
 import {
   computeWorkA, computeStatusN,
   computeDisplayBreakMins, parseTimeToMins,
@@ -110,7 +109,7 @@ function detectMonthRange(records: { date: string }[]): { from: string; to: stri
   return { from: `${top[0]}-01`, to: `${top[0]}-${String(last).padStart(2, '0')}` }
 }
 
-type View = 'grid' | 'table' | 'summary' | 'allowance' | 'analytics'
+type View = 'grid' | 'table' | 'summary' | 'allowance'
 
 export default function AdminDashboard() {
   const { policy } = usePolicy()
@@ -140,7 +139,7 @@ export default function AdminDashboard() {
   const GRID_PAGE_SIZE = 40
   const [riskView,    setRiskView]    = useState<RiskView>('hr')
   const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader'>('all')
-  const [timeMode, setTimeMode] = useState<'recognized' | 'exact' | 'evaluation'>('recognized')
+  const [timeMode, setTimeMode] = useState<'recognized' | 'exact'>('recognized')
   const [tableColVisibility, setTableColVisibility] = useState<Record<string, boolean>>({
     normalTags:    true,
     anomalyTags:   true,
@@ -997,10 +996,6 @@ export default function AdminDashboard() {
               className={`px-3 py-1.5 rounded-md transition-colors ${view === 'allowance' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
               수당집계
             </button>
-            <button onClick={() => setView('analytics')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${view === 'analytics' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-              인사이트
-            </button>
           </div>
         </div>
       </div>
@@ -1044,7 +1039,7 @@ export default function AdminDashboard() {
       )}
 
       {/* ── All / Employee / Leader tab bar (hidden on allowance/analytics view) ── */}
-      {view !== 'allowance' && view !== 'analytics' && <div className="px-6 py-2.5 bg-white border-b border-gray-100 shrink-0">
+      {view !== 'allowance' && <div className="px-6 py-2.5 bg-white border-b border-gray-100 shrink-0">
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit text-sm">
           {([
             { key: 'all'      as const, label: '전체 근태 현황',   count: total.headcount         as number | null },
@@ -1080,7 +1075,7 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {view !== 'allowance' && view !== 'analytics' && (
+        {view !== 'allowance' && (
         <>
         {/* KPI Cards */}
         <div className="px-6 pt-5 pb-4 shrink-0">
@@ -1499,15 +1494,6 @@ export default function AdminDashboard() {
                 >
                   실제 값
                 </button>
-                <button
-                  onClick={() => setTimeMode('evaluation')}
-                  className={`px-2.5 py-1 rounded-md transition-all ${
-                    timeMode === 'evaluation' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                  }`}
-                  title="실근로시간 기준 — 유급휴가 크레딧 제외, 비직책자 30분 절삭"
-                >
-                  평가용
-                </button>
               </div>
             </div>
           </div>
@@ -1649,19 +1635,8 @@ export default function AdminDashboard() {
         )}
 
         </>
-        )} {/* end view !== 'allowance' && view !== 'analytics' */}
+        )} {/* end view !== 'allowance' */}
 
-        {/* ── Analytics view ── */}
-        {view === 'analytics' && (
-          <div className="flex-1 min-h-0 overflow-auto">
-            <PeopleAnalyticsTab
-              records={scopedRecords}
-              employees={scopedEmployees}
-              dateFrom={dateRange.from}
-              dateTo={dateRange.to}
-            />
-          </div>
-        )}
 
       </div>
 

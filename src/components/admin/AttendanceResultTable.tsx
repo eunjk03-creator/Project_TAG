@@ -14,7 +14,8 @@ import { EMPLOYEES } from '@/data/orgChart'
 import {
   parseTimeToMins,
   computeWorkA, computeBreakH, computeDisplayBreakMins,
-  computeGasPayOtMins, computeGasNightMins, computeLeaderOtMins,
+  computeGasNightMins,
+  computePayOtMins, computeLeaderPayOtMins, computeHolidayPayMins,
 } from '@/utils/attendanceCalc'
 
 // ── Row shape ─────────────────────────────────────────────────────────────
@@ -41,7 +42,9 @@ interface GridRow {
   anomalyTags:    string[]
   // Zone 2 — payroll reference (GAS leave-last formula, 30-min floor)
   systemOtH:      number
-  payrollOtH:      number   // Col 16: 급여용연장 (hours)
+  payrollOtH:      number   // Col 16: 급여용연장 (hours) — Slack 패널티 시 0
+  slackOtH:        number   // Slack 주입 시 이론적 OT (표시용 dim red)
+  isSlackLeave:    boolean  // leaveType이 Slack 주입된 경우
   payrollNightH:   number   // Col 17: 급여용야간 (hours)
   payrollHolidayH: number   // Col 18: 급여용휴일 (hours)
   erpOtStatus:    '신청' | '미신청' | '—'   // payrollOtH 기준 3-case
@@ -408,6 +411,8 @@ export function AttendanceResultTable({
 }: Props) {
   const [showHolidayWork,  setShowHolidayWork]  = useState(false)
   const [showOver52h,      setShowOver52h]      = useState(false)
+  const [timeView,         setTimeView]         = useState<'인정시간' | '실제값'>('인정시간')
+  const [credits,          setCredits]          = useState({ 연차: true, 반차: true, 반반차: true })
   const [columnFilters,    setColumnFilters]    = useState<ColumnFiltersState>([])
   const [sorting,          setSorting]          = useState<SortingState>([
     { id: 'date', desc: true },
@@ -496,40 +501,36 @@ export function AttendanceResultTable({
       if (r.finalStatus === '휴일근무') normalTags.push('휴일근로')
       if (r.overtimeHours > 0) normalTags.push('연장근로')
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
-      // Zone 2 — GAS formula payroll metrics (leave-last)
-      // 오전반차/반반차: 표준출근시각으로 클램핑 (조기출근 OT 과산정 방지)
-      const otStdInMins: number | null =
-        r.leaveType === '오전반차'   ? 840 :
-        r.leaveType === '오전반반차' ? 660 :
-        null
-      const toOtClampedStr = (inMins: number | null): string | null => {
-        if (inMins === null) return null
-        const clamped = otStdInMins !== null ? Math.max(inMins, otStdInMins) : inMins
-        return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`
-      }
-      // 일반 직원: effectiveClockIn 클램핑
-      const otClockIn      = toOtClampedStr(clockInMins)
-      const otWorkAMins    = (otClockIn && clockOutMins !== null)
-        ? Math.max(0, clockOutMins - parseTimeToMins(otClockIn))
-        : 0
-      // 직책자: raw clockIn 클램핑
-      const leaderRawInMins   = r.clockIn ? parseTimeToMins(r.clockIn) : null
-      const leaderOtClockIn   = toOtClampedStr(leaderRawInMins)
-      const leaderOtWorkAMins = (leaderOtClockIn && clockOutMins !== null)
-        ? Math.max(0, clockOutMins - parseTimeToMins(leaderOtClockIn))
-        : 0
-      // 초과근로: 급여용 연장과 동일 산식(경과-allowance), 절삭 없음
-      const systemOtMins   = computeLeaderOtMins(r.isLeader ? leaderOtWorkAMins : otWorkAMins, leaveAmt, displayStatus, r.isLeader ? leaderOtClockIn : otClockIn)
+      // Zone 2 — 급여 지표 v2 (시차출퇴근제 슬라이딩 타임 블록)
+      // ERP 미승인(Slack 주입) 여부: 오전반차/반반차 혜택 박탈 가드
+      const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
+      // effectiveIn already declared above
+      // 초과근로(절삭 없음): 직책자=raw clockIn, 일반=effectiveIn
+      const systemOtMins   = r.isLeader
+        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+        : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved)
       const systemOtH      = systemOtMins / 60
+      // 급여용 연장: 직책자=절삭없음+ERP무관, 일반=30분절삭+ERP연장신청 필수
       const gasPayOtMins   = r.isLeader
-        ? computeLeaderOtMins(leaderOtWorkAMins, leaveAmt, displayStatus, leaderOtClockIn)  // 절삭 없음
-        : computeGasPayOtMins(otWorkAMins, leaveAmt, displayStatus, otClockIn)              // 30분 절삭
-      const gasNightMins   = computeGasNightMins(r.clockOut)
+        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+        : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0)
+      // Slack 주입 시 이론적 OT (ERP 승인으로 가정) — 표시 전용, 총계 미반영
+      const isSlackLeave   = !!(r.leaveType && isSlackInjected)
+      const slackOtH       = isSlackLeave
+        ? (r.isLeader
+          ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true) / 60
+          : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, true) / 60 : 0))
+        : 0
+      // 급여용 야간: 직책자=절삭없음, 일반=30분 절삭
+      const gasNightMins   = computeGasNightMins(r.clockOut, r.isLeader ?? false)
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60
-      // 휴일근로: 근로B(holidayHours = 경과-휴게) 기준 30분 절삭 — AllowanceTab과 동일
-      const payrollHolidayH = r.dayType !== 'WEEKDAY'
-        ? Math.floor(Math.round((r.holidayHours ?? 0) * 60) / 30) * 30 / 60
+      // 급여용 휴일근로: 4+1 반복 패턴 휴게공제, 직책자=절삭없음
+      const payrollHolidayH = r.dayType !== 'WEEKDAY' && r.clockIn && r.clockOut
+        ? computeHolidayPayMins(
+            Math.max(0, parseTimeToMins(r.clockOut) - parseTimeToMins(r.clockIn)),
+            r.isLeader ?? false,
+          ) / 60
         : 0
       const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
       const isOtExempt = r.isLeader === true || otExemptIds?.has(r.employeeId) === true
@@ -546,7 +547,7 @@ export function AttendanceResultTable({
         gasWorkAMins, breakH: displayBreakMins / 60, gasWorkBMins,
         finalWorkH, displayStatus,
         attendanceStatus, normalTags, anomalyTags,
-        systemOtH, payrollOtH, payrollNightH, payrollHolidayH,
+        systemOtH, payrollOtH, slackOtH, isSlackLeave, payrollNightH, payrollHolidayH,
         erpOtStatus,
         auditFlag,
         note: noteMap?.get(`${r.employeeId}_${r.date}`) ?? '',
@@ -726,9 +727,14 @@ export function AttendanceResultTable({
     }),
     col.accessor('payrollOtH', {
       id: 'payrollOtH', header: () => <ColTip label="급여용연장" tip="근로A − 10h 초과분, 30분 단위 절사 (10h = 8h근무 + 점심1h + 저녁1h)" />, size: 90, minSize: 72,
-      cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
-        : <span className="text-gray-300">—</span>,
+      cell: i => {
+        const row = i.row.original
+        if (row.isSlackLeave && row.slackOtH > 0)
+          return <span className="tabular-nums text-xs font-medium text-red-300 line-through" title="연차 ERP 미신청 — 급여 미산입">{fmtH(row.slackOtH)}</span>
+        return i.getValue() > 0
+          ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
+          : <span className="text-gray-300">—</span>
+      },
     }),
     col.accessor('payrollNightH', {
       id: 'payrollNightH', header: () => <ColTip label="급여용야간" tip="22시 이후 근무시간, 30분 단위 절사" />, size: 90, minSize: 72,
@@ -803,6 +809,45 @@ export function AttendanceResultTable({
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+
+      {/* ── 인정시간 / 실제값 탭 ───────────────────────────────────────────── */}
+      <div className="px-4 pt-2.5 pb-1.5 border-b border-gray-100 flex flex-col gap-1.5">
+        {/* 탭 전환 */}
+        <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-[11px] font-medium w-fit">
+          {(['인정시간', '실제값'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setTimeView(tab)}
+              className={`px-2.5 py-1 rounded-md transition-all ${
+                timeView === tab
+                  ? 'bg-white text-gray-800 shadow-sm'
+                  : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {/* 크레딧 토글 — 인정시간 탭 바로 아래 */}
+        {timeView === '인정시간' && (
+          <div className="flex items-center gap-1 text-[11px]">
+            {(['연차', '반차', '반반차'] as const).map(label => (
+              <button
+                key={label}
+                onClick={() => setCredits(prev => ({ ...prev, [label]: !prev[label] }))}
+                className={`px-2 py-0.5 rounded border transition-all ${
+                  credits[label]
+                    ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-medium'
+                    : 'bg-white border-gray-200 text-gray-400'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* ── Slim toolbar ──────────────────────────────────────────────────── */}
       <div className="px-4 py-2 border-b border-gray-100 flex items-center gap-2 flex-wrap">

@@ -340,15 +340,15 @@ export function computeGasOtThreshMins(leaveDays: number): number {
   return 600                          // 기본: 10h
 }
 
-export function computeGasNightMins(clockOut: string | null | undefined): number {
+export function computeGasNightMins(clockOut: string | null | undefined, isLeader?: boolean): number {
   if (!clockOut) return 0
   const outMins = parseTimeToMins(clockOut)
   if (outMins <= 1320) return 0
-  return Math.floor((outMins - 1320) / 30) * 30
+  const raw = outMins - 1320
+  return isLeader ? raw : Math.floor(raw / 30) * 30
 }
 
-// 출근 시각 기반 점심 공제 계산 (방법 A)
-// clockIn < 12:30 → 60분, clockIn > 13:30 → 0분, 사이 → 비례
+// 출근 시각 기반 점심 공제 계산 (방법 A — EmployeeCalendarGrid 등 레거시 호출용)
 function computeLunchDeductMins(clockIn?: string | null): number {
   if (!clockIn) return 60
   const inMins = parseTimeToMins(clockIn)
@@ -357,10 +357,7 @@ function computeLunchDeductMins(clockIn?: string | null): number {
   return 60
 }
 
-// Returns payroll-eligible OT minutes (Col 16) using the GAS leave-last formula.
-// allowance = 실근무 + 점심공제(출근시각 기반) + 저녁60분
-//   반차  → 4h(240min), 반반차 → 6h(360min), 기본 → 8h(480min)
-// Result is floored to the nearest 30-min unit.
+// ── 레거시 OT 함수 (EmployeeCalendarGrid 전용, 신규 급여 지표에는 아래 v2 사용) ─────
 export function computeGasPayOtMins(
   workAMins:  number,
   leaveDays:  number,
@@ -373,7 +370,6 @@ export function computeGasPayOtMins(
   return Math.max(0, Math.floor((workAMins - allowance) / 30) * 30)
 }
 
-// 직책자 연장: 체류시간 - threshold, 30분 절삭 없음
 export function computeLeaderOtMins(
   rawWorkAMins: number,
   leaveDays:    number,
@@ -384,4 +380,86 @@ export function computeLeaderOtMins(
   const stdWorkMins = leaveDays >= 0.5 ? 240 : leaveDays >= 0.25 ? 360 : 480
   const allowance   = stdWorkMins + computeLunchDeductMins(clockIn) + 60
   return Math.max(0, rawWorkAMins - allowance)
+}
+
+// ── 급여 지표 v2: 시차출퇴근제 슬라이딩 타임 블록 ────────────────────────────────
+//
+// 보정 출근 effIn = MAX(실제출근, 표준출근)
+//   연차없음/오후반차/오후반반차: 08:00
+//   오전반반차: 10:00
+//   오전반차:   13:00
+//
+// 가상 출근 virtualIn = effIn - 연차 역산
+//   반반차(0.25): -2h / 반차(0.5): -5h / 그 외: 0
+//
+// OT 시작 = virtualIn + 10h (소정8h + 점심1h + 저녁1h)
+
+// ERP 미승인(Slack 주입) 시 오전 반차 혜택 박탈 → 08:00 기준으로 강제 전환
+function computeEffInMins(
+  inMins:             number,
+  leaveType:          ErpLeaveType | null | undefined,
+  isErpLeaveApproved = true,
+): number {
+  const std =
+    (leaveType === '오전반차'   && isErpLeaveApproved) ? 780 :  // 13:00
+    (leaveType === '오전반반차' && isErpLeaveApproved) ? 600 :  // 10:00
+    480                                                           // 08:00
+  return Math.max(inMins, std)
+}
+
+// 오전 반차 계열 + ERP 승인 시에만 역산. 오후 반차 계열 및 미승인은 역산 없음.
+function computeVirtualInMins(
+  effInMins:          number,
+  leaveType:          ErpLeaveType | null | undefined,
+  isErpLeaveApproved = true,
+): number {
+  const backtrack =
+    (leaveType === '오전반차'   && isErpLeaveApproved) ? 300 :
+    (leaveType === '오전반반차' && isErpLeaveApproved) ? 120 :
+    0
+  return effInMins - backtrack
+}
+
+/** 급여용 연장 — 일반 직원 (30분 절삭). ERP 연장 신청 여부는 호출부에서 처리. */
+export function computePayOtMins(
+  clockIn:            string | null | undefined,
+  clockOut:           string | null | undefined,
+  leaveType:          ErpLeaveType | null | undefined,
+  isErpLeaveApproved = true,
+): number {
+  if (!clockIn || !clockOut) return 0
+  const inMins  = parseTimeToMins(clockIn)
+  const outMins = parseTimeToMins(clockOut)
+  const effIn   = computeEffInMins(inMins, leaveType, isErpLeaveApproved)
+  const virtIn  = computeVirtualInMins(effIn, leaveType, isErpLeaveApproved)
+  const raw     = Math.max(0, outMins - (virtIn + 600))
+  return Math.floor(raw / 30) * 30
+}
+
+/** 급여용 연장 — 직책자 (절삭 없음, ERP 무관). */
+export function computeLeaderPayOtMins(
+  clockIn:            string | null | undefined,
+  clockOut:           string | null | undefined,
+  leaveType:          ErpLeaveType | null | undefined,
+  isErpLeaveApproved = true,
+): number {
+  if (!clockIn || !clockOut) return 0
+  const inMins  = parseTimeToMins(clockIn)
+  const outMins = parseTimeToMins(clockOut)
+  const effIn   = computeEffInMins(inMins, leaveType, isErpLeaveApproved)
+  const virtIn  = computeVirtualInMins(effIn, leaveType, isErpLeaveApproved)
+  return Math.max(0, outMins - (virtIn + 600))
+}
+
+/**
+ * 급여용 휴일근로 — '4+1 반복 패턴' 휴게공제
+ *   1차 휴게 (4h 초과): MIN(60, MAX(0, 체류 - 240))
+ *   2차 휴게 (9h 초과): MIN(60, MAX(0, 체류 - 540))
+ * 직책자는 절삭 없음.
+ */
+export function computeHolidayPayMins(stayMins: number, isLeader?: boolean): number {
+  const d1  = Math.min(60, Math.max(0, stayMins - 240))
+  const d2  = Math.min(60, Math.max(0, stayMins - 540))
+  const net = Math.max(0, stayMins - d1 - d2)
+  return isLeader ? net : Math.floor(net / 30) * 30
 }

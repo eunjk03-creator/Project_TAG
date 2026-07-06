@@ -5,7 +5,7 @@ import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee, ProcessedRecord } from '@/types/tag'
-import { computeWorkA, computeLeaderOtMins, computeGasPayOtMins, parseTimeToMins } from '@/utils/attendanceCalc'
+import { parseTimeToMins, computePayOtMins, computeLeaderPayOtMins, computeGasNightMins, computeHolidayPayMins } from '@/utils/attendanceCalc'
 
 // ── Format helpers (UI only) ──────────────────────────────────────────────
 
@@ -386,38 +386,22 @@ export function AllowanceTab() {
       for (const r of empRecords) {
         const mm = r.date.slice(5, 7)
         if (r.dayType === 'WEEKDAY') {
-          const leaveAmt = r.erpLeaveAmount ?? 0
-          // 오전반차/반반차 조기출근 클램핑 (테이블과 동일 로직)
-          const otStdInMins: number | null =
-            r.leaveType === '오전반차'   ? 840 :
-            r.leaveType === '오전반반차' ? 660 :
-            null
-          const toOtClampedStr = (inMins: number | null): string | null => {
-            if (inMins === null) return null
-            const clamped = otStdInMins !== null ? Math.max(inMins, otStdInMins) : inMins
-            return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`
-          }
-          if (isLeader) {                                                            // 직책자: raw clockIn 클램핑, 절삭없음
-            const leaderRawInMins   = r.clockIn ? parseTimeToMins(r.clockIn) : null
-            const leaderOtClockIn   = toOtClampedStr(leaderRawInMins)
-            const clockOutMins      = r.clockOut ? parseTimeToMins(r.clockOut) : null
-            const leaderOtWorkAMins = (leaderOtClockIn && clockOutMins !== null)
-              ? Math.max(0, clockOutMins - parseTimeToMins(leaderOtClockIn))
-              : 0
-            otByMonth[mm] += computeLeaderOtMins(leaderOtWorkAMins, leaveAmt, r.finalStatus, leaderOtClockIn) / 60
-          } else if (r.erpOtApplied) {                                              // 비직책자: ERP 상신자만, 방법A + 클램핑
-            const effectiveIn  = r.effectiveClockIn ?? r.clockIn
-            const clockInMins  = effectiveIn ? parseTimeToMins(effectiveIn) : null
-            const otClockIn    = toOtClampedStr(clockInMins)
-            const clockOutMins = r.clockOut ? parseTimeToMins(r.clockOut) : null
-            const otWorkAMins  = (otClockIn && clockOutMins !== null)
-              ? Math.max(0, clockOutMins - parseTimeToMins(otClockIn))
-              : 0
-            otByMonth[mm] += computeGasPayOtMins(otWorkAMins, leaveAmt, r.finalStatus, otClockIn) / 60
+          const effectiveIn        = r.effectiveClockIn ?? r.clockIn
+          const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+          const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
+          if (isLeader) {
+            // 직책자: raw clockIn 기준, 절삭없음, ERP 무관, 휴가 항상 승인 처리
+            otByMonth[mm] += computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true) / 60
+          } else if (r.erpOtApplied) {
+            // 비직책자: ERP 연장 상신자만, effectiveIn 기준, 30분 절삭, ERP 휴가 승인 여부 반영
+            otByMonth[mm] += computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) / 60
           }
         }
         if (r.dayType !== 'WEEKDAY') {
-          holidayByMonth[mm] += floorTo30(r.holidayHours)
+          if (r.clockIn && r.clockOut) {
+            const stayMins = Math.max(0, parseTimeToMins(r.clockOut) - parseTimeToMins(r.clockIn))
+            holidayByMonth[mm] += computeHolidayPayMins(stayMins, isLeader) / 60
+          }
         }
         if (r.flag === 'LATE' || r.flag === 'LATE_AND_EARLY_DEPARTURE' || r.flag === 'LATE_AND_ANOMALY') {
           lateByMonth[mm] += 1
