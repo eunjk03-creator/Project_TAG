@@ -301,14 +301,16 @@ const empStats = useMemo(() => {
         if (isLeader) {
           roundedOt    += Math.max(0, netRecH - 8)
           roundedNight += r.nightHours ?? 0
+          roundedTotal  += netRecH + credit
+          nocreditTotal += netRecH
         } else {
           const approvedOt = r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
+          const stdH       = Math.min(netRecH, 8)
           roundedOt    += approvedOt
           roundedNight += r.erpOtApplied ? floorTo30(r.nightHours ?? 0) : 0
+          roundedTotal  += stdH + approvedOt + credit
+          nocreditTotal += stdH + approvedOt
         }
-
-        roundedTotal  += netRecH + credit
-        nocreditTotal += netRecH
       } else if (r.finalStatus === '휴일근무') {
         const holH    = r.holidayHours ?? 0
         exactTotal   += holH
@@ -382,21 +384,33 @@ const empStats = useMemo(() => {
     return displayEmployees.filter(e => {
       const empRecs = recsByEmp.get(e.id) ?? []
       const weekTotals: Record<string, number> = {}
+      const isLeader = leaderIdSet ? leaderIdSet.has(e.id) : (e.isLeader ?? false)
       for (const r of empRecs) {
-        // 인정시간(크레딧 ON) 기준 — 엑셀 법정근로초과 시트와 동일 계산
+        // empStats.roundedTotal 과 동일 기준 (크레딧 ON, 직책자/비직책자 구분)
         const isSlackInj    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
         const isErpApproved = r.leaveType ? !isSlackInj : true
         const credit        = (isErpApproved && !r.isUnpaidLeave && r.erpLeaveAmount)
           ? r.erpLeaveAmount * 8 : 0
-        const ciRaw = r.clockIn  ? parseTimeToMins(r.clockIn)  : null
-        const co    = r.clockOut ? parseTimeToMins(r.clockOut) : null
         let addH: number
-        if (ciRaw === null || co === null) {
-          addH = credit
+        if (r.dayType !== 'WEEKDAY') {
+          // 휴일근무: 직책자/비직책자 모두 30분 절삭
+          addH = r.finalStatus === '휴일근무' ? floorTo30(r.holidayHours ?? 0) : 0
         } else {
-          const ciEff   = computeEffInMins(ciRaw, r.leaveType, isErpApproved)
-          const elapsed = Math.max(0, co - ciEff)
-          addH = Math.max(0, elapsed - compute4141BreakMins(elapsed)) / 60 + credit
+          const ciRaw = r.clockIn  ? parseTimeToMins(r.clockIn)  : null
+          const co    = r.clockOut ? parseTimeToMins(r.clockOut) : null
+          if (ciRaw === null || co === null) {
+            addH = credit
+          } else {
+            const ciEff   = computeEffInMins(ciRaw, r.leaveType, isErpApproved)
+            const elapsed = Math.max(0, co - ciEff)
+            const netRecH = Math.max(0, elapsed - compute4141BreakMins(elapsed)) / 60
+            if (isLeader) {
+              addH = netRecH + credit
+            } else {
+              const approvedOt = r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
+              addH = Math.min(netRecH, 8) + approvedOt + credit
+            }
+          }
         }
         const wk = weekKey(r.date)
         weekTotals[wk] = (weekTotals[wk] ?? 0) + addH

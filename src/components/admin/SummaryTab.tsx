@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import type { ProcessedRecord, Employee } from '@/types/tag'
 import { DIVISION_ORDER } from '@/data/orgChart'
-import { computeWorkA, computeDisplayBreakMins, parseTimeToMins } from '@/utils/attendanceCalc'
+import { computeEffInMins, compute4141BreakMins, parseTimeToMins } from '@/utils/attendanceCalc'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -170,22 +170,41 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
   const over52Data = useMemo(() => {
     if (!selectedWeek) return null
 
+    function floorTo30H(h: number): number { return Math.floor(h * 2) / 2 }
+
     type Agg = { baseH: number; holidayH: number }
     const empAgg = new Map<string, Agg>()
 
     for (const r of scopedRecords) {
       if (!empAgg.has(r.employeeId)) empAgg.set(r.employeeId, { baseH: 0, holidayH: 0 })
-      const a = empAgg.get(r.employeeId)!
-      if (r.dayType === 'WEEKDAY') {
-        const wAMins     = Math.round(computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut) * 60)
-        const effIn      = r.effectiveClockIn ?? r.clockIn
-        const ci         = effIn      ? parseTimeToMins(effIn)      : null
-        const co         = r.clockOut ? parseTimeToMins(r.clockOut) : null
-        const breakMins  = computeDisplayBreakMins(wAMins, ci, co, r.leaveType)
-        // 52h 법적 한도는 실근로시간 기준 — 연차 등 유급휴가는 포함하지 않음
-        a.baseH += Math.max(0, wAMins - breakMins) / 60
+      const a        = empAgg.get(r.employeeId)!
+      const isLeader = empMap.get(r.employeeId)?.isLeader ?? false
+
+      if (r.dayType !== 'WEEKDAY') {
+        if (r.finalStatus === '휴일근무') {
+          a.holidayH += floorTo30H(r.holidayHours ?? 0)
+        }
       } else {
-        a.holidayH += r.holidayHours
+        const isSlackInj    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+        const isErpApproved = r.leaveType ? !isSlackInj : true
+        const credit        = (isErpApproved && !r.isUnpaidLeave && r.erpLeaveAmount)
+          ? r.erpLeaveAmount * 8 : 0
+        const ciRaw = r.clockIn  ? parseTimeToMins(r.clockIn)  : null
+        const co    = r.clockOut ? parseTimeToMins(r.clockOut) : null
+
+        if (ciRaw === null || co === null) {
+          a.baseH += credit
+        } else {
+          const ciEff   = computeEffInMins(ciRaw, r.leaveType, isErpApproved)
+          const elapsed = Math.max(0, co - ciEff)
+          const netRecH = Math.max(0, elapsed - compute4141BreakMins(elapsed)) / 60
+          if (isLeader) {
+            a.baseH += netRecH + credit
+          } else {
+            const approvedOt = r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
+            a.baseH += Math.min(netRecH, 8) + approvedOt + credit
+          }
+        }
       }
     }
 
@@ -194,13 +213,13 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
 
     for (const [empId, agg] of empAgg) {
       const total = agg.baseH + agg.holidayH
-      if (agg.baseH <= 52 && total <= 52) continue
+      if (agg.baseH < 52 && total < 52) continue  // >= 52 기준
       const div  = empMap.get(empId)?.division ?? '—'
       const name = empMap.get(empId)?.name ?? empId
       if (!divMap.has(div)) divMap.set(div, { division: div, noHoliday: [], withHoliday: [] })
       const row = divMap.get(div)!
-      if (agg.baseH > 52) row.noHoliday.push(name)
-      else                row.withHoliday.push(name)
+      if (agg.baseH >= 52) row.noHoliday.push(name)
+      else                 row.withHoliday.push(name)
     }
 
     const rows = [...divMap.values()].sort((a, b) => {
