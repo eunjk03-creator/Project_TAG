@@ -833,13 +833,13 @@ export function AttendanceResultTable({
         {timeView === '인정시간' && (
           <button
             onClick={() => setCreditsOn(prev => !prev)}
-            className={`px-2 py-0.5 rounded border text-[11px] transition-all ${
+            className={`w-fit px-1.5 py-px rounded text-[10px] leading-tight border transition-all ${
               creditsOn
-                ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-medium'
+                ? 'bg-indigo-50 border-indigo-300 text-indigo-600'
                 : 'bg-white border-gray-200 text-gray-400'
             }`}
           >
-            크레딧
+            크레딧 {creditsOn ? 'ON' : 'OFF'}
           </button>
         )}
       </div>
