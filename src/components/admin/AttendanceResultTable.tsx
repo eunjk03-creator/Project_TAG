@@ -15,7 +15,7 @@ import {
   parseTimeToMins,
   computeGasNightMins,
   computePayOtMins, computeLeaderPayOtMins, computeHolidayPayMins,
-  compute4141BreakMins,
+  compute4141BreakMins, computeEffClockIn,
 } from '@/utils/attendanceCalc'
 
 // ── Row shape ─────────────────────────────────────────────────────────────
@@ -462,11 +462,12 @@ export function AttendanceResultTable({
       const emp        = empMap.get(r.employeeId)
       const empId      = emp?.rawId ?? r.employeeId.split('_')[0]
       const leaveAmt   = r.erpLeaveAmount ?? 0
-      // 실제값: MAX 가드 제거(raw clockIn), 인정시간: effectiveClockIn(MAX 가드 적용)
-      const isExactMode     = timeView === '실제값'
-      const isSlackInjected = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
-      const effectiveIn     = isExactMode ? r.clockIn : (r.effectiveClockIn ?? r.clockIn)
-      const clockInMins     = effectiveIn ? parseTimeToMins(effectiveIn) : null
+      // 실제값: raw clockIn, 인정시간: 근무유형별 보정 출근시각 (오전반차 13:00, 오전반반차 10:00, 그 외 08:00 floor)
+      const isExactMode        = timeView === '실제값'
+      const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+      const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
+      const effectiveIn        = isExactMode ? r.clockIn : computeEffClockIn(r.clockIn, r.leaveType, isErpLeaveApproved)
+      const clockInMins        = effectiveIn ? parseTimeToMins(effectiveIn) : null
       const clockOutMins    = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
       const isHoliday       = r.dayType !== 'WEEKDAY'
       // 4/1/4/1 슬라이딩 휴게: 분단위 연속값 (점심 +4h~+5h, 저녁 +9h~+10h)
@@ -505,9 +506,6 @@ export function AttendanceResultTable({
       if (r.overtimeHours > 0) normalTags.push('연장근로')
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
       // Zone 2 — 급여 지표 v2 (시차출퇴근제 슬라이딩 타임 블록)
-      // ERP 미승인(Slack 주입) 여부: 오전반차/반반차 혜택 박탈 가드
-      const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
-      // effectiveIn already declared above
       // 초과근로: 실제값=workB−8h 날것(절삭·ERP게이트 없음), 인정시간=슬라이딩블록 기준
       const systemOtMins   = isExactMode
         ? Math.max(0, gasWorkBMins - 480)

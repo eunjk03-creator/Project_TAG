@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
-import { parseTimeToMins, compute4141BreakMins } from '@/utils/attendanceCalc'
+import { parseTimeToMins, compute4141BreakMins, computeEffClockIn } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
@@ -268,10 +268,11 @@ const empStats = useMemo(() => {
       const hasPhysicalPunch = !!(r.clockIn || r.clockOut)
       if (isFullDayLeave && !hasPhysicalPunch) continue
 
-      const leaveAmt    = r.erpLeaveAmount ?? 0
-      const isSlackInj  = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
-      const effIn       = r.effectiveClockIn ?? r.clockIn
-      const ciRec       = effIn     ? parseTimeToMins(effIn)     : null
+      const leaveAmt       = r.erpLeaveAmount ?? 0
+      const isSlackInj     = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+      const isErpApproved  = r.leaveType ? !isSlackInj : true
+      const effIn          = computeEffClockIn(r.clockIn, r.leaveType, isErpApproved)
+      const ciRec          = effIn     ? parseTimeToMins(effIn)     : null
       const ciExact     = r.clockIn ? parseTimeToMins(r.clockIn) : null
       const co          = r.clockOut ? parseTimeToMins(r.clockOut) : null
       const elRec       = (ciRec   !== null && co !== null) ? Math.max(0, co - ciRec)   : 0
@@ -960,8 +961,10 @@ const empStats = useMemo(() => {
 
                       let otH = 0
                       if (rec && rec.dayType === 'WEEKDAY') {
-                        const effIn  = timeMode === 'exact' ? rec.clockIn : (rec.effectiveClockIn ?? rec.clockIn)
-                        const ciMins = effIn      ? parseTimeToMins(effIn)       : null
+                        const isSlack  = (rec.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+                        const isERP    = rec.leaveType ? !isSlack : true
+                        const effIn    = timeMode === 'exact' ? rec.clockIn : computeEffClockIn(rec.clockIn, rec.leaveType, isERP)
+                        const ciMins   = effIn      ? parseTimeToMins(effIn)       : null
                         const coMins = rec.clockOut ? parseTimeToMins(rec.clockOut) : null
                         const el     = (ciMins !== null && coMins !== null) ? Math.max(0, coMins - ciMins) : 0
                         const netMins = Math.max(0, el - compute4141BreakMins(el))
