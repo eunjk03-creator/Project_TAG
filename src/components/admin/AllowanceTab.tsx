@@ -386,13 +386,15 @@ export function AllowanceTab() {
       for (const r of empRecords) {
         const mm = r.date.slice(5, 7)
         if (r.dayType === 'WEEKDAY') {
-          const effectiveIn = r.effectiveClockIn ?? r.clockIn
+          const effectiveIn        = r.effectiveClockIn ?? r.clockIn
+          const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+          const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
           if (isLeader) {
-            // 직책자: raw clockIn 기준, 절삭없음, ERP 무관
-            otByMonth[mm] += computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType) / 60
+            // 직책자: raw clockIn 기준, 절삭없음, ERP 무관, 휴가 항상 승인 처리
+            otByMonth[mm] += computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true) / 60
           } else if (r.erpOtApplied) {
-            // 비직책자: ERP 상신자만, effectiveIn 기준, 30분 절삭
-            otByMonth[mm] += computePayOtMins(effectiveIn, r.clockOut, r.leaveType) / 60
+            // 비직책자: ERP 연장 상신자만, effectiveIn 기준, 30분 절삭, ERP 휴가 승인 여부 반영
+            otByMonth[mm] += computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) / 60
           }
         }
         if (r.dayType !== 'WEEKDAY') {

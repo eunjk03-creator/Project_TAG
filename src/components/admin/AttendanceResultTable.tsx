@@ -498,16 +498,18 @@ export function AttendanceResultTable({
       if (r.overtimeHours > 0) normalTags.push('연장근로')
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
       // Zone 2 — 급여 지표 v2 (시차출퇴근제 슬라이딩 타임 블록)
+      // ERP 미승인(Slack 주입) 여부: 오전반차/반반차 혜택 박탈 가드
+      const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
       // effectiveIn already declared above
       // 초과근로(절삭 없음): 직책자=raw clockIn, 일반=effectiveIn
       const systemOtMins   = r.isLeader
-        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType)
-        : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType)
+        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+        : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved)
       const systemOtH      = systemOtMins / 60
-      // 급여용 연장: 직책자=절삭없음, 일반=30분 절삭 + ERP 신청 여부는 auditFlag에서 처리
+      // 급여용 연장: 직책자=절삭없음+ERP무관, 일반=30분절삭+ERP연장신청 필수
       const gasPayOtMins   = r.isLeader
-        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType)
-        : computePayOtMins(effectiveIn, r.clockOut, r.leaveType)
+        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+        : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0)
       // 급여용 야간: 직책자=절삭없음, 일반=30분 절삭
       const gasNightMins   = computeGasNightMins(r.clockOut, r.isLeader ?? false)
       const payrollOtH     = gasPayOtMins / 60

@@ -394,48 +394,60 @@ export function computeLeaderOtMins(
 //
 // OT 시작 = virtualIn + 10h (소정8h + 점심1h + 저녁1h)
 
-function computeEffInMins(inMins: number, leaveType: ErpLeaveType | null | undefined): number {
+// ERP 미승인(Slack 주입) 시 오전 반차 혜택 박탈 → 08:00 기준으로 강제 전환
+function computeEffInMins(
+  inMins:             number,
+  leaveType:          ErpLeaveType | null | undefined,
+  isErpLeaveApproved = true,
+): number {
   const std =
-    leaveType === '오전반차'   ? 780 :  // 13:00
-    leaveType === '오전반반차' ? 600 :  // 10:00
-    480                                  // 08:00
+    (leaveType === '오전반차'   && isErpLeaveApproved) ? 780 :  // 13:00
+    (leaveType === '오전반반차' && isErpLeaveApproved) ? 600 :  // 10:00
+    480                                                           // 08:00
   return Math.max(inMins, std)
 }
 
-function computeVirtualInMins(effInMins: number, leaveType: ErpLeaveType | null | undefined): number {
+// 오전 반차 계열 + ERP 승인 시에만 역산. 오후 반차 계열 및 미승인은 역산 없음.
+function computeVirtualInMins(
+  effInMins:          number,
+  leaveType:          ErpLeaveType | null | undefined,
+  isErpLeaveApproved = true,
+): number {
   const backtrack =
-    (leaveType === '오전반차'   || leaveType === '오후반차')   ? 300 :
-    (leaveType === '오전반반차' || leaveType === '오후반반차') ? 120 :
+    (leaveType === '오전반차'   && isErpLeaveApproved) ? 300 :
+    (leaveType === '오전반반차' && isErpLeaveApproved) ? 120 :
     0
   return effInMins - backtrack
 }
 
-/** 급여용 연장 — 일반 직원 (30분 절삭). ERP 신청 여부는 호출부에서 처리. */
+/** 급여용 연장 — 일반 직원 (30분 절삭). ERP 연장 신청 여부는 호출부에서 처리. */
 export function computePayOtMins(
-  clockIn:   string | null | undefined,
-  clockOut:  string | null | undefined,
-  leaveType: ErpLeaveType | null | undefined,
+  clockIn:            string | null | undefined,
+  clockOut:           string | null | undefined,
+  leaveType:          ErpLeaveType | null | undefined,
+  isErpLeaveApproved = true,
 ): number {
   if (!clockIn || !clockOut) return 0
   const inMins  = parseTimeToMins(clockIn)
   const outMins = parseTimeToMins(clockOut)
-  const effIn   = computeEffInMins(inMins, leaveType)
-  const virtIn  = computeVirtualInMins(effIn, leaveType)
+  const effIn   = computeEffInMins(inMins, leaveType, isErpLeaveApproved)
+  const virtIn  = computeVirtualInMins(effIn, leaveType, isErpLeaveApproved)
   const raw     = Math.max(0, outMins - (virtIn + 600))
   return Math.floor(raw / 30) * 30
 }
 
 /** 급여용 연장 — 직책자 (절삭 없음, ERP 무관). */
 export function computeLeaderPayOtMins(
-  clockIn:   string | null | undefined,
-  clockOut:  string | null | undefined,
-  leaveType: ErpLeaveType | null | undefined,
+  clockIn:            string | null | undefined,
+  clockOut:           string | null | undefined,
+  leaveType:          ErpLeaveType | null | undefined,
+  isErpLeaveApproved = true,
 ): number {
   if (!clockIn || !clockOut) return 0
   const inMins  = parseTimeToMins(clockIn)
   const outMins = parseTimeToMins(clockOut)
-  const effIn   = computeEffInMins(inMins, leaveType)
-  const virtIn  = computeVirtualInMins(effIn, leaveType)
+  const effIn   = computeEffInMins(inMins, leaveType, isErpLeaveApproved)
+  const virtIn  = computeVirtualInMins(effIn, leaveType, isErpLeaveApproved)
   return Math.max(0, outMins - (virtIn + 600))
 }
 

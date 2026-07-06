@@ -228,17 +228,18 @@ function buildDetailRowData(
   const isLeaveDay = !!(r.leaveType && ['연차','오전반차','오후반차','오전반반차','오후반반차','출장','재택근무'].includes(r.leaveType))
   if (normalTags.length === 0 && !isLeaveDay && r.dayType === 'WEEKDAY') normalTags.push('일반')
 
-  const isLeader    = r.isLeader ?? false
-  const effectiveIn = r.effectiveClockIn ?? r.clockIn
-  // 시스템 초과근로: 절삭없음 기준 (직책자=raw clockIn, 일반=effectiveIn)
+  const isLeader           = r.isLeader ?? false
+  const effectiveIn        = r.effectiveClockIn ?? r.clockIn
+  const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
+  // 시스템 초과근로: 절삭없음 기준 (직책자=raw clockIn 항상 승인, 일반=effectiveIn+ERP승인 반영)
   const systemOtMins  = isLeader
-    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType)
-    : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType)
+    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+    : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved)
   const systemOtH   = systemOtMins / 60
-  // 급여용 연장: 직책자=절삭없음, 일반=30분 절삭
+  // 급여용 연장: 직책자=절삭없음+ERP무관, 일반=30분절삭+ERP연장신청 필수
   const gasPayOtMins = isLeader
-    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType)
-    : computePayOtMins(effectiveIn, r.clockOut, r.leaveType)
+    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+    : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0)
   const payrollOtH  = gasPayOtMins / 60
   // 급여용 야간: 직책자=절삭없음, 일반=30분 절삭
   const payrollNightH = computeGasNightMins(r.clockOut, isLeader) / 60
