@@ -411,6 +411,8 @@ export function AttendanceResultTable({
 }: Props) {
   const [showHolidayWork,  setShowHolidayWork]  = useState(false)
   const [showOver52h,      setShowOver52h]      = useState(false)
+  const [timeView,         setTimeView]         = useState<'인정시간' | '실제값'>('인정시간')
+  const [credits,          setCredits]          = useState({ 연차: true, 반차: true, 반반차: true })
   const [columnFilters,    setColumnFilters]    = useState<ColumnFiltersState>([])
   const [sorting,          setSorting]          = useState<SortingState>([
     { id: 'date', desc: true },
@@ -807,6 +809,48 @@ export function AttendanceResultTable({
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+
+      {/* ── 인정시간 / 실제값 탭 ───────────────────────────────────────────── */}
+      <div className="px-4 pt-2.5 pb-1.5 border-b border-gray-100 flex items-center gap-3 flex-wrap">
+        {/* 탭 전환 */}
+        <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-[11px] font-medium">
+          {(['인정시간', '실제값'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setTimeView(tab)}
+              className={`px-2.5 py-1 rounded-md transition-all ${
+                timeView === tab
+                  ? 'bg-white text-gray-800 shadow-sm'
+                  : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {/* 크레딧 토글 — 인정시간 모드에서만 표시 */}
+        {timeView === '인정시간' && (
+          <div className="flex items-center gap-1 text-[11px]">
+            <span className="text-gray-400 mr-0.5">크레딧</span>
+            {(['연차', '반차', '반반차'] as const).map(label => (
+              <button
+                key={label}
+                onClick={() => setCredits(prev => ({ ...prev, [label]: !prev[label] }))}
+                className={`px-2 py-0.5 rounded border transition-all ${
+                  credits[label]
+                    ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-medium'
+                    : 'bg-white border-gray-200 text-gray-400'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex-1" />
+      </div>
 
       {/* ── Slim toolbar ──────────────────────────────────────────────────── */}
       <div className="px-4 py-2 border-b border-gray-100 flex items-center gap-2 flex-wrap">

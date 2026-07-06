@@ -140,7 +140,7 @@ export default function AdminDashboard() {
   const GRID_PAGE_SIZE = 40
   const [riskView,    setRiskView]    = useState<RiskView>('hr')
   const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader'>('all')
-  const [timeMode, setTimeMode] = useState<'recognized' | 'exact' | 'evaluation'>('recognized')
+  const [timeMode, setTimeMode] = useState<'recognized' | 'exact'>('recognized')
   const [tableColVisibility, setTableColVisibility] = useState<Record<string, boolean>>({
     normalTags:    true,
     anomalyTags:   true,
@@ -1498,15 +1498,6 @@ export default function AdminDashboard() {
                   title="태그 기록 기준 실제 근무 시간 (절사 없음)"
                 >
                   실제 값
-                </button>
-                <button
-                  onClick={() => setTimeMode('evaluation')}
-                  className={`px-2.5 py-1 rounded-md transition-all ${
-                    timeMode === 'evaluation' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                  }`}
-                  title="실근로시간 기준 — 유급휴가 크레딧 제외, 비직책자 30분 절삭"
-                >
-                  평가용
                 </button>
               </div>
             </div>

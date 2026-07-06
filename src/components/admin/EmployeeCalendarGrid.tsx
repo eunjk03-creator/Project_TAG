@@ -139,8 +139,8 @@ type Props = {
   /** When true: slice to 10 by default and show 더 보기 button */
   riskMode?:        boolean
   riskThresholds?:  RiskThresholds
-  /** Display time basis — recognized (payroll), exact (raw), or evaluation (실근로B 기준) */
-  timeMode?:        'recognized' | 'exact' | 'evaluation'
+  /** Display time basis — recognized (payroll) or exact (raw) */
+  timeMode?:        'recognized' | 'exact'
   /** Company-wide holiday dates — shown with teal header; no-record cells treated as non-working */
   companyHolidays?: { date: string; label: string }[]
   /** Called when the user changes the org filter — lets the parent sync pagination */
@@ -244,10 +244,10 @@ export function EmployeeCalendarGrid({
 
 const empStats = useMemo(() => {
   const stats: Record<string, {
-    total: number; rawTotal: number; evalTotal: number
-    ot: number; rawOt: number; evalOt: number
-    night: number; rawNight: number; evalNight: number
-    holiday: number; rawHoliday: number; evalHoliday: number
+    total: number; rawTotal: number
+    ot: number; rawOt: number
+    night: number; rawNight: number
+    holiday: number; rawHoliday: number
     anomalies: number
   }> = {}
 
@@ -256,9 +256,9 @@ const empStats = useMemo(() => {
     // DB 예외규칙(leaderIdSet) OR 직급명 자동감지(emp.isLeader) 둘 다 인정
     const isLeader = leaderIdSet ? leaderIdSet.has(emp.id) : (emp.isLeader ?? false)
 
-    let exactOt = 0, roundedOt = 0, evalOt = 0
-    let exactTotal = 0, roundedTotal = 0, evalTotal = 0
-    let exactNight = 0, roundedNight = 0, evalNight = 0
+    let exactOt = 0, roundedOt = 0
+    let exactTotal = 0, roundedTotal = 0
+    let exactNight = 0, roundedNight = 0
 
     for (const r of recs) {
       // 연차 등 실제 출근 없는 전일 휴가는 총근로에 포함하지 않음
@@ -305,41 +305,26 @@ const empStats = useMemo(() => {
           const leaderOt  = computeLeaderOtMins(clampedWA, leaveAmt, r.finalStatus ?? '', r.effectiveClockIn ?? r.clockIn) / 60
           exactOt      += leaderOt
           roundedOt    += leaderOt
-          roundedTotal += netWorkH + credit  // grace zone 미인정 (인정/평가 공통)
+          roundedTotal += netWorkH + credit  // grace zone 미인정
           roundedNight += r.nightHours ?? 0
-          // 평가용 직책자: 동일 기준
-          const leaderEvalOt = leaderOt
-          evalOt    += leaderEvalOt
-          evalTotal += netWorkH
         } else {
           // 비직책자: ERP 신청한 날만 OT 인정
-          // r.overtimeHours = Dinner Grace + 30분 절삭 적용된 값
           exactOt      += rawOt
           const approvedOt = r.erpOtApplied ? r.overtimeHours : 0
           roundedOt    += approvedOt
-          // 인정시간 총근로 = 평가용 로직 + leaveCredit
           roundedTotal += floorTo30(Math.min(netWorkH, 8)) + credit + approvedOt
           // 야간: ERP 신청한 날만, 30분 절삭
           roundedNight += r.erpOtApplied ? floorTo30(r.nightHours ?? 0) : 0
-          const nonLeaderEvalOt = r.erpOtApplied ? r.overtimeHours : 0
-          evalOt    += nonLeaderEvalOt
-          evalTotal += floorTo30(Math.min(netWorkH, 8)) + nonLeaderEvalOt
         }
-        evalNight += r.nightHours ?? 0
 
       } else if (r.finalStatus === '휴일근무') {
-        // 휴일근무: OT 컬럼 아닌 총근로에 집계, 직책자도 30분 절삭
         exactTotal   += finalWorkH
         roundedTotal += floorTo30(finalWorkH)
-        // 평가용 휴일근무: 직책자/비직책자 모두 30분 절삭 (수당 기준 동일)
-        evalTotal    += floorTo30(netWorkH)
-
       } else {
         // 주말·공휴일 (출근 없음 or holidayHours만 존재)
         const holH = r.holidayHours ?? 0
         exactTotal   += holH
         roundedTotal += floorTo30(holH)
-        evalTotal    += floorTo30(holH)
       }
     }
 
@@ -350,21 +335,15 @@ const empStats = useMemo(() => {
       if (r.dayType === 'WEEKDAY') return s
       return s + floorTo30(r.holidayHours ?? 0)
     }, 0)
-    const evalHoliday = roundedHoliday
-
     stats[emp.id] = {
       total:      roundedTotal,
       rawTotal:   exactTotal,
-      evalTotal,
       ot:         roundedOt,
       rawOt:      exactOt,
-      evalOt,
       night:      roundedNight,
       rawNight:   exactNight,
-      evalNight,
       holiday:    roundedHoliday,
       rawHoliday,
-      evalHoliday,
       anomalies: recs.filter(
         r => FINAL_STATUS_CATEGORY[r.finalStatus] === 'ANOMALY' &&
              !approvedKeys.has(`${r.employeeId}_${r.date}`),
@@ -383,7 +362,7 @@ const empStats = useMemo(() => {
     if (hoursFilter === 'over209') {
       return displayEmployees.filter(e => {
         const s = empStats[e.id]
-        const v = timeMode === 'exact' ? (s?.rawTotal ?? 0) : timeMode === 'evaluation' ? (s?.evalTotal ?? 0) : (s?.total ?? 0)
+        const v = timeMode === 'exact' ? (s?.rawTotal ?? 0) : (s?.total ?? 0)
         return v >= 209
       })
     }
@@ -434,7 +413,7 @@ const empStats = useMemo(() => {
         const sa = empStats[a.id] ?? { ot: 0, night: 0, holiday: 0, anomalies: 0 }
         const sb = empStats[b.id] ?? { ot: 0, night: 0, holiday: 0, anomalies: 0 }
         const field = sortKey === 'ot' ? 'ot' : sortKey === 'night' ? 'night' : sortKey === 'holiday' ? 'holiday' : 'anomalies'
-        const prefix = timeMode === 'exact' ? 'raw' : timeMode === 'evaluation' ? 'eval' : ''
+        const prefix = timeMode === 'exact' ? 'raw' : ''
         const cap = field.charAt(0).toUpperCase() + field.slice(1)
         const getV = (s: Record<string, number>) =>
           prefix ? (s[prefix + cap] ?? s[field]) : s[field]
@@ -769,7 +748,7 @@ const empStats = useMemo(() => {
                       style={{ left: L3, width: W_TOTAL, minWidth: W_TOTAL }}
                       rowSpan={4}>
                       {(() => {
-                        const display = timeMode === 'exact' ? s.rawTotal : timeMode === 'evaluation' ? s.evalTotal : s.total
+                        const display = timeMode === 'exact' ? s.rawTotal : s.total
                         return (
                           <>
                             <span className="text-[12px] font-bold text-gray-800 tabular-nums block leading-tight">
@@ -806,7 +785,7 @@ const empStats = useMemo(() => {
                       style={{ left: L_OT, width: W_OT, minWidth: W_OT }}
                       rowSpan={4}>
                       {(() => {
-                        const displayOt = timeMode === 'exact' ? s.rawOt : timeMode === 'evaluation' ? s.evalOt : s.ot
+                        const displayOt = timeMode === 'exact' ? s.rawOt : s.ot
                         return (
                           <span className={`text-[12px] font-bold tabular-nums ${
                             displayOt > riskThresholds.otRedH   ? 'text-red-500'
@@ -825,7 +804,7 @@ const empStats = useMemo(() => {
                       style={{ left: L_NIGHT, width: W_NIGHT, minWidth: W_NIGHT }}
                       rowSpan={4}>
                       {(() => {
-                        const displayNight = timeMode === 'exact' ? s.rawNight : timeMode === 'evaluation' ? s.evalNight : s.night
+                        const displayNight = timeMode === 'exact' ? s.rawNight : s.night
                         return (
                           <span className={`text-[12px] font-bold tabular-nums ${displayNight > 0 ? 'text-blue-500' : 'text-gray-300'}`}>
                             {fmt(displayNight)}
@@ -839,7 +818,7 @@ const empStats = useMemo(() => {
                       style={{ left: L_HOLIDAY, width: W_HOLIDAY, minWidth: W_HOLIDAY }}
                       rowSpan={4}>
                       {(() => {
-                        const displayHoliday = timeMode === 'exact' ? s.rawHoliday : timeMode === 'evaluation' ? s.evalHoliday : s.holiday
+                        const displayHoliday = timeMode === 'exact' ? s.rawHoliday : s.holiday
                         return (
                           <span className={`text-[12px] font-bold tabular-nums ${displayHoliday > 0 ? 'text-violet-500' : 'text-gray-300'}`}>
                             {fmt(displayHoliday)}
