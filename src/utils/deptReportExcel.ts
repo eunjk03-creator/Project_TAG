@@ -224,10 +224,9 @@ function buildAnomSheet(
 // ── 법정근로초과 ──────────────────────────────────────────────────────────────
 
 function buildOvertimeSheet(records: ProcessedRecord[], empMap: Map<string, Employee>, period: string) {
-  // 월별 합산
+  // 월별·주별 모두 인정시간(크레딧 ON) 기준 — 연차/반차/반반차 포함해서도 초과인 사람 추출
   const monthly: Map<string, Map<string, number>> = new Map()
-  // 주별 합산
-  const weekly: Map<string, Map<string, number>> = new Map()
+  const weekly:  Map<string, Map<string, number>> = new Map()
 
   records.forEach(r => {
     const h = recognizedHours(r)
@@ -267,7 +266,7 @@ function buildOvertimeSheet(records: ProcessedRecord[], empMap: Map<string, Empl
   Array.from(weekly.entries()).sort().forEach(([wk, map]) => {
     const items: OverEntry[] = []
     map.forEach((h, empId) => {
-      if (h > 52) {
+      if (h >= 52) {
         const emp = empMap.get(empId)
         if (emp) items.push({ name: emp.name, h: +h.toFixed(2), over: +(h - 52).toFixed(2) })
       }
