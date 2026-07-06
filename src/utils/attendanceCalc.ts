@@ -266,6 +266,19 @@ export function normalizeLeaveType(
   return null
 }
 
+/**
+ * 4/1/4/1 슬라이딩 휴게 (테이블 인정시간/실제값 전용).
+ * 근무 시작 기준 상대적 구간:
+ *   +4h~+5h   → 점심 (최대 60m)
+ *   +9h~+10h  → 저녁 (최대 60m)
+ * 분단위 연속 계산 — 0/30/60/120 이산값 아님.
+ */
+export function compute4141BreakMins(elapsedMins: number): number {
+  const lunch  = Math.min(Math.max(0, elapsedMins - 240), 60)
+  const dinner = Math.min(Math.max(0, elapsedMins - 540), 60)
+  return lunch + dinner
+}
+
 // ── GAS pipeline utilities (leave-last model) ────────────────────────────
 // Break is computed on raw Work-A before leave credit, matching the GAS
 // leave-last formula used in Col 10 (근로A) and Col 12 (근로B).
