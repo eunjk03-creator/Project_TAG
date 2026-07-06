@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
-import { computeWorkA, computeDisplayBreakMins, parseTimeToMins, computeLeaderOtMins } from '@/utils/attendanceCalc'
+import { parseTimeToMins, compute4141BreakMins } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
@@ -141,6 +141,8 @@ type Props = {
   riskThresholds?:  RiskThresholds
   /** Display time basis — recognized (payroll) or exact (raw) */
   timeMode?:        'recognized' | 'exact'
+  /** 인정시간 모드에서 연차 크레딧 포함 여부 */
+  creditsOn?:       boolean
   /** Company-wide holiday dates — shown with teal header; no-record cells treated as non-working */
   companyHolidays?: { date: string; label: string }[]
   /** Called when the user changes the org filter — lets the parent sync pagination */
@@ -167,6 +169,7 @@ export function EmployeeCalendarGrid({
   riskMode,
   riskThresholds = HR_THRESHOLDS,
   timeMode = 'recognized' as const,
+  creditsOn = true,
   companyHolidays = [],
   onOrgFilterChange,
   onEmptyCellClick,
@@ -244,7 +247,7 @@ export function EmployeeCalendarGrid({
 
 const empStats = useMemo(() => {
   const stats: Record<string, {
-    total: number; rawTotal: number
+    total: number; nocreditTotal: number; rawTotal: number
     ot: number; rawOt: number
     night: number; rawNight: number
     holiday: number; rawHoliday: number
@@ -257,78 +260,56 @@ const empStats = useMemo(() => {
     const isLeader = leaderIdSet ? leaderIdSet.has(emp.id) : (emp.isLeader ?? false)
 
     let exactOt = 0, roundedOt = 0
-    let exactTotal = 0, roundedTotal = 0
+    let exactTotal = 0, roundedTotal = 0, nocreditTotal = 0
     let exactNight = 0, roundedNight = 0
 
     for (const r of recs) {
-      // 연차 등 실제 출근 없는 전일 휴가는 총근로에 포함하지 않음
       const isFullDayLeave   = (r.erpLeaveAmount ?? 0) >= 1.0 || r.finalStatus === '연차'
       const hasPhysicalPunch = !!(r.clockIn || r.clockOut)
       if (isFullDayLeave && !hasPhysicalPunch) continue
 
       const leaveAmt    = r.erpLeaveAmount ?? 0
-      const effectiveIn = r.effectiveClockIn ?? r.clockIn
-      const wAMins      = Math.round(computeWorkA(effectiveIn, r.clockOut) * 60)
-      const ciMins      = effectiveIn ? parseTimeToMins(effectiveIn) : null
-      const coMins      = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
-      const brkMins    = computeDisplayBreakMins(wAMins, ciMins, coMins, r.leaveType)
-      const credit     = r.isUnpaidLeave ? 0 : leaveAmt * 8
-      // 실제값: 테이블 근로B와 동일 (grace zone 포함)
-      const finalWorkH = Math.max(0, (wAMins - brkMins) / 60 + credit)
-      // 인정/평가용: 저녁 grace zone 미인정 — 그리드 전용 계산
-      // grace zone 기준은 출근시각 + 소정근로에 따라 결정
-      const netWorkH = (() => {
-        if (ciMins === null || coMins === null) return Math.max(0, (wAMins - brkMins) / 60)
-        const isHalf    = r.leaveType?.includes('반차') && !r.leaveType?.includes('반반차')
-        const isQuarter = r.leaveType?.includes('반반차')
-        // graceStart = 표준퇴근(소정근로+점심1h), graceEnd = OT 기산점(+1h), graceCap = 소정근로시간
-        const graceStart = ciMins + (isHalf ? 300 : isQuarter ? 420 : 540)  // +5h / +7h / +9h
-        const graceEnd   = ciMins + (isHalf ? 360 : isQuarter ? 480 : 600)  // +6h / +8h / +10h
-        const graceCap   = isHalf ? 4 : isQuarter ? 6 : 8
-        if (coMins > graceEnd)   return Math.max(0, (wAMins - 120) / 60)  // 점심+저녁
-        if (coMins > graceStart) return graceCap                            // grace zone → 소정근로 고정
-        return Math.max(0, (wAMins - 60) / 60)                              // 점심만
-      })()
+      const isSlackInj  = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+      const effIn       = r.effectiveClockIn ?? r.clockIn
+      const ciRec       = effIn     ? parseTimeToMins(effIn)     : null
+      const ciExact     = r.clockIn ? parseTimeToMins(r.clockIn) : null
+      const co          = r.clockOut ? parseTimeToMins(r.clockOut) : null
+      const elRec       = (ciRec   !== null && co !== null) ? Math.max(0, co - ciRec)   : 0
+      const elExact     = (ciExact !== null && co !== null) ? Math.max(0, co - ciExact) : 0
+      const netRecMins  = Math.max(0, elRec   - compute4141BreakMins(elRec))
+      const netExactMins= Math.max(0, elExact - compute4141BreakMins(elExact))
+      const credit      = (!r.isUnpaidLeave && !isSlackInj) ? leaveAmt * 8 : 0
+      const netRecH     = netRecMins / 60
 
       if (r.dayType === 'WEEKDAY') {
-        // rawOt = Dinner Grace 이후 실제 OT 분 → 시간 변환 (절삭 전)
-        const rawOt = (r.rawOvertimeMinutes ?? 0) / 60
+        exactTotal    += netExactMins / 60
+        exactOt       += Math.max(0, netExactMins / 60 - 8)
+        exactNight    += r.nightHours ?? 0
 
-        // ── 실제값: ERP 게이트 없음, 절삭 없음 ─────────────────────────
-        exactTotal += finalWorkH
-        exactNight += r.nightHours ?? 0
-
-        // ── 인정시간 ─────────────────────────────────────────────────────
         if (isLeader) {
-          // 직책자: effectiveClockIn 기준 (08:00 클램핑 적용), 세 모드 모두 동일 기준
-          const clampedWA = Math.round(computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut) * 60)
-          const leaderOt  = computeLeaderOtMins(clampedWA, leaveAmt, r.finalStatus ?? '', r.effectiveClockIn ?? r.clockIn) / 60
-          exactOt      += leaderOt
-          roundedOt    += leaderOt
-          roundedTotal += netWorkH + credit  // grace zone 미인정
+          roundedOt    += Math.max(0, netRecH - 8)
           roundedNight += r.nightHours ?? 0
         } else {
-          // 비직책자: ERP 신청한 날만 OT 인정
-          exactOt      += rawOt
-          const approvedOt = r.erpOtApplied ? r.overtimeHours : 0
+          const approvedOt = r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
           roundedOt    += approvedOt
-          roundedTotal += floorTo30(Math.min(netWorkH, 8)) + credit + approvedOt
-          // 야간: ERP 신청한 날만, 30분 절삭
           roundedNight += r.erpOtApplied ? floorTo30(r.nightHours ?? 0) : 0
         }
 
+        roundedTotal  += netRecH + credit
+        nocreditTotal += netRecH
       } else if (r.finalStatus === '휴일근무') {
-        exactTotal   += finalWorkH
-        roundedTotal += floorTo30(finalWorkH)
+        const holH    = r.holidayHours ?? 0
+        exactTotal   += holH
+        roundedTotal += floorTo30(holH)
+        nocreditTotal += floorTo30(holH)
       } else {
-        // 주말·공휴일 (출근 없음 or holidayHours만 존재)
         const holH = r.holidayHours ?? 0
         exactTotal   += holH
         roundedTotal += floorTo30(holH)
+        nocreditTotal += floorTo30(holH)
       }
     }
 
-    // 휴일 컬럼: 비평일 레코드의 holidayHours 합산, 직책자도 30분 절삭
     const rawHoliday = recs.reduce(
       (s, r) => s + (r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0), 0)
     const roundedHoliday = recs.reduce((s, r) => {
@@ -337,6 +318,7 @@ const empStats = useMemo(() => {
     }, 0)
     stats[emp.id] = {
       total:      roundedTotal,
+      nocreditTotal,
       rawTotal:   exactTotal,
       ot:         roundedOt,
       rawOt:      exactOt,
@@ -351,7 +333,7 @@ const empStats = useMemo(() => {
     }
   }
   return stats
-}, [employees, records, approvedKeys])
+}, [employees, records, approvedKeys, leaderIdSet])
 
   // Hours compliance filter
   // - 52h: 주간 단위로 나눠서 어느 주든 52h 초과하면 표시 (주 52시간 법정 한도)
@@ -362,7 +344,9 @@ const empStats = useMemo(() => {
     if (hoursFilter === 'over209') {
       return displayEmployees.filter(e => {
         const s = empStats[e.id]
-        const v = timeMode === 'exact' ? (s?.rawTotal ?? 0) : (s?.total ?? 0)
+        const v = timeMode === 'exact'
+          ? (s?.rawTotal ?? 0)
+          : creditsOn ? (s?.total ?? 0) : (s?.nocreditTotal ?? 0)
         return v >= 209
       })
     }
@@ -387,20 +371,17 @@ const empStats = useMemo(() => {
       const empRecs = recsByEmp.get(e.id) ?? []
       const weekTotals: Record<string, number> = {}
       for (const r of empRecs) {
-        const effectiveIn = r.effectiveClockIn ?? r.clockIn
-        const wAMins     = Math.round(computeWorkA(effectiveIn, r.clockOut) * 60)
-        const ciMins     = effectiveIn ? parseTimeToMins(effectiveIn) : null
-        const coMins     = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
-        const brkMins    = computeDisplayBreakMins(wAMins, ciMins, coMins, r.leaveType)
-        // 52h 법적 기준: 실근로시간만 (leaveCredit 미포함, SummaryTab과 동일)
-        const netH       = Math.max(0, (wAMins - brkMins) / 60)
+        const ci = r.clockIn ? parseTimeToMins(r.clockIn) : null
+        const co = r.clockOut ? parseTimeToMins(r.clockOut) : null
+        const el = (ci !== null && co !== null) ? Math.max(0, co - ci) : 0
+        const netH = Math.max(0, (el - compute4141BreakMins(el)) / 60)
         const addH = r.dayType === 'WEEKDAY' ? netH : (r.holidayHours ?? 0)
         const wk = weekKey(r.date)
         weekTotals[wk] = (weekTotals[wk] ?? 0) + addH
       }
       return Object.values(weekTotals).some(h => h >= 52)
     })
-  }, [displayEmployees, hoursFilter, empStats, timeMode, records])
+  }, [displayEmployees, hoursFilter, empStats, timeMode, creditsOn, records])
 
   // Sort after stats are available
   const sortedEmployees = useMemo(() => {
@@ -748,7 +729,7 @@ const empStats = useMemo(() => {
                       style={{ left: L3, width: W_TOTAL, minWidth: W_TOTAL }}
                       rowSpan={4}>
                       {(() => {
-                        const display = timeMode === 'exact' ? s.rawTotal : s.total
+                        const display = timeMode === 'exact' ? s.rawTotal : creditsOn ? s.total : s.nocreditTotal
                         return (
                           <>
                             <span className="text-[12px] font-bold text-gray-800 tabular-nums block leading-tight">
@@ -979,14 +960,15 @@ const empStats = useMemo(() => {
 
                       let otH = 0
                       if (rec && rec.dayType === 'WEEKDAY') {
-                        const effectiveIn = rec.effectiveClockIn ?? rec.clockIn
-                        const wAMins   = Math.round(computeWorkA(effectiveIn, rec.clockOut) * 60)
-                        const ciMins   = effectiveIn ? parseTimeToMins(effectiveIn) : null
-                        const coMins   = rec.clockOut ? parseTimeToMins(rec.clockOut) : null
-                        const brkMins  = computeDisplayBreakMins(wAMins, ciMins, coMins, rec.leaveType)
-                        const wBMins   = Math.max(0, wAMins - brkMins)
-                        const credit   = rec.isUnpaidLeave ? 0 : (rec.erpLeaveAmount ?? 0) * 8
-                        const finalH   = Math.max(0, wBMins / 60 + credit)
+                        const effIn  = timeMode === 'exact' ? rec.clockIn : (rec.effectiveClockIn ?? rec.clockIn)
+                        const ciMins = effIn      ? parseTimeToMins(effIn)       : null
+                        const coMins = rec.clockOut ? parseTimeToMins(rec.clockOut) : null
+                        const el     = (ciMins !== null && coMins !== null) ? Math.max(0, coMins - ciMins) : 0
+                        const netMins = Math.max(0, el - compute4141BreakMins(el))
+                        const isSlackInj = (rec.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+                        const credit = (timeMode !== 'exact' && creditsOn && !rec.isUnpaidLeave && !isSlackInj)
+                          ? (rec.erpLeaveAmount ?? 0) * 8 : 0
+                        const finalH = Math.max(0, netMins / 60 + credit)
                         otH = Math.max(0, finalH - 8.0)
                       }
 
