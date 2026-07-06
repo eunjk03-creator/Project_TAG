@@ -412,7 +412,7 @@ export function AttendanceResultTable({
   const [showHolidayWork,  setShowHolidayWork]  = useState(false)
   const [showOver52h,      setShowOver52h]      = useState(false)
   const [timeView,         setTimeView]         = useState<'인정시간' | '실제값'>('인정시간')
-  const [credits,          setCredits]          = useState({ 연차: true, 반차: true, 반반차: true })
+  const [creditsOn,        setCreditsOn]        = useState(true)
   const [columnFilters,    setColumnFilters]    = useState<ColumnFiltersState>([])
   const [sorting,          setSorting]          = useState<SortingState>([
     { id: 'date', desc: true },
@@ -831,21 +831,16 @@ export function AttendanceResultTable({
 
         {/* 크레딧 토글 — 인정시간 탭 바로 아래 */}
         {timeView === '인정시간' && (
-          <div className="flex items-center gap-1 text-[11px]">
-            {(['연차', '반차', '반반차'] as const).map(label => (
-              <button
-                key={label}
-                onClick={() => setCredits(prev => ({ ...prev, [label]: !prev[label] }))}
-                className={`px-2 py-0.5 rounded border transition-all ${
-                  credits[label]
-                    ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-medium'
-                    : 'bg-white border-gray-200 text-gray-400'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <button
+            onClick={() => setCreditsOn(prev => !prev)}
+            className={`px-2 py-0.5 rounded border text-[11px] transition-all ${
+              creditsOn
+                ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-medium'
+                : 'bg-white border-gray-200 text-gray-400'
+            }`}
+          >
+            크레딧
+          </button>
         )}
       </div>
 
