@@ -462,21 +462,22 @@ export function AttendanceResultTable({
       const emp        = empMap.get(r.employeeId)
       const empId      = emp?.rawId ?? r.employeeId.split('_')[0]
       const leaveAmt   = r.erpLeaveAmount ?? 0
-      const workA      = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
-      // GAS leave-last: Engine B + 점심 오버랩 → only 0/30/60/120 min
-      const effectiveIn      = r.effectiveClockIn ?? r.clockIn
-      const gasWorkAMins     = Math.round(workA * 60)
-      const clockInMins      = effectiveIn  ? parseTimeToMins(effectiveIn)  : null
-      const clockOutMins     = r.clockOut   ? parseTimeToMins(r.clockOut)   : null
-      const isHoliday        = r.dayType !== 'WEEKDAY'
-      const displayBreakMins = isHoliday ? r.breakMinutes : computeDisplayBreakMins(gasWorkAMins, clockInMins, clockOutMins, r.leaveType)
-      const gasWorkBMins     = Math.max(0, gasWorkAMins - displayBreakMins)
-      // 최종근무 = 근로B + 연차 크레딧 (leaveAmt × 8h, 무급은 0)
-      const leaveCredit = r.isUnpaidLeave ? 0 : leaveAmt * 8
-      const finalWorkH  = isHoliday ? r.holidayHours : Math.max(0, gasWorkBMins / 60 + leaveCredit)
-      // 연차정보: ERP 미신청 여부를 기준으로 판단 (erpLeaveAmount는 Slack 주입 시 덮어써지므로 사용 불가)
-      // ERP 미신청 note 있음 → Slack / leaveType 있고 note 없음 → ERP / 없음 → 빈칸
+      // 실제값: MAX 가드 제거(raw clockIn), 인정시간: effectiveClockIn(MAX 가드 적용)
+      const isExactMode     = timeView === '실제값'
       const isSlackInjected = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+      const effectiveIn     = isExactMode ? r.clockIn : (r.effectiveClockIn ?? r.clockIn)
+      const workA           = computeWorkA(effectiveIn, r.clockOut)
+      const gasWorkAMins    = Math.round(workA * 60)
+      const clockInMins     = effectiveIn ? parseTimeToMins(effectiveIn) : null
+      const clockOutMins    = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
+      const isHoliday       = r.dayType !== 'WEEKDAY'
+      const displayBreakMins = isHoliday ? r.breakMinutes : computeDisplayBreakMins(gasWorkAMins, clockInMins, clockOutMins, r.leaveType)
+      const gasWorkBMins    = Math.max(0, gasWorkAMins - displayBreakMins)
+      // 인정시간+creditsOn+ERP상신(Slack 미주입)일 때만 연차 크레딧 합산
+      const leaveCredit  = (!isExactMode && creditsOn && !r.isUnpaidLeave && !isSlackInjected)
+        ? leaveAmt * 8
+        : 0
+      const finalWorkH   = isHoliday ? r.holidayHours : Math.max(0, gasWorkBMins / 60 + leaveCredit)
       const leaveSource: string =
         isSlackInjected              ? 'Slack' :
         r.leaveType                  ? 'ERP' :
@@ -505,10 +506,12 @@ export function AttendanceResultTable({
       // ERP 미승인(Slack 주입) 여부: 오전반차/반반차 혜택 박탈 가드
       const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
       // effectiveIn already declared above
-      // 초과근로(절삭 없음): 직책자=raw clockIn, 일반=effectiveIn
-      const systemOtMins   = r.isLeader
-        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
-        : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved)
+      // 초과근로: 실제값=workB−8h 날것(절삭·ERP게이트 없음), 인정시간=슬라이딩블록 기준
+      const systemOtMins   = isExactMode
+        ? Math.max(0, gasWorkBMins - 480)
+        : (r.isLeader
+          ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+          : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved))
       const systemOtH      = systemOtMins / 60
       // 급여용 연장: 직책자=절삭없음+ERP무관, 일반=30분절삭+ERP연장신청 필수
       const gasPayOtMins   = r.isLeader
@@ -541,7 +544,7 @@ export function AttendanceResultTable({
         record: r, division: emp?.division ?? '—', team: emp?.team ?? '', empId,
         name: emp?.name ?? r.employeeId,
         date: r.date,
-        clockIn:  r.effectiveClockIn ?? r.clockIn  ?? null,
+        clockIn:  isExactMode ? (r.clockIn ?? null) : (r.effectiveClockIn ?? r.clockIn ?? null),
         clockOut: r.clockOut ?? null,
         leaveAmt, leaveType: r.leaveType ?? null, leaveSource,
         gasWorkAMins, breakH: displayBreakMins / 60, gasWorkBMins,
@@ -556,7 +559,7 @@ export function AttendanceResultTable({
     // row-based list. Non-working days with punches (휴일근무) are preserved.
     // The calendar/grid view is unaffected (uses records directly).
     }).filter(row => row.record.dayType === 'WEEKDAY' || row.record.clockIn != null || row.record.clockOut != null)
-  }, [records, showHolidayWork, showOver52h, holidayWorkerIds, over52hEmployeeIds, empMap, noteMap])
+  }, [records, showHolidayWork, showOver52h, holidayWorkerIds, over52hEmployeeIds, empMap, noteMap, timeView, creditsOn])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const columns = useMemo<ColumnDef<GridRow, any>[]>(() => [
