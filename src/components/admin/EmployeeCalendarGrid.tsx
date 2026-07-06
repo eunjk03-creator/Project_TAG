@@ -264,10 +264,6 @@ const empStats = useMemo(() => {
     let exactNight = 0, roundedNight = 0
 
     for (const r of recs) {
-      const isFullDayLeave   = (r.erpLeaveAmount ?? 0) >= 1.0 || r.finalStatus === '연차'
-      const hasPhysicalPunch = !!(r.clockIn || r.clockOut)
-      if (isFullDayLeave && !hasPhysicalPunch) continue
-
       const leaveAmt       = r.erpLeaveAmount ?? 0
       const isSlackInj     = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
       const isErpApproved  = r.leaveType ? !isSlackInj : true
@@ -868,7 +864,7 @@ const empStats = useMemo(() => {
                                   )
                                 })()}
                                 {(rec?.flag ?? '').includes('LATE') && <InfoTag cls={TAG.late} text="지각" />}
-                                {rec?.leaveType && !rec.leaveType.includes('오후') && (
+                                {rec?.leaveType && (rec.leaveType === '반차' || !rec.leaveType.includes('오후')) && (
                                   <InfoTag cls={TAG.amLeave} text={rec.leaveType} />
                                 )}
                               </button>
@@ -933,7 +929,7 @@ const empStats = useMemo(() => {
                                 </span>
                                 {(rec?.flag === 'EARLY_DEPARTURE' || rec?.flag === 'LATE_AND_EARLY_DEPARTURE') &&
                                   <InfoTag cls={TAG.earlyExit} text="조기퇴근" />}
-                                {rec?.leaveType && rec.leaveType.includes('오후') && (
+                                {rec?.leaveType && (rec.leaveType === '반차' || rec.leaveType.includes('오후')) && (
                                   <InfoTag cls={TAG.pmLeave} text={rec.leaveType} />
                                 )}
                               </button>
