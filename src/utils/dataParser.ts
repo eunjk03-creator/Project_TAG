@@ -299,8 +299,8 @@ function buildLeaveMap(
   rows:           ErpUnifiedRow[],
   employeeMap:    Map<string, Employee>,
   companyHolsMap: Map<string, string> = new Map(),
-): Map<string, { type: ErpLeaveType; amount: number; isUnpaid?: boolean; rawCode: string }> {
-  const accumMap = new Map<string, { amount: number; type: ErpLeaveType; isUnpaid?: boolean; rawCode: string }>()
+): Map<string, { type: ErpLeaveType; amount: number; isUnpaid?: boolean; rawCode: string; codes: ErpLeaveType[] }> {
+  const accumMap = new Map<string, { amount: number; type: ErpLeaveType; isUnpaid?: boolean; rawCode: string; codes: ErpLeaveType[] }>()
 
   // ── Diagnostic: log ERP column keys from first row (dev only) ──────────
   if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production' && rows.length > 0) {
@@ -424,7 +424,10 @@ function buildLeaveMap(
           newAmount >= 1.0 ? '연차' :
           (newAmount >= 0.5 && (effectiveType === '오전반반차' || effectiveType === '오후반반차')) ? '반차' :
           effectiveType
-        accumMap.set(k, { amount: newAmount, type: newType, isUnpaid: (existing?.isUnpaid ?? false) || isUnpaid, rawCode: code })
+        // Preserve every individual submitted code (not just the merged total) so the
+        // grid can show exactly what was applied for on days with 2+ same-day requests.
+        const codes = [...(existing?.codes ?? []), effectiveType]
+        accumMap.set(k, { amount: newAmount, type: newType, codes, isUnpaid: (existing?.isUnpaid ?? false) || isUnpaid, rawCode: code })
       }
       if (cur === endDate) break
       cur = addOneDayUTC(cur)
@@ -771,6 +774,7 @@ export function parseAttendanceData(
       ...(erpLeaveAmount !== undefined && { erpLeaveAmount }),
       ...(isUnpaidLeave && { isUnpaidLeave }),
       ...(leaveEntry?.rawCode && { rawLeaveCode: leaveEntry.rawCode }),
+      ...(leaveEntry?.codes && leaveEntry.codes.length > 0 && { leaveCodesDetail: leaveEntry.codes }),
       isHolidayWork,
       ...(employeeMap.get(compositeKey)?.isLeader && { isLeader: true }),
       ...(verificationNote.length > 0 && { verificationNote }),
