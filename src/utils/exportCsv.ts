@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx-js-style'
 import type { ProcessedRecord, Employee } from '@/types/tag'
 import {
   computeWorkA, parseTimeToMins, computeDisplayBreakMins,
-  computePayrollMetrics,
+  computePayOtMins, computeLeaderPayOtMins, computeGasNightMins,
 } from '@/utils/attendanceCalc'
 
 const FLAG_LABEL: Record<string, string> = {
@@ -228,13 +228,20 @@ function buildDetailRowData(
   const isLeaveDay = !!(r.leaveType && ['연차','오전반차','오후반차','오전반반차','오후반반차','출장','재택근무'].includes(r.leaveType))
   if (normalTags.length === 0 && !isLeaveDay && r.dayType === 'WEEKDAY') normalTags.push('일반')
 
-  const { systemOtH, payrollOtH, payrollNightH } = computePayrollMetrics({
-    effectiveClockIn: r.effectiveClockIn,
-    clockOut:         r.clockOut,
-    leaveType:        r.leaveType,
-    finalWorkH:       finalWork,
-    nightHours:       r.nightHours,
-  })
+  const isLeader    = r.isLeader ?? false
+  const effectiveIn = r.effectiveClockIn ?? r.clockIn
+  // 시스템 초과근로: 절삭없음 기준 (직책자=raw clockIn, 일반=effectiveIn)
+  const systemOtMins  = isLeader
+    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType)
+    : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType)
+  const systemOtH   = systemOtMins / 60
+  // 급여용 연장: 직책자=절삭없음, 일반=30분 절삭
+  const gasPayOtMins = isLeader
+    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType)
+    : computePayOtMins(effectiveIn, r.clockOut, r.leaveType)
+  const payrollOtH  = gasPayOtMins / 60
+  // 급여용 야간: 직책자=절삭없음, 일반=30분 절삭
+  const payrollNightH = computeGasNightMins(r.clockOut, isLeader) / 60
   const erpOtLabel = r.erpOtApplied === true ? '신청' : r.erpOtApplied === false ? '미신청' : null
 
   return {

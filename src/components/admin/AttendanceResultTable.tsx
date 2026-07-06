@@ -14,7 +14,8 @@ import { EMPLOYEES } from '@/data/orgChart'
 import {
   parseTimeToMins,
   computeWorkA, computeBreakH, computeDisplayBreakMins,
-  computeGasPayOtMins, computeGasNightMins, computeLeaderOtMins,
+  computeGasNightMins,
+  computePayOtMins, computeLeaderPayOtMins, computeHolidayPayMins,
 } from '@/utils/attendanceCalc'
 
 // ── Row shape ─────────────────────────────────────────────────────────────
@@ -496,40 +497,27 @@ export function AttendanceResultTable({
       if (r.finalStatus === '휴일근무') normalTags.push('휴일근로')
       if (r.overtimeHours > 0) normalTags.push('연장근로')
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
-      // Zone 2 — GAS formula payroll metrics (leave-last)
-      // 오전반차/반반차: 표준출근시각으로 클램핑 (조기출근 OT 과산정 방지)
-      const otStdInMins: number | null =
-        r.leaveType === '오전반차'   ? 840 :
-        r.leaveType === '오전반반차' ? 660 :
-        null
-      const toOtClampedStr = (inMins: number | null): string | null => {
-        if (inMins === null) return null
-        const clamped = otStdInMins !== null ? Math.max(inMins, otStdInMins) : inMins
-        return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`
-      }
-      // 일반 직원: effectiveClockIn 클램핑
-      const otClockIn      = toOtClampedStr(clockInMins)
-      const otWorkAMins    = (otClockIn && clockOutMins !== null)
-        ? Math.max(0, clockOutMins - parseTimeToMins(otClockIn))
-        : 0
-      // 직책자: raw clockIn 클램핑
-      const leaderRawInMins   = r.clockIn ? parseTimeToMins(r.clockIn) : null
-      const leaderOtClockIn   = toOtClampedStr(leaderRawInMins)
-      const leaderOtWorkAMins = (leaderOtClockIn && clockOutMins !== null)
-        ? Math.max(0, clockOutMins - parseTimeToMins(leaderOtClockIn))
-        : 0
-      // 초과근로: 급여용 연장과 동일 산식(경과-allowance), 절삭 없음
-      const systemOtMins   = computeLeaderOtMins(r.isLeader ? leaderOtWorkAMins : otWorkAMins, leaveAmt, displayStatus, r.isLeader ? leaderOtClockIn : otClockIn)
+      // Zone 2 — 급여 지표 v2 (시차출퇴근제 슬라이딩 타임 블록)
+      // effectiveIn already declared above
+      // 초과근로(절삭 없음): 직책자=raw clockIn, 일반=effectiveIn
+      const systemOtMins   = r.isLeader
+        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType)
+        : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType)
       const systemOtH      = systemOtMins / 60
+      // 급여용 연장: 직책자=절삭없음, 일반=30분 절삭 + ERP 신청 여부는 auditFlag에서 처리
       const gasPayOtMins   = r.isLeader
-        ? computeLeaderOtMins(leaderOtWorkAMins, leaveAmt, displayStatus, leaderOtClockIn)  // 절삭 없음
-        : computeGasPayOtMins(otWorkAMins, leaveAmt, displayStatus, otClockIn)              // 30분 절삭
-      const gasNightMins   = computeGasNightMins(r.clockOut)
+        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType)
+        : computePayOtMins(effectiveIn, r.clockOut, r.leaveType)
+      // 급여용 야간: 직책자=절삭없음, 일반=30분 절삭
+      const gasNightMins   = computeGasNightMins(r.clockOut, r.isLeader ?? false)
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60
-      // 휴일근로: 근로B(holidayHours = 경과-휴게) 기준 30분 절삭 — AllowanceTab과 동일
-      const payrollHolidayH = r.dayType !== 'WEEKDAY'
-        ? Math.floor(Math.round((r.holidayHours ?? 0) * 60) / 30) * 30 / 60
+      // 급여용 휴일근로: 4+1 반복 패턴 휴게공제, 직책자=절삭없음
+      const payrollHolidayH = r.dayType !== 'WEEKDAY' && r.clockIn && r.clockOut
+        ? computeHolidayPayMins(
+            Math.max(0, parseTimeToMins(r.clockOut) - parseTimeToMins(r.clockIn)),
+            r.isLeader ?? false,
+          ) / 60
         : 0
       const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
       const isOtExempt = r.isLeader === true || otExemptIds?.has(r.employeeId) === true
