@@ -408,7 +408,7 @@ export function computeLeaderOtMins(
 // OT 시작 = virtualIn + 10h (소정8h + 점심1h + 저녁1h)
 
 // ERP 미승인(Slack 주입) 시 오전 반차 혜택 박탈 → 08:00 기준으로 강제 전환
-function computeEffInMins(
+export function computeEffInMins(
   inMins:             number,
   leaveType:          ErpLeaveType | null | undefined,
   isErpLeaveApproved = true,
@@ -418,6 +418,23 @@ function computeEffInMins(
     (leaveType === '오전반반차' && isErpLeaveApproved) ? 600 :  // 10:00
     480                                                           // 08:00
   return Math.max(inMins, std)
+}
+
+/** 분 → "HH:MM" 문자열 변환 (인정시간 표시용) */
+export function minsToHHMM(mins: number): string {
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+/** clockIn 문자열 → 근무유형별 보정 출근시각 (인정시간 탭 표시·계산 공용) */
+export function computeEffClockIn(
+  clockIn:            string | null | undefined,
+  leaveType:          ErpLeaveType | null | undefined,
+  isErpLeaveApproved = true,
+): string | null {
+  if (!clockIn) return null
+  return minsToHHMM(computeEffInMins(parseTimeToMins(clockIn), leaveType, isErpLeaveApproved))
 }
 
 // 오전 반차 계열 + ERP 승인 시에만 역산. 오후 반차 계열 및 미승인은 역산 없음.
