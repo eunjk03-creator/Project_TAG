@@ -438,7 +438,7 @@ export function computeEffClockIn(
 }
 
 // 오전 반차 계열 + ERP 승인 시에만 역산. 오후 반차 계열 및 미승인은 역산 없음.
-function computeVirtualInMins(
+export function computeVirtualInMins(
   effInMins:          number,
   leaveType:          ErpLeaveType | null | undefined,
   isErpLeaveApproved = true,
