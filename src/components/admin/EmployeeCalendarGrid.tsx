@@ -1,6 +1,6 @@
 'use client'
 import { useState, useMemo } from 'react'
-import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
+import type { ProcessedRecord, Employee, RiskThresholds, EmployeeAttributeOverrides } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
 import { parseTimeToMins, compute4141BreakMins, computeEffClockIn, computeEffInMins, computeVirtualInMins } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
@@ -170,6 +170,8 @@ type Props = {
   onSortChange?: (key: 'name' | 'ot' | 'night' | 'holiday' | 'anomaly', dir: 'asc' | 'desc' | 'none') => void
   /** DB 예외규칙 포함 직책자 ID set — emp.isLeader(직급명 자동감지)와 통합하여 isLeader 판별 */
   leaderIdSet?: ReadonlySet<string>
+  /** 직원별 속성 오버라이드 맵 (발령일/해임일 포함) — page.tsx의 finalAttrMap 전달 */
+  attrMap?: ReadonlyMap<string, EmployeeAttributeOverrides>
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -191,9 +193,23 @@ export function EmployeeCalendarGrid({
   onHoursFilterChange,
   onSortChange,
   leaderIdSet,
+  attrMap,
 }: Props) {
   const companyHolSet   = useMemo(() => new Set(companyHolidays.map(h => h.date)), [companyHolidays])
   const companyHolLabel = useMemo(() => new Map(companyHolidays.map(h => [h.date, h.label])), [companyHolidays])
+
+  // 직원별 날짜 기준 직책자 판별 헬퍼
+  const makeIsLeaderOnDate = (empId: string): ((date: string) => boolean) => {
+    const attrs = attrMap?.get(empId)
+    const from  = attrs?.leaderFrom
+    const to    = attrs?.leaderTo
+    if (from || to) {
+      return (date: string) => (!from || date >= from) && (!to || date <= to)
+    }
+    const base = leaderIdSet ? leaderIdSet.has(empId) : false
+    const csvLeader = employees.find(e => e.id === empId)?.isLeader ?? false
+    return () => base || csvLeader
+  }
 
   // ── Inline sort / filter state ─────────────────────────────────────────
   type SortKey = 'name' | 'ot' | 'night' | 'holiday' | 'anomaly'
@@ -271,8 +287,8 @@ const empStats = useMemo(() => {
 
   for (const emp of employees) {
     const recs     = records.filter(r => r.employeeId === emp.id)
-    // DB 예외규칙(leaderIdSet) OR 직급명 자동감지(emp.isLeader) 둘 다 인정
-    const isLeader = leaderIdSet ? leaderIdSet.has(emp.id) : (emp.isLeader ?? false)
+    // DB 예외규칙(leaderIdSet) OR 직급명 자동감지(emp.isLeader) 둘 다 인정 — 날짜 기준 판별
+    const isLeaderOnDate = makeIsLeaderOnDate(emp.id)
 
     let exactOt = 0, roundedOt = 0
     let exactTotal = 0, roundedTotal = 0, nocreditTotal = 0
@@ -300,7 +316,7 @@ const empStats = useMemo(() => {
         exactOt += (ciExact !== null && co !== null) ? Math.max(0, co - (viExact + 600)) / 60 : 0
         exactNight    += r.nightHours ?? 0
 
-        if (isLeader) {
+        if (isLeaderOnDate(r.date)) {
           // 직책자: virtualIn + 10h 기준, 30분 절삭 없음
           const vi         = ciRec !== null ? computeVirtualInMins(ciRec, r.leaveType, isErpApproved) : 0
           const leaderOtH  = (ciRec !== null && co !== null) ? Math.max(0, co - (vi + 600)) / 60 : 0
@@ -389,7 +405,7 @@ const empStats = useMemo(() => {
     return displayEmployees.filter(e => {
       const empRecs = recsByEmp.get(e.id) ?? []
       const weekTotals: Record<string, number> = {}
-      const isLeader = leaderIdSet ? leaderIdSet.has(e.id) : (e.isLeader ?? false)
+      const isLeaderOnDate = makeIsLeaderOnDate(e.id)
       for (const r of empRecs) {
         // empStats.roundedTotal 과 동일 기준 (크레딧 ON, 직책자/비직책자 구분)
         const isSlackInj    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
@@ -409,7 +425,7 @@ const empStats = useMemo(() => {
             const ciEff   = computeEffInMins(ciRaw, r.leaveType, isErpApproved)
             const elapsed = Math.max(0, co - ciEff)
             const netRecH = Math.max(0, elapsed - compute4141BreakMins(elapsed)) / 60
-            if (isLeader) {
+            if (isLeaderOnDate(r.date)) {
               addH = netRecH + credit
             } else {
               const approvedOt = r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
@@ -704,7 +720,9 @@ const empStats = useMemo(() => {
               const empRecs   = lookup[emp.id] ?? {}
               const s         = empStats[emp.id] ?? { total: 0, ot: 0, night: 0, holiday: 0, anomalies: 0 }
               const isTopRisk = topRiskIds?.has(emp.id) ?? false
-              const isLeader  = leaderIdSet ? leaderIdSet.has(emp.id) : (emp.isLeader ?? false)
+              const isLeaderOnDate = makeIsLeaderOnDate(emp.id)
+              // 뱃지: 표시 기간 내 어느 날이라도 직책자면 표시
+              const isLeader = dates.some(d => isLeaderOnDate(d))
               const isEven    = rowIdx % 2 === 0
               const baseBg    = isEven ? 'bg-white' : 'bg-gray-50'
 
@@ -1038,7 +1056,7 @@ const empStats = useMemo(() => {
                           const rawOtMins  = Math.max(0, coMins - (virtualIn + 600))
                           if (timeMode === 'exact') {
                             otH = rawOtMins / 60                              // 실제값: ERP 가드 없음, 절삭 없음
-                          } else if (isLeader) {
+                          } else if (isLeaderOnDate(date)) {
                             otH = rawOtMins / 60                              // 직책자: 30분 절삭 없음
                           } else {
                             otH = rec.erpOtApplied ? Math.floor(rawOtMins / 30) * 30 / 60 : 0  // 비직책자: ERP 승인 + 30분 절삭
