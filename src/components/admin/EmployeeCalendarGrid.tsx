@@ -43,7 +43,6 @@ const TAG = {
   bizTrip:   'border border-teal-200   bg-teal-50    text-teal-700',
   remote:    'border border-indigo-200 bg-indigo-50  text-indigo-700',
   late:      'border border-amber-200  bg-amber-50   text-amber-600',
-  earlyExit: 'border border-orange-200 bg-orange-50  text-orange-600',
   ot:        'border border-sky-200    bg-sky-50     text-sky-700',
   normal:    'border border-gray-200   bg-gray-50    text-gray-500',
 }
@@ -1010,9 +1009,6 @@ const empStats = useMemo(() => {
                                 }`}>
                                   {rec!.clockOut ?? '미태깅'}
                                 </span>
-                                {(rec?.flag === 'ATTENDANCE_ANOMALY' || rec?.flag === 'LATE_AND_ANOMALY' ||
-                                  rec?.flag === 'EARLY_DEPARTURE' || rec?.flag === 'LATE_AND_EARLY_DEPARTURE') &&
-                                  <InfoTag cls={TAG.earlyExit} text="근무시간 미달" />}
                                 {pmCombo.length > 0 ? (
                                   <InfoTag cls={TAG.pmLeave} text={pmCombo.join('+')} />
                                 ) : rec?.leaveType && (rec.leaveType === '반차' || rec.leaveType.includes('오후')) && (
