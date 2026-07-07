@@ -233,14 +233,15 @@ function buildDetailRowData(
   const isLeader           = r.isLeader ?? false
   const effectiveIn        = r.effectiveClockIn ?? r.clockIn
   const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
-  // 시스템 초과근로: 절삭없음 기준 (직책자=raw clockIn 항상 승인, 일반=effectiveIn+ERP승인 반영)
+  // 시스템 초과근로: 절삭없음 기준 (직책자=raw clockIn, 일반=effectiveIn — 반차 ERP승인 게이트는 공통 적용)
   const systemOtMins  = isLeader
-    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved)
     : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved)
   const systemOtH   = systemOtMins / 60
-  // 급여용 연장: 직책자=절삭없음+ERP무관, 일반=30분절삭+ERP연장신청 필수
+  // 급여용 연장: 직책자=절삭없음+ERP무관(연장신청 자체는), 일반=30분절삭+ERP연장신청 필수
+  // (단, 반차 자체의 ERP 승인 여부는 직책자도 동일하게 게이트)
   const gasPayOtMins = isLeader
-    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved)
     : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0)
   const payrollOtH  = gasPayOtMins / 60
   // 급여용 야간: 직책자=절삭없음, 일반=30분 절삭

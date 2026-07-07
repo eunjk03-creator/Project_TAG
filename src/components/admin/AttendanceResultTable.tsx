@@ -514,14 +514,14 @@ export function AttendanceResultTable({
       const systemOtMins   = isExactMode
         ? computeLeaderPayOtMins(r.clockIn, r.clockOut, null, true)   // leaveType=null → 08:00 floor, no backtrack, no truncation, no guard
         : (r.isLeader
-          ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+          ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved)
           : (r.erpOtApplied ? computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0))
       const systemOtH      = systemOtMins / 60
       // 급여용 연장: Button1/2=ERP가드+30분절삭(직책자 노절삭), Button3=가드·절삭 모두 해제(초과근로와 동일)
       const gasPayOtMins   = isExactMode
         ? systemOtMins
         : (r.isLeader
-          ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+          ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved)
           : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0))
       // Slack 주입 시 이론적 OT (ERP 승인으로 가정) — 표시 전용, 총계 미반영
       const isSlackLeave   = !!(r.leaveType && isSlackInjected)
