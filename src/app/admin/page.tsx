@@ -141,7 +141,6 @@ export default function AdminDashboard() {
     leaveSource:   true,
     gasWorkAMins:  true,
     breakH:        true,
-    gasWorkBMins:  true,
     payrollOtH:    true,
     payrollNightH: true,
     erpOtApplied:  true,
@@ -407,14 +406,19 @@ export default function AdminDashboard() {
   }, [baseEmployees])
 
   const scopedRecords = useMemo(
-    () => allProcessed.filter(r => {
-      if (!scopedEmployeeIds.has(r.employeeId)) return false
-      if (deletedKeys.has(`${r.employeeId}_${r.date}`)) return false
-      const hd = hireDateMap.get(r.employeeId)
-      if (hd && r.date < hd) return false
-      return true
-    }),
-    [allProcessed, scopedEmployeeIds, deletedKeys, hireDateMap],
+    () => allProcessed
+      .filter(r => {
+        if (!scopedEmployeeIds.has(r.employeeId)) return false
+        if (deletedKeys.has(`${r.employeeId}_${r.date}`)) return false
+        const hd = hireDateMap.get(r.employeeId)
+        if (hd && r.date < hd) return false
+        return true
+      })
+      .map(r => {
+        const ov = recordOverrides[`${r.employeeId}_${r.date}`]
+        return ov ? { ...r, ...ov } : r
+      }),
+    [allProcessed, scopedEmployeeIds, deletedKeys, hireDateMap, recordOverrides],
   )
 
   const approvedKeys = useMemo(

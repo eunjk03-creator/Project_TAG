@@ -32,10 +32,9 @@ interface GridRow {
   leaveAmt:       number
   leaveType:      string | null
   leaveSource:    string        // 'ERP' | 'Slack' | ''
-  gasWorkAMins:   number        // Col 10: raw attendance minutes (GAS leave-last model)
-  breakH:         number
-  gasWorkBMins:   number        // Col 12: workA − gasBreak, before leave injection
-  finalWorkH:     number
+  gasWorkAMins:   number        // 근로A: 출근~퇴근 총 경과시간(gross, 휴게 차감 전)
+  breakH:         number        // 휴게: 4/1/4/1 레일 스킵값
+  finalWorkH:     number        // 최종근무: (근로A − 휴게) + 연차크레딧
   displayStatus:  string | null     // OT 계산용 내부 필드 (컬럼 미표시)
   attendanceStatus: '정상' | '비정상'
   normalTags:     string[]
@@ -186,7 +185,6 @@ const OPTIONAL_COL_GROUPS = [
       { id: 'leaveSource',  label: '연차정보' },
       { id: 'gasWorkAMins', label: '근로A' },
       { id: 'breakH',       label: '휴게' },
-      { id: 'gasWorkBMins', label: '근로B' },
     ],
   },
   {
@@ -207,7 +205,7 @@ const COL_LABELS: Record<string, string> = {
   division: '본부', empId: '사번', name: '이름', date: '날짜',
   clockIn: '출근', clockOut: '퇴근',
   leaveAmt: '연차일수', leaveType: '연차코드', leaveSource: '연차정보',
-  gasWorkAMins: '근로A', breakH: '휴게', gasWorkBMins: '근로B',
+  gasWorkAMins: '근로A', breakH: '휴게',
   finalWorkH: '최종근무',
   attendanceStatus: '근태상태',
   normalTags: '정상정보',
@@ -480,10 +478,10 @@ export function AttendanceResultTable({
       const leaveCredit  = (!isExactMode && creditsOn && !r.isUnpaidLeave && !isSlackInjected)
         ? leaveAmt * 8
         : 0
-      // 근로A = 순 근로시간(elapsed − break), 근로B = 근로A + 연차크레딧
-      const gasWorkAMins = Math.max(0, elapsedMins - displayBreakMins)
-      const gasWorkBMins = Math.max(0, gasWorkAMins + Math.round(leaveCredit * 60))
-      const finalWorkH   = isHoliday ? (r.holidayHours ?? 0) : gasWorkBMins / 60
+      // 근로A = 총 경과시간(gross, 휴게 차감 전) / 최종근무 = (근로A − 휴게) + 연차크레딧
+      const gasWorkAMins = elapsedMins
+      const netWorkMins  = Math.max(0, gasWorkAMins - displayBreakMins)
+      const finalWorkH   = isHoliday ? (r.holidayHours ?? 0) : netWorkMins / 60 + leaveCredit
       const leaveSource: string =
         isSlackInjected              ? 'Slack' :
         r.leaveType                  ? 'ERP' :
@@ -509,18 +507,24 @@ export function AttendanceResultTable({
       if (r.finalStatus === '휴일근무') normalTags.push('휴일근로')
       if (r.overtimeHours > 0) normalTags.push('연장근로')
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
-      // Zone 2 — 급여 지표 v2 (시차출퇴근제 슬라이딩 타임 블록)
-      // 초과근로: 실제값=virtualIn+10h (연차보정·ERP게이트·절삭 없음), 인정시간=슬라이딩블록 기준
+      // Zone 2 — 급여 지표 v2 (Virtual In + 10h 기준선, 버튼 간 완전 격리)
+      // 초과근로 = 급여용연장의 절삭 전(1분단위) 값 — 둘 다 동일한 ERP가드를 거친 뒤
+      // 절삭 유무만 다름. Button3(실제값)은 가드·절삭 모두 해제.
+      // 직책자는 ERP 신청 여부와 무관하게 항상 인정 (기존 방침 유지).
       const systemOtMins   = isExactMode
         ? computeLeaderPayOtMins(r.clockIn, r.clockOut, null, true)   // leaveType=null → 08:00 floor, no backtrack, no truncation, no guard
         : (r.isLeader
           ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
-          : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved))
+          : (r.erpOtApplied ? computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0))
       const systemOtH      = systemOtMins / 60
-      // 급여용 연장: 직책자=절삭없음+ERP무관, 일반=30분절삭+ERP연장신청 필수
-      const gasPayOtMins   = r.isLeader
-        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
-        : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0)
+      // 급여용 연장: Button1/2=ERP가드+30분절삭(직책자 노절삭), Button3=가드·절삭 모두 해제(초과근로와 동일)
+      const gasPayOtMins   = isExactMode
+        ? systemOtMins
+        : (r.isLeader
+          ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
+          : isSlackInjected
+            ? computePayOtMins(effectiveIn, r.clockOut, null, true)
+            : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0))
       // Slack 주입 시 이론적 OT (ERP 승인으로 가정) — 표시 전용, 총계 미반영
       const isSlackLeave   = !!(r.leaveType && isSlackInjected)
       const slackOtH       = isSlackLeave
@@ -528,18 +532,18 @@ export function AttendanceResultTable({
           ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true) / 60
           : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, true) / 60 : 0))
         : 0
-      // 급여용 야간: 직책자=절삭없음, 일반=30분 절삭
-      const gasNightMins   = computeGasNightMins(r.clockOut, r.isLeader ?? false)
+      // 급여용 야간: Button1/2=직책자 절삭없음·일반 30분절삭, Button3=전사 노절삭
+      const gasNightMins   = computeGasNightMins(r.clockOut, isExactMode ? true : (r.isLeader ?? false))
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60
-      // 급여용 휴일근로: 4+1 반복 패턴 휴게공제, 직책자=절삭없음
+      // 급여용 휴일근로: 4+1 반복 패턴 휴게공제 — Button1/2=직책자 절삭없음·일반 30분절삭, Button3=전사 노절삭
       const payrollHolidayH = r.dayType !== 'WEEKDAY' && r.clockIn && r.clockOut
         ? computeHolidayPayMins(
             Math.max(0, parseTimeToMins(r.clockOut) - parseTimeToMins(r.clockIn)),
-            r.isLeader ?? false,
+            isExactMode ? true : (r.isLeader ?? false),
           ) / 60
         : 0
-      const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
+      const auditFlag  = !isSlackInjected && (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
       const isOtExempt = r.isLeader === true || otExemptIds?.has(r.employeeId) === true
       // payrollOtH는 미신청 시 0으로 강제되어 '미신청'을 절대 나타낼 수 없었음 — 실제
       // 연장근로 여부(r.overtimeHours, ERP 게이트 적용 전 원시값) 기준으로 판정.
@@ -553,7 +557,7 @@ export function AttendanceResultTable({
         clockIn:  effectiveIn ?? null,
         clockOut: r.clockOut ?? null,
         leaveAmt, leaveType: r.leaveType ?? null, leaveSource,
-        gasWorkAMins, breakH: displayBreakMins / 60, gasWorkBMins,
+        gasWorkAMins, breakH: displayBreakMins / 60,
         finalWorkH, displayStatus,
         attendanceStatus, normalTags, anomalyTags,
         systemOtH, payrollOtH, slackOtH, isSlackLeave, payrollNightH, payrollHolidayH,
@@ -662,20 +666,14 @@ export function AttendanceResultTable({
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('breakH', {
-      id: 'breakH', header: () => <ColTip label="휴게" tip="법정 휴게 — 근로A 4h↑30분 / 8h↑60분 / 12h↑120분" />, size: 60, minSize: 48,
+      id: 'breakH', header: () => <ColTip label="휴게" tip="4/1/4/1 레일 스킵값 — 근로A 4h↑부터 점심 1h, 9h↑부터 저녁 1h 누적 (최대 2h)" />, size: 60, minSize: 48,
       filterFn: numMultiSelectFilter,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-gray-400 text-xs">{Math.round(i.getValue() * 60)}m</span>
         : <span className="text-gray-300">—</span>,
     }),
-    col.accessor('gasWorkBMins', {
-      id: 'gasWorkBMins', header: () => <ColTip label="근로B" tip="근로A − 휴게 = 실 근무시간" />, size: 72, minSize: 55,
-      cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-gray-600 text-xs">{fmtH(i.getValue() / 60)}</span>
-        : <span className="text-gray-300">—</span>,
-    }),
     col.accessor('finalWorkH', {
-      id: 'finalWorkH', header: () => <ColTip label="최종근무" tip="법정 인정 근무시간 (근로B 기준)" />, size: 85, minSize: 70,
+      id: 'finalWorkH', header: () => <ColTip label="최종근무" tip="(근로A − 휴게) + 연차크레딧" />, size: 85, minSize: 70,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-semibold text-gray-800">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
@@ -727,30 +725,28 @@ export function AttendanceResultTable({
     }),
     // ── Zone 2: columns 13–16 (Payroll reference) ───────────────────────────
     col.accessor('systemOtH', {
-      id: 'systemOtH', header: () => <ColTip label="초과근로" tip="최종근무 − 8h 초과분" />, size: 80, minSize: 65,
+      id: 'systemOtH', header: () => <ColTip label="초과근로" tip="MAX(0, 퇴근 − (Virtual In+10h)), 1분 단위 (급여용연장의 절삭 전 값, 직책자 ERP무관)" />, size: 80, minSize: 65,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-medium text-amber-600">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('payrollOtH', {
-      id: 'payrollOtH', header: () => <ColTip label="급여용연장" tip="근로A − 10h 초과분, 30분 단위 절사 (10h = 8h근무 + 점심1h + 저녁1h)" />, size: 90, minSize: 72,
+      id: 'payrollOtH', header: () => <ColTip label="급여용연장" tip="초과근로를 30분 단위 절사 (직책자 노절삭, 실제값 버튼은 절삭 없음)" />, size: 90, minSize: 72,
       cell: i => {
         const row = i.row.original
-        if (row.isSlackLeave && row.slackOtH > 0)
-          return <span className="tabular-nums text-xs font-medium text-red-300 line-through" title="연차 ERP 미신청 — 급여 미산입">{fmtH(row.slackOtH)}</span>
         return i.getValue() > 0
           ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
           : <span className="text-gray-300">—</span>
       },
     }),
     col.accessor('payrollNightH', {
-      id: 'payrollNightH', header: () => <ColTip label="급여용야간" tip="22시 이후 근무시간, 30분 단위 절사" />, size: 90, minSize: 72,
+      id: 'payrollNightH', header: () => <ColTip label="급여용야간" tip="22시 이후 근무시간, 30분 단위 절사 (직책자·실제값 버튼은 절삭 없음)" />, size: 90, minSize: 72,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-semibold text-indigo-600">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('payrollHolidayH', {
-      id: 'payrollHolidayH', header: () => <ColTip label="급여용휴일" tip="휴일 실근무시간, 30분 단위 절사" />, size: 90, minSize: 72,
+      id: 'payrollHolidayH', header: () => <ColTip label="급여용휴일" tip="휴일 실근무시간(4+1 패턴 휴게공제), 30분 단위 절사 (직책자·실제값 버튼은 절삭 없음)" />, size: 90, minSize: 72,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-semibold text-emerald-600">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
