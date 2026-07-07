@@ -538,9 +538,11 @@ export function AttendanceResultTable({
         : 0
       const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
       const isOtExempt = r.isLeader === true || otExemptIds?.has(r.employeeId) === true
+      // payrollOtH는 미신청 시 0으로 강제되어 '미신청'을 절대 나타낼 수 없었음 — 실제
+      // 연장근로 여부(r.overtimeHours, ERP 게이트 적용 전 원시값) 기준으로 판정.
       const erpOtStatus: '신청' | '미신청' | '—' =
-        isOtExempt || payrollOtH === 0 ? '—' :
-        r.erpOtApplied                 ? '신청' : '미신청'
+        isOtExempt || r.overtimeHours === 0 ? '—' :
+        r.erpOtApplied                      ? '신청' : '미신청'
       return {
         record: r, division: emp?.division ?? '—', team: emp?.team ?? '', empId,
         name: emp?.name ?? r.employeeId,
