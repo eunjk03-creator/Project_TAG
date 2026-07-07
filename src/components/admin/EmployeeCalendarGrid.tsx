@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
-import { parseTimeToMins, compute4141BreakMins, computeEffClockIn, computeEffInMins } from '@/utils/attendanceCalc'
+import { parseTimeToMins, compute4141BreakMins, computeEffClockIn, computeEffInMins, computeVirtualInMins } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
@@ -294,12 +294,17 @@ const empStats = useMemo(() => {
       const netRecH     = netRecMins / 60
 
       if (r.dayType === 'WEEKDAY') {
-        exactTotal    += netExactMins / 60
-        exactOt       += Math.max(0, netExactMins / 60 - 8)
+        exactTotal += netExactMins / 60
+        // Button 3: virtualIn + 10h 기준 (ERP 가드·절삭 없음, 실제 출근 기준)
+        const viExact    = ciExact !== null ? computeVirtualInMins(ciExact, r.leaveType, isErpApproved) : 0
+        exactOt += (ciExact !== null && co !== null) ? Math.max(0, co - (viExact + 600)) / 60 : 0
         exactNight    += r.nightHours ?? 0
 
         if (isLeader) {
-          roundedOt    += Math.max(0, netRecH - 8)
+          // 직책자: virtualIn + 10h 기준, 30분 절삭 없음
+          const vi         = ciRec !== null ? computeVirtualInMins(ciRec, r.leaveType, isErpApproved) : 0
+          const leaderOtH  = (ciRec !== null && co !== null) ? Math.max(0, co - (vi + 600)) / 60 : 0
+          roundedOt    += leaderOtH
           roundedNight += r.nightHours ?? 0
           roundedTotal  += netRecH + credit
           nocreditTotal += netRecH
@@ -1019,18 +1024,25 @@ const empStats = useMemo(() => {
 
                       let otH = 0
                       if (rec && rec.dayType === 'WEEKDAY') {
-                        const isSlack  = (rec.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
-                        const isERP    = rec.leaveType ? !isSlack : true
-                        const effIn    = timeMode === 'exact' ? rec.clockIn : computeEffClockIn(rec.clockIn, rec.leaveType, isERP)
-                        const ciMins   = effIn      ? parseTimeToMins(effIn)       : null
-                        const coMins = rec.clockOut ? parseTimeToMins(rec.clockOut) : null
-                        const el     = (ciMins !== null && coMins !== null) ? Math.max(0, coMins - ciMins) : 0
-                        const netMins = Math.max(0, el - compute4141BreakMins(el))
-                        const isSlackInj = (rec.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
-                        const credit = (timeMode !== 'exact' && creditsOn && !rec.isUnpaidLeave && !isSlackInj)
-                          ? (rec.erpLeaveAmount ?? 0) * 8 : 0
-                        const finalH = Math.max(0, netMins / 60 + credit)
-                        otH = Math.max(0, finalH - 8.0)
+                        const isSlack   = (rec.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+                        const isERP     = rec.leaveType ? !isSlack : true
+                        const ciRawCell = rec.clockIn  ? parseTimeToMins(rec.clockIn)  : null
+                        const coMins    = rec.clockOut ? parseTimeToMins(rec.clockOut) : null
+                        if (ciRawCell !== null && coMins !== null) {
+                          // OT = virtualIn + 10h 기준 — 크레딧 toggle과 무관하게 고정
+                          const effInMins  = timeMode === 'exact'
+                            ? ciRawCell
+                            : computeEffInMins(ciRawCell, rec.leaveType, isERP)
+                          const virtualIn  = computeVirtualInMins(effInMins, rec.leaveType, isERP)
+                          const rawOtMins  = Math.max(0, coMins - (virtualIn + 600))
+                          if (timeMode === 'exact') {
+                            otH = rawOtMins / 60                              // 실제값: ERP 가드 없음, 절삭 없음
+                          } else if (isLeader) {
+                            otH = rawOtMins / 60                              // 직책자: 30분 절삭 없음
+                          } else {
+                            otH = rec.erpOtApplied ? Math.floor(rawOtMins / 30) * 30 / 60 : 0  // 비직책자: ERP 승인 + 30분 절삭
+                          }
+                        }
                       }
 
                       return (
