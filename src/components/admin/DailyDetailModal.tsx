@@ -5,18 +5,21 @@ import type { ProcessedRecord, Employee, PolicySettings, EditHistoryEntry } from
 import { FINAL_STATUS_CATEGORY } from '@/types/tag'
 import { useSlack } from '@/context/SlackContext'
 
+// 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE는 캐시된 레코드 하위호환용 라벨
 const FLAG_LABEL: Record<string, string> = {
-  LATE:            '지각',
-  NO_CLOCK_IN:     '출근 미태깅',
-  NO_CLOCK_OUT:    '퇴근 미태깅',
-  EARLY_DEPARTURE: '조기퇴근',
+  LATE:               '지각',
+  NO_CLOCK_IN:        '출근 미태깅',
+  NO_CLOCK_OUT:       '퇴근 미태깅',
+  ATTENDANCE_ANOMALY: '근무시간 미달',
+  EARLY_DEPARTURE:    '근무시간 미달',
 }
 
 const FLAG_BADGE: Record<string, string> = {
-  LATE:            'bg-orange-50 text-orange-700 border-orange-200',
-  NO_CLOCK_IN:     'bg-red-50 text-red-700 border-red-200',
-  NO_CLOCK_OUT:    'bg-red-50 text-red-700 border-red-200',
-  EARLY_DEPARTURE: 'bg-blue-50 text-blue-700 border-blue-200',
+  LATE:               'bg-orange-50 text-orange-700 border-orange-200',
+  NO_CLOCK_IN:        'bg-red-50 text-red-700 border-red-200',
+  NO_CLOCK_OUT:       'bg-red-50 text-red-700 border-red-200',
+  ATTENDANCE_ANOMALY: 'bg-blue-50 text-blue-700 border-blue-200',
+  EARLY_DEPARTURE:    'bg-blue-50 text-blue-700 border-blue-200',
 }
 
 const AVATAR_COLORS = [
@@ -712,9 +715,10 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                       record.flag === 'LATE' ? '지각' :
                       record.flag === 'NO_CLOCK_IN' ? '출근 미태깅' :
                       record.flag === 'NO_CLOCK_OUT' ? '퇴근 미태깅' :
-                      record.flag === 'EARLY_DEPARTURE' ? '조기퇴근 (30분 이내)' :
-                      record.flag === 'ATTENDANCE_ANOMALY' ? '근무시간 미달 (30분 초과)' :
-                      record.flag === 'LATE_AND_EARLY_DEPARTURE' ? '지각 + 조기퇴근' :
+                      // 3종 체계: 마감선을 1분이라도 못 채우면 근무시간 미달 (여유 없음, 조기퇴근 폐지)
+                      record.flag === 'EARLY_DEPARTURE' ? '근무시간 미달' :
+                      record.flag === 'ATTENDANCE_ANOMALY' ? '근무시간 미달' :
+                      record.flag === 'LATE_AND_EARLY_DEPARTURE' ? '지각 + 근무시간 미달' :
                       record.flag === 'LATE_AND_ANOMALY' ? '지각 + 근무시간 미달' :
                       record.flag
                     }

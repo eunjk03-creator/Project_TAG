@@ -6,13 +6,15 @@ import {
   computePayOtMins, computeLeaderPayOtMins, computeGasNightMins,
 } from '@/utils/attendanceCalc'
 
+// 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE/LATE_AND_EARLY_DEPARTURE는
+// 재계산 전 캐시된 레코드 하위호환용 라벨(근태이상과 동일 취급).
 const FLAG_LABEL: Record<string, string> = {
   LATE:                     '지각',
   NO_CLOCK_IN:              '출근 미태깅',
   NO_CLOCK_OUT:             '퇴근 미태깅',
-  EARLY_DEPARTURE:          '조기퇴근',
+  EARLY_DEPARTURE:          '근태이상',
   ATTENDANCE_ANOMALY:       '근태이상',
-  LATE_AND_EARLY_DEPARTURE: '지각+조기퇴근',
+  LATE_AND_EARLY_DEPARTURE: '지각+근태이상',
   LATE_AND_ANOMALY:         '지각+근태이상',
 }
 
@@ -129,7 +131,7 @@ function dateToExcelSerial(dateStr: string): number {
 // ── 요약 sheet: per-record category ────────────────────────────────────────
 
 const SUM_CATS = [
-  '정상', '지각', '조기퇴근', '지각/조기퇴근', '근태이상',
+  '정상', '지각', '근무시간 미달', '지각/근무시간 미달', '근태이상',
   '연차', '휴일근무',
   '휴가 미신청', '외근 (확인 필요)', '휴가 미신청 (확인 필요)',
 ] as const
@@ -143,9 +145,10 @@ function categorizeForSummary(r: ProcessedRecord): SumCat | null {
   const notes = r.verificationNote ?? []
   const hasDup = notes.some(n => n.includes('동명이인'))
 
-  if (flag === 'LATE_AND_EARLY_DEPARTURE' || flag === 'LATE_AND_ANOMALY') return '지각/조기퇴근'
+  // 3종 체계 — 조기퇴근은 근무시간미달로 통합 (EARLY_DEPARTURE는 캐시된 레코드 하위호환)
+  if (flag === 'LATE_AND_EARLY_DEPARTURE' || flag === 'LATE_AND_ANOMALY') return '지각/근무시간 미달'
   if (flag === 'LATE')                                                     return '지각'
-  if (flag === 'EARLY_DEPARTURE' || flag === 'ATTENDANCE_ANOMALY')        return '조기퇴근'
+  if (flag === 'EARLY_DEPARTURE' || flag === 'ATTENDANCE_ANOMALY')        return '근무시간 미달'
   if (flag === 'NO_CLOCK_IN'     || flag === 'NO_CLOCK_OUT')              return '근태이상'
 
   if (r.finalStatus === '휴일근무') return '휴일근무'
@@ -216,8 +219,7 @@ function buildDetailRowData(
   const flag = r.flag
   if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') anomalyTags.push('미태깅')
   if (flag === 'LATE' || flag === 'LATE_AND_EARLY_DEPARTURE' || flag === 'LATE_AND_ANOMALY') anomalyTags.push('지각')
-  if (flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE') anomalyTags.push('조기퇴근')
-  if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY') anomalyTags.push('근무시간 미달')
+  if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY' || flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE') anomalyTags.push('근무시간 미달')
 
   const attendanceStatus = anomalyTags.length === 0 ? '정상' : '비정상'
 
@@ -358,7 +360,7 @@ export function exportXlsx(
 
   const SUM_HEADERS = [
     '사번', '이름', '본부',
-    '정상', '지각', '조기퇴근', '지각/조기퇴근', '근태이상',
+    '정상', '지각', '근무시간 미달', '지각/근무시간 미달', '근태이상',
     '연차', '휴일근무',
     '휴가 미신청', '외근 (확인 필요)', '휴가 미신청 (확인 필요)',
     '총일수',
@@ -396,8 +398,8 @@ export function exportXlsx(
       emp?.division ?? '',                // 본부
       n('정상'),
       n('지각'),
-      n('조기퇴근'),
-      n('지각/조기퇴근'),
+      n('근무시간 미달'),
+      n('지각/근무시간 미달'),
       n('근태이상'),
       n('연차'),
       n('휴일근무'),
@@ -430,16 +432,17 @@ export function exportXlsx(
 
   const ANOMALY_HEADERS = [
     '사번', '이름', '본부',
-    '지각', '조기퇴근', '근무시간 미달', '미태깅', '혼합', '총합계',
+    '지각', '근무시간 미달', '미태깅', '혼합', '총합계',
   ]
 
-  type AnomalyKey = '지각' | '조기퇴근' | '근무시간 미달' | '미태깅' | '혼합'
+  type AnomalyKey = '지각' | '근무시간 미달' | '미태깅' | '혼합'
 
+  // 3종 체계 — EARLY_DEPARTURE는 재계산 전 캐시된 레코드 하위호환용으로 근무시간미달에 포함
   function classifyAnomalyFlag(flag: string | null): AnomalyKey | null {
     switch (flag) {
       case 'LATE':                     return '지각'
-      case 'EARLY_DEPARTURE':          return '조기퇴근'
-      case 'ATTENDANCE_ANOMALY':       return '근무시간 미달'
+      case 'ATTENDANCE_ANOMALY':
+      case 'EARLY_DEPARTURE':          return '근무시간 미달'
       case 'NO_CLOCK_IN':
       case 'NO_CLOCK_OUT':             return '미태깅'
       case 'LATE_AND_EARLY_DEPARTURE':
@@ -450,14 +453,14 @@ export function exportXlsx(
 
   const anomalyDataRows: (string | number | null)[][] = []
   const anomalyTotals: Record<AnomalyKey, number> = {
-    '지각': 0, '조기퇴근': 0, '근무시간 미달': 0, '미태깅': 0, '혼합': 0,
+    '지각': 0, '근무시간 미달': 0, '미태깅': 0, '혼합': 0,
   }
 
   for (const empId of empOrder) {
     const emp  = empMap.get(empId)
     const recs = recsByEmp.get(empId)!
     const counts: Record<AnomalyKey, number> = {
-      '지각': 0, '조기퇴근': 0, '근무시간 미달': 0, '미태깅': 0, '혼합': 0,
+      '지각': 0, '근무시간 미달': 0, '미태깅': 0, '혼합': 0,
     }
     for (const r of recs) {
       if (r.dayType !== 'WEEKDAY') continue
@@ -476,7 +479,6 @@ export function exportXlsx(
       emp?.name  ?? empId,
       emp?.division ?? '',
       counts['지각']          || null,
-      counts['조기퇴근']      || null,
       counts['근무시간 미달'] || null,
       counts['미태깅']        || null,
       counts['혼합']          || null,
@@ -489,7 +491,6 @@ export function exportXlsx(
   const anomalyTotalRow: (string | number | null)[] = [
     null, '합계', null,
     anomalyTotals['지각']          || null,
-    anomalyTotals['조기퇴근']      || null,
     anomalyTotals['근무시간 미달'] || null,
     anomalyTotals['미태깅']        || null,
     anomalyTotals['혼합']          || null,
@@ -503,7 +504,7 @@ export function exportXlsx(
   ])
   wsAnomaly['!cols'] = [
     { wch: 12 }, { wch: 10 }, { wch: 14 },
-    { wch: 8  }, { wch: 10 }, { wch: 14 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
+    { wch: 8  }, { wch: 14 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
   ]
 
   // 이상치 헤더 스타일 (레드)
@@ -511,7 +512,7 @@ export function exportXlsx(
   // 데이터 행: 수치 컬럼 빨간색 강조
   styleBlock(wsAnomaly, 1, anomalyDataRows.length, ANOMALY_HEADERS.length, (r, c, v) => ({
     fill:      { patternType: 'solid', fgColor: { rgb: r % 2 === 0 ? 'FFF5F5' : 'FFFFFF' } },
-    font:      { sz: 9, bold: c === 8 && !!v, color: { rgb: c >= 3 && v ? 'C00000' : '333333' } },
+    font:      { sz: 9, bold: c === 7 && !!v, color: { rgb: c >= 3 && v ? 'C00000' : '333333' } },
     alignment: { horizontal: c >= 3 ? 'center' : 'left', vertical: 'center' },
   }))
   // 합계 행

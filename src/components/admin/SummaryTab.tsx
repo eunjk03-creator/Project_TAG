@@ -78,7 +78,6 @@ const SECTION_ACCENTS = {
 // Anomaly column: header bg / header text / value text
 const ANOMALY_COL = {
   late:     { hBg: 'bg-amber-50',  hTxt: 'text-amber-900',  vTxt: 'text-amber-700'  },
-  early:    { hBg: 'bg-orange-50', hTxt: 'text-orange-900', vTxt: 'text-orange-700' },
   shortage: { hBg: 'bg-sky-50',    hTxt: 'text-sky-900',    vTxt: 'text-sky-700'    },
   notag:    { hBg: 'bg-rose-50',   hTxt: 'text-rose-900',   vTxt: 'text-rose-700'   },
   total:    { hBg: 'bg-slate-200', hTxt: 'text-slate-900',  vTxt: 'text-slate-900'  },
@@ -248,12 +247,14 @@ export function SummaryTab({ records, employees, dateFrom, dateTo, leaderIdSet }
 
   // ── 섹션3: 부서별 이상치 ─────────────────────────────────────────────────
 
-  type AnomalyCounts = { late: number; early: number; shortage: number; notag: number; total: number }
+  type AnomalyCounts = { late: number; shortage: number; notag: number; total: number }
 
+  // 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE/LATE_AND_EARLY_DEPARTURE는
+  // 재계산 전 캐시된 레코드에서만 남아있을 수 있음(하위호환), 근무시간미달로 통합.
   function flagToCategories(flag: string): Array<keyof Omit<AnomalyCounts, 'total'>> {
     if (flag === 'LATE')                     return ['late']
-    if (flag === 'EARLY_DEPARTURE')          return ['early']
-    if (flag === 'LATE_AND_EARLY_DEPARTURE') return ['late', 'early']
+    if (flag === 'EARLY_DEPARTURE')          return ['shortage']
+    if (flag === 'LATE_AND_EARLY_DEPARTURE') return ['late', 'shortage']
     if (flag === 'ATTENDANCE_ANOMALY')       return ['shortage']
     if (flag === 'LATE_AND_ANOMALY')         return ['late', 'shortage']
     if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') return ['notag']
@@ -267,7 +268,7 @@ export function SummaryTab({ records, employees, dateFrom, dateTo, leaderIdSet }
     for (const r of scopedRecords) {
       if (!r.flag) continue
       const div = empMap.get(r.employeeId)?.division ?? '—'
-      if (!divMap.has(div)) divMap.set(div, { division: div, late: 0, early: 0, shortage: 0, notag: 0, total: 0 })
+      if (!divMap.has(div)) divMap.set(div, { division: div, late: 0, shortage: 0, notag: 0, total: 0 })
       const row = divMap.get(div)!
       for (const cat of flagToCategories(r.flag)) row[cat]++
       row.total++
@@ -275,8 +276,8 @@ export function SummaryTab({ records, employees, dateFrom, dateTo, leaderIdSet }
 
     const rows = divSort([...divMap.values()]).filter(r => r.total >= 10)
     const totals = rows.reduce<AnomalyCounts>(
-      (s, r) => ({ late: s.late + r.late, early: s.early + r.early, shortage: s.shortage + r.shortage, notag: s.notag + r.notag, total: s.total + r.total }),
-      { late: 0, early: 0, shortage: 0, notag: 0, total: 0 },
+      (s, r) => ({ late: s.late + r.late, shortage: s.shortage + r.shortage, notag: s.notag + r.notag, total: s.total + r.total }),
+      { late: 0, shortage: 0, notag: 0, total: 0 },
     )
     return { rows, totals }
   }, [scopedRecords, empMap])
@@ -292,7 +293,7 @@ export function SummaryTab({ records, employees, dateFrom, dateTo, leaderIdSet }
       const emp  = empMap.get(r.employeeId)
       const div  = emp?.division ?? '—'
       const name = emp?.name ?? r.employeeId
-      if (!empMap2.has(r.employeeId)) empMap2.set(r.employeeId, { division: div, name, late: 0, early: 0, shortage: 0, notag: 0, total: 0 })
+      if (!empMap2.has(r.employeeId)) empMap2.set(r.employeeId, { division: div, name, late: 0, shortage: 0, notag: 0, total: 0 })
       const row = empMap2.get(r.employeeId)!
       for (const cat of flagToCategories(r.flag)) row[cat]++
       row.total++
@@ -307,8 +308,8 @@ export function SummaryTab({ records, employees, dateFrom, dateTo, leaderIdSet }
         }),
     )
     const totals = rows.reduce<AnomalyCounts>(
-      (s, r) => ({ late: s.late + r.late, early: s.early + r.early, shortage: s.shortage + r.shortage, notag: s.notag + r.notag, total: s.total + r.total }),
-      { late: 0, early: 0, shortage: 0, notag: 0, total: 0 },
+      (s, r) => ({ late: s.late + r.late, shortage: s.shortage + r.shortage, notag: s.notag + r.notag, total: s.total + r.total }),
+      { late: 0, shortage: 0, notag: 0, total: 0 },
     )
     return { rows, totals }
   }, [scopedRecords, empMap])
@@ -323,7 +324,6 @@ export function SummaryTab({ records, employees, dateFrom, dateTo, leaderIdSet }
 
   const ANOMALY_HEADERS = [
     { key: 'late'     as const, label: '지각'         },
-    { key: 'early'    as const, label: '조기퇴근'     },
     { key: 'shortage' as const, label: '근무시간 미달' },
     { key: 'notag'    as const, label: '미태깅'       },
     { key: 'total'    as const, label: '총합계'       },

@@ -41,7 +41,6 @@ type Row = {
   anomalies:  number
   missed:     number
   late:       number
-  early:      number
   severe:     number
 }
 
@@ -56,7 +55,6 @@ interface Props {
   otOverCount:    DerivedMap
   missedTag:      DerivedMap
   lateCount:      DerivedMap
-  earlyCount?:    DerivedMap
   severeCount?:   DerivedMap
 }
 
@@ -134,8 +132,7 @@ function AnomalyTooltip({ active, payload }: TT) {
         <div className="pl-2 space-y-0.5 border-l-2 border-gray-100 mt-1">
           <TooltipRow label="미태깅"   value={`${d.missed}건`}  cls={d.missed  > 0 ? 'text-red-500'    : 'text-gray-300'} />
           <TooltipRow label="지각"     value={`${d.late}건`}    cls={d.late    > 0 ? 'text-amber-600'  : 'text-gray-300'} />
-          <TooltipRow label="조기퇴근" value={`${d.early}건`}   cls={d.early   > 0 ? 'text-orange-500' : 'text-gray-300'} />
-          <TooltipRow label="근태이상" value={`${d.severe}건`}  cls={d.severe  > 0 ? 'text-red-700'    : 'text-gray-300'} />
+          <TooltipRow label="근무시간미달" value={`${d.severe}건`}  cls={d.severe  > 0 ? 'text-red-700'    : 'text-gray-300'} />
         </div>
         <TooltipRow label="이상치율"   value={`${rate}%`} />
       </div>
@@ -163,7 +160,7 @@ function BULegend({ rows }: { rows: Row[] }) {
 export function SectionComparisonChart({
   section, metrics, selectedBUs,
   riskThresholds: rt, highestTotal, otOverCount, missedTag, lateCount,
-  earlyCount = {}, severeCount = {},
+  severeCount = {},
 }: Props) {
 
   const rows: Row[] = selectedBUs.flatMap((bu, i) => {
@@ -183,7 +180,6 @@ export function SectionComparisonChart({
       anomalies:  m.anomalies,
       missed:     missedTag[bu]  ?? 0,
       late:       lateCount[bu]  ?? 0,
-      early:      earlyCount[bu]  ?? 0,
       severe:     severeCount[bu] ?? 0,
     }]
   })
@@ -322,15 +318,13 @@ export function SectionComparisonChart({
           />
           <Bar dataKey="missed" name="미태깅"   stackId="s" fill="#f87171" maxBarSize={52} />
           <Bar dataKey="late"   name="지각"     stackId="s" fill="#fbbf24" maxBarSize={52} />
-          <Bar dataKey="early"  name="조기퇴근" stackId="s" fill="#fb923c" maxBarSize={52} />
-          <Bar dataKey="severe" name="근태이상" stackId="s" fill="#c084fc" radius={[4, 4, 0, 0]} maxBarSize={52} />
+          <Bar dataKey="severe" name="근무시간미달" stackId="s" fill="#c084fc" radius={[4, 4, 0, 0]} maxBarSize={52} />
         </BarChart>
       </ResponsiveContainer>
       <div className="flex items-center gap-4 mt-3 flex-wrap">
         <span className="flex items-center gap-1.5 text-[10px] text-gray-600"><span className="w-2.5 h-2.5 rounded-sm bg-red-400 shrink-0" /> 미태깅</span>
         <span className="flex items-center gap-1.5 text-[10px] text-gray-600"><span className="w-2.5 h-2.5 rounded-sm bg-amber-400 shrink-0" /> 지각</span>
-        <span className="flex items-center gap-1.5 text-[10px] text-gray-600"><span className="w-2.5 h-2.5 rounded-sm bg-orange-400 shrink-0" /> 조기퇴근</span>
-        <span className="flex items-center gap-1.5 text-[10px] text-gray-600"><span className="w-2.5 h-2.5 rounded-sm bg-purple-400 shrink-0" /> 근태이상</span>
+        <span className="flex items-center gap-1.5 text-[10px] text-gray-600"><span className="w-2.5 h-2.5 rounded-sm bg-purple-400 shrink-0" /> 근무시간미달</span>
       </div>
     </div>
   )

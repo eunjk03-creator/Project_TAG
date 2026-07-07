@@ -76,11 +76,12 @@ export function useAttendanceLogic(
       return aggregate(recs, emp ? `${emp.name} (${emp.division})` : id, 1)
     })
 
+    // 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE는 캐시된 레코드 하위호환으로 같이 집계
     const flagCounts = {
-      LATE:            processed.filter(r => r.flag === 'LATE').length,
-      NO_CLOCK_IN:     processed.filter(r => r.flag === 'NO_CLOCK_IN').length,
-      NO_CLOCK_OUT:    processed.filter(r => r.flag === 'NO_CLOCK_OUT').length,
-      EARLY_DEPARTURE: processed.filter(r => r.flag === 'EARLY_DEPARTURE').length,
+      LATE:               processed.filter(r => r.flag === 'LATE').length,
+      NO_CLOCK_IN:        processed.filter(r => r.flag === 'NO_CLOCK_IN').length,
+      NO_CLOCK_OUT:       processed.filter(r => r.flag === 'NO_CLOCK_OUT').length,
+      ATTENDANCE_ANOMALY: processed.filter(r => r.flag === 'ATTENDANCE_ANOMALY' || r.flag === 'EARLY_DEPARTURE').length,
     }
 
     return { processed, total, byDivision, byTeam, byPart, byIndividual, flagCounts }

@@ -43,12 +43,11 @@ function erpLeaveTypeToAmount(leaveType: string): number {
   return 0.5  // 오전반차, 오후반차, 생일반차, 기타 반차류
 }
 
-const ANOMALY_STATUSES = new Set(['지각', '조기퇴근', '지각+조기퇴근', '미태깅', '이상치'])
+// 3종 체계(지각/근무시간미달/미태깅) — 조기퇴근은 근무시간미달로 통합.
+const ANOMALY_STATUSES = new Set(['지각', '미태깅', '이상치'])
 
 const ANOM_LABEL: Record<string, string> = {
   '지각':          '지각',
-  '조기퇴근':      '조기퇴근',
-  '지각+조기퇴근': '지각+조기퇴근',
   '미태깅':        '미태깅',
   '이상치':        '이상치',
   '근무시간 미달': '근무시간 미달',
@@ -56,8 +55,6 @@ const ANOM_LABEL: Record<string, string> = {
 
 const ANOM_COLOR: Record<string, string> = {
   '지각':          'text-amber-600  bg-amber-50  border-amber-200',
-  '조기퇴근':      'text-blue-600   bg-blue-50   border-blue-200',
-  '지각+조기퇴근': 'text-orange-600 bg-orange-50 border-orange-200',
   '미태깅':        'text-red-600    bg-red-50    border-red-200',
   '이상치':        'text-purple-600 bg-purple-50 border-purple-200',
   '근무시간 미달': 'text-red-600    bg-red-50    border-red-200',
@@ -605,8 +602,7 @@ export default function AdminDashboard() {
     const anomalyTags: string[] = []
     if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') anomalyTags.push('미태깅')
     if (flag === 'LATE' || flag === 'LATE_AND_EARLY_DEPARTURE' || flag === 'LATE_AND_ANOMALY') anomalyTags.push('지각')
-    if (flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE') anomalyTags.push('조기퇴근')
-    if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY') anomalyTags.push('근무시간 미달')
+    if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY' || flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE') anomalyTags.push('근무시간 미달')
     const isNormal = anomalyTags.length === 0
 
     // 정상 태그 계산
@@ -624,7 +620,6 @@ export default function AdminDashboard() {
       case '외근':         return isNormal && normalTags.includes('외근')
       case '휴일근로':     return isNormal && normalTags.includes('휴일근로')
       case '지각':         return anomalyTags.includes('지각')
-      case '조기퇴근':     return anomalyTags.includes('조기퇴근')
       case '근무시간 미달': return anomalyTags.includes('근무시간 미달')
       case '미태깅':       return anomalyTags.includes('미태깅')
       // 레거시 지원
@@ -709,7 +704,7 @@ export default function AdminDashboard() {
   const anomalyCounts = useMemo(() => {
     let normal = 0, abnormal = 0
     let regular = 0, overtime = 0, offsite = 0, holidayWork = 0
-    let late = 0, early = 0, shortWork = 0, missing = 0
+    let late = 0, shortWork = 0, missing = 0
 
     for (const r of tabPreStatusRecords) {
       if (approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
@@ -722,8 +717,8 @@ export default function AdminDashboard() {
         abnormal++
         if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') missing++
         if (flag === 'LATE' || flag === 'LATE_AND_EARLY_DEPARTURE' || flag === 'LATE_AND_ANOMALY') late++
-        if (flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE') early++
-        if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY') shortWork++
+        // 3종 체계: 조기퇴근(레거시 캐시 포함)은 근무시간미달로 통합
+        if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY' || flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE') shortWork++
       } else {
         normal++
       }
@@ -734,7 +729,7 @@ export default function AdminDashboard() {
       // 일반: WEEKDAY만 (테이블 normalTags 로직과 동일)
       if (!hasAnomaly && r.clockIn !== null && !r.finalStatus?.match(/외근|휴일근무/) && r.overtimeHours === 0 && r.dayType === 'WEEKDAY') regular++
     }
-    return { normal, abnormal, regular, overtime, offsite, holidayWork, late, early, shortWork, missing }
+    return { normal, abnormal, regular, overtime, offsite, holidayWork, late, shortWork, missing }
   }, [tabPreStatusRecords, approvedKeys])
 
   // Grid-view: filter displayed employees by search + division + team
@@ -1399,7 +1394,6 @@ export default function AdminDashboard() {
                     </p>
                     {([
                       { value: '지각',          count: anomalyCounts.late      },
-                      { value: '조기퇴근',      count: anomalyCounts.early     },
                       { value: '근무시간 미달', count: anomalyCounts.shortWork  },
                       { value: '미태깅',        count: anomalyCounts.missing    },
                     ] as { value: string; count: number }[]).map(({ value, count }) => (

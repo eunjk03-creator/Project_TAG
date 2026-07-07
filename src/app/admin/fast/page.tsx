@@ -48,7 +48,7 @@ function matchesStatus(r: ProcessedRecord, status: string): boolean {
     case '정상':      return isNormal
     case '비정상':    return !isNormal
     case '지각':      return flag === 'LATE' || flag === 'LATE_AND_EARLY_DEPARTURE' || flag === 'LATE_AND_ANOMALY'
-    case '조기퇴근':  return flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE'
+    case '근무시간 미달': return flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY' || flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE'
     case '미태깅':    return flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT'
     case '연장근로':  return isNormal && r.overtimeHours > 0
     case '외근':      return r.finalStatus === '외근'
@@ -290,7 +290,7 @@ export default function FastDashboard() {
     [baseEmployees],
   )
 
-  const STATUS_OPTIONS = ['정상','비정상','지각','조기퇴근','미태깅','연장근로','외근']
+  const STATUS_OPTIONS = ['정상','비정상','지각','근무시간 미달','미태깅','연장근로','외근']
   const divDropRef    = useRef<HTMLDivElement>(null)
   const statusDropRef = useRef<HTMLDivElement>(null)
   const [divOpen,    setDivOpen]    = useState(false)

@@ -580,6 +580,7 @@ export function processRecord(
     effectiveLeaveType === '오전반차'   ? 4.5 * 60 :
     effectiveLeaveType === '오후반반차' ? 6 * 60 :
     effectiveLeaveType === '오후반차'   ? 4.5 * 60 :
+    effectiveLeaveType === '반차'       ? 4.5 * 60 :
     null
 
   const effectiveTargetMins = leaveMinRequired ?? effectiveStdH * 60
@@ -607,22 +608,17 @@ export function processRecord(
   const nightWorkEnd   = Math.min(outMins, nightEndMins)
   const nightHours     = Math.max(0, nightWorkEnd - nightWorkStart) / 60
 
-  const isEarlyDeparture = !bypassAllAnomalies && !isEasyLogis && (() => {
-    if (leaveMinRequired !== null) return rawStayMins < leaveMinRequired - 30
-    return outMins < standardOutMins - 30
-  })()
-
-  const isEarlyMild = !bypassAllAnomalies && !isEasyLogis && !isEarlyDeparture && (() => {
+  // 근무시간 미달: 마감선(leaveMinRequired 또는 standardOutMins)을 1분이라도 못 채우면 즉시 판정.
+  // 기존 ±30분 여유(조기퇴근-경미 vs 근태이상-심각) 구분은 폐지 — 3종 체계(지각/근무시간미달/미태깅)로 통합.
+  const isInsufficientHours = !bypassAllAnomalies && !isEasyLogis && (() => {
     if (leaveMinRequired !== null) return rawStayMins < leaveMinRequired
     return outMins < standardOutMins
   })()
 
   let flag: SieveFlag = null
-  if (isLate && isEarlyDeparture)      flag = 'LATE_AND_ANOMALY'
-  else if (isLate && isEarlyMild)      flag = 'LATE_AND_EARLY_DEPARTURE'
-  else if (isLate)                     flag = 'LATE'
-  else if (isEarlyDeparture)           flag = 'ATTENDANCE_ANOMALY'
-  else if (isEarlyMild)                flag = 'EARLY_DEPARTURE'
+  if (isLate && isInsufficientHours) flag = 'LATE_AND_ANOMALY'
+  else if (isLate)                   flag = 'LATE'
+  else if (isInsufficientHours)      flag = 'ATTENDANCE_ANOMALY'
 
   if (isPregnantReduced && !bypassAllAnomalies) {
     const leaveEquivMins =
