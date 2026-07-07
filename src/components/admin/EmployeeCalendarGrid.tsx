@@ -992,8 +992,9 @@ const empStats = useMemo(() => {
                                 }`}>
                                   {rec!.clockOut ?? '미태깅'}
                                 </span>
-                                {(rec?.flag === 'EARLY_DEPARTURE' || rec?.flag === 'LATE_AND_EARLY_DEPARTURE') &&
-                                  <InfoTag cls={TAG.earlyExit} text="조기퇴근" />}
+                                {(rec?.flag === 'ATTENDANCE_ANOMALY' || rec?.flag === 'LATE_AND_ANOMALY' ||
+                                  rec?.flag === 'EARLY_DEPARTURE' || rec?.flag === 'LATE_AND_EARLY_DEPARTURE') &&
+                                  <InfoTag cls={TAG.earlyExit} text="근무시간 미달" />}
                                 {pmCombo.length > 0 ? (
                                   <InfoTag cls={TAG.pmLeave} text={pmCombo.join('+')} />
                                 ) : rec?.leaveType && (rec.leaveType === '반차' || rec.leaveType.includes('오후')) && (

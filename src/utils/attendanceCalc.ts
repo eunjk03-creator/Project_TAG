@@ -75,19 +75,18 @@ export type DisplayStatus =
 
 
 /**
- * Lateness and early-departure thresholds by leave type.
+ * Lateness and 근무시간 미달 thresholds by leave type. 3종 체계(지각/근무시간미달/미태깅) —
+ * 조기퇴근은 근무시간미달로 통합 폐지, 여유(grace) 없이 1분이라도 못 채우면 즉시 판정.
  *
  * Late threshold (clock-in must be ≤ this time):
  *   오전반반차   → 11:00   오전반차  → 14:00
  *   isTenAMStarter → 10:00   default   → 09:00
  *   (leave-type rules take priority over the employee exception flag)
  *
- * Early-departure threshold (duration-based):
- *   오전반차    → workA ≥ 4.5h   오전반반차 → workA ≥ 6.0h
- *   오후반반차  → workA ≥ 6.0h   오후반차   → workA ≥ 4.5h
- *   default     → workA ≥ 9.0h
+ * 근무시간 미달 threshold (duration-based, no grace):
+ *   오전반차/오후반차/반차(합산) → workA ≥ 4.5h   오전반반차/오후반반차 → workA ≥ 6.0h
+ *   default → workA ≥ 9.0h
  *
- * Severity: > 30 min short → 이상치; ≤ 30 min → 조기퇴근.
  * Catch-all: finalWorkH < 8.0 with NO leave and NO explicit flags → 이상치.
  *
  * @param finalWorkH     Pre-computed value from computeFinalWork() (Step 2).
@@ -125,38 +124,30 @@ export function computeStatusN(p: {
 
   const isLate = parseTimeToMins(clockIn) > parseTimeToMins(lateThreshold)
 
-  // ── 3. Early-departure threshold ─────────────────────────────────────────
-  let isEarly      = false
-  let earlyMinutes = 0
+  // ── 3. 근무시간 미달 (마감선을 1분이라도 못 채우면 즉시 판정 — 여유(grace) 없음) ──────
+  let isInsufficient = false
 
   {
     // Duration-based: required stay hours depend on leave type
-    // 반차 (half-day): 4h30min   반반차 (quarter-day): 6h   default: 9h
+    // 반차 (half-day, 합산 포함): 4h30min   반반차 (quarter-day): 6h   default: 9h
     const requiredH: number =
       leaveType === '오전반차'   ? 4.5 :
       leaveType === '오후반차'   ? 4.5 :
+      leaveType === '반차'       ? 4.5 :
       leaveType === '오전반반차' ? 6.0 :
       leaveType === '오후반반차' ? 6.0 :
       9.0
 
     const workA = computeWorkA(clockIn, clockOut)
-    if (workA < requiredH) {
-      isEarly      = true
-      earlyMinutes = Math.round((requiredH - workA) * 60)
-    }
+    if (workA < requiredH) isInsufficient = true
   }
 
-  // ── 4. Severity split & catch-all ────────────────────────────────────────
-  const isSevere = isEarly && earlyMinutes > 30
-
   // Fires only when no other flags are set AND there is no leave credit
-  const isCatchAll = !isLate && !isEarly && leaveAmt === 0 && finalWorkH < 8.0
+  const isCatchAll = !isLate && !isInsufficient && leaveAmt === 0 && finalWorkH < 8.0
 
-  // ── 5. Priority resolution ────────────────────────────────────────────────
-  if (isSevere || isCatchAll)  return '이상치'
-  if (isLate   && isEarly)     return '지각+조기퇴근'
-  if (isLate)                  return '지각'
-  if (isEarly)                 return '조기퇴근'
+  // ── 4. Priority resolution — 3종 체계(지각/근무시간미달/미태깅), 조기퇴근 폐지 ────────
+  if (isInsufficient || isCatchAll) return '이상치'
+  if (isLate)                       return '지각'
   return '정상'
 }
 

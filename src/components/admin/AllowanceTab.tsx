@@ -364,8 +364,19 @@ export function AllowanceTab() {
       if (attrs?.isGlobalExclusion || attrs?.isResigned) continue
 
       const empRecords = recsByEmp.get(emp.id) ?? []
-      // DB 규칙(manager_exemption) OR 직급명 자동감지(dataParser LEADER_TITLES) 둘 다 인정
-      const isLeader   = attrs?.isLeader === true || emp.isLeader === true
+      // 뱃지·필터용 — 선택 기간 내 어느 날이든 직책자였으면 true
+      const isLeader = attrs?.isLeader === true || emp.isLeader === true
+
+      // 날짜 기준 직책자 판별 (발령일/해임일 적용)
+      const isLeaderOnDate = (date: string): boolean => {
+        if (attrs?.isLeader === true) {
+          const from = attrs.leaderFrom
+          const to   = attrs.leaderTo
+          if (!from && !to) return true                           // 날짜 미설정 → 항상 직책자
+          return (!from || date >= from) && (!to || date <= to)   // 날짜 범위 내만 직책자
+        }
+        return emp.isLeader === true  // 예외규칙 없으면 CSV 자동감지
+      }
 
       // 입사월 기준 활성 월 수 계산 (입사한 달 포함)
       const hireYM = (() => {
@@ -384,22 +395,23 @@ export function AllowanceTab() {
       for (const mm of months) { otByMonth[mm] = 0; holidayByMonth[mm] = 0; lateByMonth[mm] = 0 }
 
       for (const r of empRecords) {
-        const mm = r.date.slice(5, 7)
+        const mm           = r.date.slice(5, 7)
+        const isLeaderToday = isLeaderOnDate(r.date)
         if (r.dayType === 'WEEKDAY') {
           const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
           const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
-          if (isLeader) {
-            // 직책자: 그리드 인정시간 기준 — virtualIn+10h, Slack 주입 반차는 backtrack 없음
+          if (isLeaderToday) {
+            // 직책자: virtualIn+10h, Slack 주입 반차는 backtrack 없음, 절삭 없음
             otByMonth[mm] += computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved) / 60
           } else if (r.erpOtApplied) {
-            // 비직책자: 그리드 인정시간 기준 — processRecord의 overtimeHours (30분 절삭 포함)
+            // 비직책자: processRecord의 overtimeHours (ERP 승인 + 30분 절삭 포함)
             otByMonth[mm] += r.overtimeHours ?? 0
           }
         }
         if (r.dayType !== 'WEEKDAY') {
           if (r.clockIn && r.clockOut) {
             const stayMins = Math.max(0, parseTimeToMins(r.clockOut) - parseTimeToMins(r.clockIn))
-            holidayByMonth[mm] += computeHolidayPayMins(stayMins, isLeader) / 60
+            holidayByMonth[mm] += computeHolidayPayMins(stayMins, isLeaderToday) / 60
           }
         }
         if (r.flag === 'LATE' || r.flag === 'LATE_AND_EARLY_DEPARTURE' || r.flag === 'LATE_AND_ANOMALY') {

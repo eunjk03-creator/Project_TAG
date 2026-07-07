@@ -236,6 +236,8 @@ export const EXEC_THRESHOLDS: RiskThresholds = {
 export interface EmployeeAttributeOverrides {
   /** 직책자: OT 30분 절삭 없음, 수당집계에서 연장수당 미지급 (리포팅 전용) */
   isLeader?:            boolean
+  leaderFrom?:          string  // 발령일 (YYYY-MM-DD) — 이 날부터 직책자 적용
+  leaderTo?:            string  // 해임일 (YYYY-MM-DD) — 이 날까지 직책자 적용
   /** 육아휴직자: exempt from ALL anomaly checks — always shows 정상/연차 */
   isParentalLeave?:     boolean
   parentalLeaveFrom?:   string  // YYYY-MM-DD
