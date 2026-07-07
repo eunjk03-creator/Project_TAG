@@ -162,7 +162,12 @@ export function EmployeeExceptionsProvider({ children }: { children: ReactNode }
       const ex = merged.get(rule.employeeId) ?? {}
       switch (rule.ruleType) {
         case 'manager_exemption':
-          merged.set(rule.employeeId, { ...ex, isLeader: rule.excludeFromOt ? true : ex.isLeader })
+          merged.set(rule.employeeId, {
+            ...ex,
+            isLeader:   rule.excludeFromOt ? true : ex.isLeader,
+            leaderFrom: rule.validFrom || undefined,
+            leaderTo:   rule.validTo   || undefined,
+          })
           break
         case 'shortened_hours':
           merged.set(rule.employeeId, { ...ex, isShortenedHours: true,
