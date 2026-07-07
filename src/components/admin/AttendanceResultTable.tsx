@@ -522,9 +522,7 @@ export function AttendanceResultTable({
         ? systemOtMins
         : (r.isLeader
           ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
-          : isSlackInjected
-            ? computePayOtMins(effectiveIn, r.clockOut, null, true)
-            : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0))
+          : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0))
       // Slack 주입 시 이론적 OT (ERP 승인으로 가정) — 표시 전용, 총계 미반영
       const isSlackLeave   = !!(r.leaveType && isSlackInjected)
       const slackOtH       = isSlackLeave
@@ -543,7 +541,7 @@ export function AttendanceResultTable({
             isExactMode ? true : (r.isLeader ?? false),
           ) / 60
         : 0
-      const auditFlag  = !isSlackInjected && (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
+      const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
       const isOtExempt = r.isLeader === true || otExemptIds?.has(r.employeeId) === true
       // payrollOtH는 미신청 시 0으로 강제되어 '미신청'을 절대 나타낼 수 없었음 — 실제
       // 연장근로 여부(r.overtimeHours, ERP 게이트 적용 전 원시값) 기준으로 판정.
