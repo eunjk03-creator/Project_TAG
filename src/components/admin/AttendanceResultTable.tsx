@@ -466,7 +466,10 @@ export function AttendanceResultTable({
       const isExactMode        = timeView === '실제값'
       const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
       const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
-      const effectiveIn        = isExactMode ? r.clockIn : computeEffClockIn(r.clockIn, r.leaveType, isErpLeaveApproved)
+      // Button3(실제값): leaveType=null → std=480 → MAX(actualIn, 08:00) floor only, 연차보정 없음
+      const effectiveIn        = isExactMode
+        ? computeEffClockIn(r.clockIn, null, true)
+        : computeEffClockIn(r.clockIn, r.leaveType, isErpLeaveApproved)
       const clockInMins        = effectiveIn ? parseTimeToMins(effectiveIn) : null
       const clockOutMins    = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
       const isHoliday       = r.dayType !== 'WEEKDAY'
@@ -507,9 +510,9 @@ export function AttendanceResultTable({
       if (r.overtimeHours > 0) normalTags.push('연장근로')
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
       // Zone 2 — 급여 지표 v2 (시차출퇴근제 슬라이딩 타임 블록)
-      // 초과근로: 실제값=workB−8h 날것(절삭·ERP게이트 없음), 인정시간=슬라이딩블록 기준
+      // 초과근로: 실제값=virtualIn+10h (연차보정·ERP게이트·절삭 없음), 인정시간=슬라이딩블록 기준
       const systemOtMins   = isExactMode
-        ? Math.max(0, gasWorkBMins - 480)
+        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, null, true)   // leaveType=null → 08:00 floor, no backtrack, no truncation, no guard
         : (r.isLeader
           ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true)
           : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved))
@@ -547,7 +550,7 @@ export function AttendanceResultTable({
         record: r, division: emp?.division ?? '—', team: emp?.team ?? '', empId,
         name: emp?.name ?? r.employeeId,
         date: r.date,
-        clockIn:  isExactMode ? (r.clockIn ?? null) : (r.effectiveClockIn ?? r.clockIn ?? null),
+        clockIn:  effectiveIn ?? null,
         clockOut: r.clockOut ?? null,
         leaveAmt, leaveType: r.leaveType ?? null, leaveSource,
         gasWorkAMins, breakH: displayBreakMins / 60, gasWorkBMins,
