@@ -1570,6 +1570,7 @@ export default function AdminDashboard() {
               employees={scopedEmployees}
               dateFrom={dateRange.from}
               dateTo={dateRange.to}
+              leaderIdSet={leaderIdSet}
             />
           </div>
         )}

@@ -111,13 +111,14 @@ const TOTAL_ROW = 'bg-slate-100 border-t-2 border-slate-300'
 // ── Component ──────────────────────────────────────────────────────────────
 
 interface Props {
-  records:   ProcessedRecord[]
-  employees: Employee[]
-  dateFrom:  string
-  dateTo:    string
+  records:      ProcessedRecord[]
+  employees:    Employee[]
+  dateFrom:     string
+  dateTo:       string
+  leaderIdSet?: ReadonlySet<string>
 }
 
-export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
+export function SummaryTab({ records, employees, dateFrom, dateTo, leaderIdSet }: Props) {
   const weeks = useMemo(() => generateWeeks(dateFrom, dateTo), [dateFrom, dateTo])
   const [selectedWeek, setSelectedWeek] = useState<Week | null>(null)
 
@@ -178,7 +179,10 @@ export function SummaryTab({ records, employees, dateFrom, dateTo }: Props) {
     for (const r of scopedRecords) {
       if (!empAgg.has(r.employeeId)) empAgg.set(r.employeeId, { baseH: 0, holidayH: 0 })
       const a        = empAgg.get(r.employeeId)!
-      const isLeader = empMap.get(r.employeeId)?.isLeader ?? false
+      const emp      = empMap.get(r.employeeId)
+      const isLeader = leaderIdSet
+        ? leaderIdSet.has(r.employeeId)
+        : (emp?.isLeader ?? false)
 
       if (r.dayType !== 'WEEKDAY') {
         if (r.finalStatus === '휴일근무') {
