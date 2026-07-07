@@ -5,7 +5,7 @@ import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee, ProcessedRecord } from '@/types/tag'
-import { parseTimeToMins, computePayOtMins, computeLeaderPayOtMins, computeGasNightMins, computeHolidayPayMins } from '@/utils/attendanceCalc'
+import { parseTimeToMins, computeLeaderPayOtMins, computeHolidayPayMins } from '@/utils/attendanceCalc'
 
 // ── Format helpers (UI only) ──────────────────────────────────────────────
 
@@ -386,15 +386,14 @@ export function AllowanceTab() {
       for (const r of empRecords) {
         const mm = r.date.slice(5, 7)
         if (r.dayType === 'WEEKDAY') {
-          const effectiveIn        = r.effectiveClockIn ?? r.clockIn
           const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
           const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
           if (isLeader) {
-            // 직책자: raw clockIn 기준, 절삭없음, ERP 무관, 휴가 항상 승인 처리
-            otByMonth[mm] += computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true) / 60
+            // 직책자: 그리드 인정시간 기준 — virtualIn+10h, Slack 주입 반차는 backtrack 없음
+            otByMonth[mm] += computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved) / 60
           } else if (r.erpOtApplied) {
-            // 비직책자: ERP 연장 상신자만, effectiveIn 기준, 30분 절삭, ERP 휴가 승인 여부 반영
-            otByMonth[mm] += computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) / 60
+            // 비직책자: 그리드 인정시간 기준 — processRecord의 overtimeHours (30분 절삭 포함)
+            otByMonth[mm] += r.overtimeHours ?? 0
           }
         }
         if (r.dayType !== 'WEEKDAY') {
