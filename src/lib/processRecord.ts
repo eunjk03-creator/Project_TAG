@@ -577,10 +577,10 @@ export function processRecord(
 
   const leaveMinRequired: number | null =
     effectiveLeaveType === '오전반반차' ? 6 * 60 :
-    effectiveLeaveType === '오전반차'   ? 4.5 * 60 :
+    effectiveLeaveType === '오전반차'   ? 4 * 60 :
     effectiveLeaveType === '오후반반차' ? 6 * 60 :
-    effectiveLeaveType === '오후반차'   ? 4.5 * 60 :
-    effectiveLeaveType === '반차'       ? 4.5 * 60 :
+    effectiveLeaveType === '오후반차'   ? 4 * 60 :
+    effectiveLeaveType === '반차'       ? 4 * 60 :
     null
 
   const effectiveTargetMins = leaveMinRequired ?? effectiveStdH * 60
