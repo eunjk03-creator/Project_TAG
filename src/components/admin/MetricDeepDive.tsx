@@ -31,14 +31,12 @@ interface SectionDerived {
   over209Count:   Record<string, number>
   missedTag:      Record<string, number>
   lateCount:      Record<string, number>
-  earlyCount:     Record<string, number>
   shortWorkCount: Record<string, number>
   severeCount:    Record<string, number>
   totalOtOver:    number
   totalOver209:   number
   totalMissed:    number
   totalLate:      number
-  totalEarly:     number
   totalShortWork: number
   totalSevere:    number
 }
@@ -99,7 +97,6 @@ export function MetricDeepDive({
 
       const missedTag:      Record<string, number> = {}
       const lateCount:      Record<string, number> = {}
-      const earlyCount:     Record<string, number> = {}
       const shortWorkCount: Record<string, number> = {}
       for (const r of processedRecords) {
         if (approvedKeys.has(`${r.employeeId}_${r.date}`)) continue
@@ -109,9 +106,8 @@ export function MetricDeepDive({
         const f = r.flag
         if (f === 'LATE' || f === 'LATE_AND_EARLY_DEPARTURE' || f === 'LATE_AND_ANOMALY')
           lateCount[div] = (lateCount[div] ?? 0) + 1
-        if (f === 'EARLY_DEPARTURE' || f === 'LATE_AND_EARLY_DEPARTURE')
-          earlyCount[div] = (earlyCount[div] ?? 0) + 1
-        if (f === 'ATTENDANCE_ANOMALY' || f === 'LATE_AND_ANOMALY')
+        // 3종 체계 — 조기퇴근(EARLY_DEPARTURE, 캐시된 레코드 하위호환 포함)은 근무시간미달로 통합
+        if (f === 'ATTENDANCE_ANOMALY' || f === 'LATE_AND_ANOMALY' || f === 'EARLY_DEPARTURE' || f === 'LATE_AND_EARLY_DEPARTURE')
           shortWorkCount[div] = (shortWorkCount[div] ?? 0) + 1
         if (f === 'NO_CLOCK_IN' || f === 'NO_CLOCK_OUT')
           missedTag[div] = (missedTag[div] ?? 0) + 1
@@ -119,13 +115,12 @@ export function MetricDeepDive({
 
       return {
         highestTotal, otOverCount, over209Count,
-        missedTag, lateCount, earlyCount, shortWorkCount,
+        missedTag, lateCount, shortWorkCount,
         severeCount: shortWorkCount,
         totalOtOver:    Object.values(otOverCount).reduce((s, v) => s + v, 0),
         totalOver209:   Object.values(over209Count).reduce((s, v) => s + v, 0),
         totalMissed:    Object.values(missedTag).reduce((s, v) => s + v, 0),
         totalLate:      Object.values(lateCount).reduce((s, v) => s + v, 0),
-        totalEarly:     Object.values(earlyCount).reduce((s, v) => s + v, 0),
         totalShortWork: Object.values(shortWorkCount).reduce((s, v) => s + v, 0),
         totalSevere:    Object.values(shortWorkCount).reduce((s, v) => s + v, 0),
       }
@@ -399,7 +394,7 @@ export function MetricDeepDive({
               이상치
             </span>
             <span className="text-xs text-gray-400 tabular-nums">
-              {displayTotal.anomalies}건 · 미태깅 {d.totalMissed} · 지각 {d.totalLate} · 조기퇴근 {d.totalEarly} · 근태이상 {d.totalSevere}
+              {displayTotal.anomalies}건 · 미태깅 {d.totalMissed} · 지각 {d.totalLate} · 근무시간미달 {d.totalSevere}
             </span>
             <ChevronDown open={isOpenAnomaly} />
           </button>
@@ -413,7 +408,6 @@ export function MetricDeepDive({
                   <tr className="bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500">
                     <th className="text-left   px-4 py-2.5">부서</th>
                     <th className="text-center px-3 py-2.5 text-amber-600">지각</th>
-                    <th className="text-center px-3 py-2.5 text-orange-500">조기퇴근</th>
                     <th className="text-center px-3 py-2.5 text-red-600">근무시간미달</th>
                     <th className="text-center px-3 py-2.5 text-red-500">미태깅</th>
                     <th className="text-center px-3 py-2.5 text-gray-700">총합계</th>
@@ -423,7 +417,6 @@ export function MetricDeepDive({
                   {displayMetrics.map((m, i) => {
                     const active    = selectedBUs.includes(m.division)
                     const late      = d.lateCount[m.division]      ?? 0
-                    const early     = d.earlyCount[m.division]     ?? 0
                     const shortWork = d.shortWorkCount[m.division] ?? 0
                     const missed    = d.missedTag[m.division]      ?? 0
                     return (
@@ -448,9 +441,6 @@ export function MetricDeepDive({
                           {late > 0 ? <span className="text-amber-600 font-semibold">{late}건</span> : <span className="text-gray-300">—</span>}
                         </td>
                         <td className="px-3 py-2.5 text-center tabular-nums">
-                          {early > 0 ? <span className="text-orange-500 font-semibold">{early}건</span> : <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-3 py-2.5 text-center tabular-nums">
                           {shortWork > 0 ? <span className="text-red-600 font-semibold">{shortWork}건</span> : <span className="text-gray-300">—</span>}
                         </td>
                         <td className="px-3 py-2.5 text-center tabular-nums">
@@ -466,9 +456,6 @@ export function MetricDeepDive({
                     <td className="px-4 py-2.5 text-gray-700">전체</td>
                     <td className="px-3 py-2.5 text-center tabular-nums">
                       {d.totalLate > 0 ? <span className="text-amber-600">{d.totalLate}건</span> : <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="px-3 py-2.5 text-center tabular-nums">
-                      {d.totalEarly > 0 ? <span className="text-orange-500">{d.totalEarly}건</span> : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center tabular-nums">
                       {d.totalShortWork > 0 ? <span className="text-red-600">{d.totalShortWork}건</span> : <span className="text-gray-300">—</span>}
@@ -494,7 +481,6 @@ export function MetricDeepDive({
                   otOverCount={d.otOverCount}
                   missedTag={d.missedTag}
                   lateCount={d.lateCount}
-                  earlyCount={d.earlyCount}
                   severeCount={d.severeCount}
                 />
               </div>

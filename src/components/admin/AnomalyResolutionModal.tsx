@@ -4,18 +4,21 @@ import type { ProcessedRecord, Employee, ResolutionData } from '@/types/tag'
 
 export type { ResolutionData }  // re-export so existing importers don't break
 
+// 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE는 캐시된 레코드 하위호환용 라벨
 const FLAG_LABEL: Record<string, string> = {
-  LATE:            '지각',
-  NO_CLOCK_IN:     '출근 미태깅',
-  NO_CLOCK_OUT:    '퇴근 미태깅',
-  EARLY_DEPARTURE: '조기퇴근',
+  LATE:               '지각',
+  NO_CLOCK_IN:        '출근 미태깅',
+  NO_CLOCK_OUT:       '퇴근 미태깅',
+  ATTENDANCE_ANOMALY: '근무시간 미달',
+  EARLY_DEPARTURE:    '근무시간 미달',
 }
 
 const FLAG_BADGE: Record<string, string> = {
-  LATE:            'text-amber-700 bg-amber-50 border-amber-300',
-  NO_CLOCK_IN:     'text-red-700 bg-red-50 border-red-300',
-  NO_CLOCK_OUT:    'text-red-700 bg-red-50 border-red-300',
-  EARLY_DEPARTURE: 'text-sky-700 bg-sky-50 border-sky-300',
+  LATE:               'text-amber-700 bg-amber-50 border-amber-300',
+  NO_CLOCK_IN:        'text-red-700 bg-red-50 border-red-300',
+  NO_CLOCK_OUT:       'text-red-700 bg-red-50 border-red-300',
+  ATTENDANCE_ANOMALY: 'text-sky-700 bg-sky-50 border-sky-300',
+  EARLY_DEPARTURE:    'text-sky-700 bg-sky-50 border-sky-300',
 }
 
 export type ResolutionTarget = {

@@ -168,7 +168,7 @@ tagArrayFilter.autoRemove = (val: unknown) => !Array.isArray(val) || val.length 
 
 const ARRAY_COL_TAGS: Record<string, string[]> = {
   normalTags:  ['일반', '연장근로', '외근', '휴일근로'],
-  anomalyTags: ['지각', '조기퇴근', '근무시간 미달', '미태깅'],
+  anomalyTags: ['지각', '근무시간 미달', '미태깅'],
 }
 
 // Optional columns shown in the "열 설정" popover, grouped by zone
@@ -493,10 +493,11 @@ export function AttendanceResultTable({
       // ── 근태 태그 도출 ─────────────────────────────────────────────────
       const anomalyTags: string[] = []
       const flag = r.flag
+      // 3종 체계(지각/근무시간미달/미태깅) — 조기퇴근은 근무시간미달로 통합.
+      // EARLY_DEPARTURE/LATE_AND_EARLY_DEPARTURE는 재계산 전 캐시된 레코드에서만 남아있을 수 있음 (하위호환).
       if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') anomalyTags.push('미태깅')
       if (flag === 'LATE' || flag === 'LATE_AND_EARLY_DEPARTURE' || flag === 'LATE_AND_ANOMALY') anomalyTags.push('지각')
-      if (flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE') anomalyTags.push('조기퇴근')
-      if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY') anomalyTags.push('근무시간 미달')
+      if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY' || flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE') anomalyTags.push('근무시간 미달')
 
       const attendanceStatus: '정상' | '비정상' = anomalyTags.length === 0 ? '정상' : '비정상'
 
@@ -700,7 +701,7 @@ export function AttendanceResultTable({
       },
     }),
     col.accessor('anomalyTags', {
-      id: 'anomalyTags', header: () => <ColTip label="비정상정보" tip="이상치 유형 (지각 · 조기퇴근 · 근무시간미달 · 미태깅)" />, size: 150, minSize: 90,
+      id: 'anomalyTags', header: () => <ColTip label="비정상정보" tip="이상치 유형 (지각 · 근무시간미달 · 미태깅)" />, size: 150, minSize: 90,
       filterFn: tagArrayFilter,
       cell: i => {
         const tags = i.getValue() as string[]
@@ -710,8 +711,6 @@ export function AttendanceResultTable({
             {tags.map(t => {
               const cls = t === '지각'
                 ? 'bg-amber-50 text-amber-700 border-amber-200'
-                : t === '조기퇴근'
-                ? 'bg-orange-50 text-orange-700 border-orange-200'
                 : 'bg-red-50 text-red-600 border-red-200'
               return (
                 <span key={t} className={`inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded border ${cls}`}>{t}</span>

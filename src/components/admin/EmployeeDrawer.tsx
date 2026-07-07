@@ -306,7 +306,7 @@ export function EmployeeDrawer() {
                   label="육아휴직자"
                   badge="isParentalLeave"
                   badgeCls="bg-pink-100 text-pink-600"
-                  desc="출퇴근 미기록 이상치 및 조기퇴근 판정을 면제합니다."
+                  desc="출퇴근 미기록 이상치 및 근무시간미달 판정을 면제합니다."
                   value={!!attrs.isParentalLeave}
                   onChange={v => { void toggleAttr('isParentalLeave', v) }}
                 />
@@ -315,7 +315,7 @@ export function EmployeeDrawer() {
                   label="단축근로"
                   badge="isShortenedHours"
                   badgeCls="bg-amber-100 text-amber-600"
-                  desc="일 표준근로시간을 단축 적용합니다. OT 기준 및 조기퇴근 판정이 함께 조정됩니다."
+                  desc="일 표준근로시간을 단축 적용합니다. OT 기준 및 근무시간미달 판정이 함께 조정됩니다."
                   value={!!attrs.isShortenedHours}
                   onChange={v => { void toggleAttr('isShortenedHours', v) }}
                 >

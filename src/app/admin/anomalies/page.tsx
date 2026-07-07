@@ -16,22 +16,26 @@ import { useAttendanceData } from '@/context/AttendanceDataContext'
 import type { ProcessedRecord, SieveFlag, EditHistoryEntry, Employee, ResolutionData } from '@/types/tag'
 
 // ── Badge taxonomy — synced with dashboard design system ──────────────────
+// 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE는 재계산 전 캐시된 레코드
+// 하위호환용 라벨(ATTENDANCE_ANOMALY와 동일 취급).
 const FLAG_LABEL: Record<string, string> = {
-  LATE:            '지각',
-  NO_CLOCK_IN:     '출근 미태깅',
-  NO_CLOCK_OUT:    '퇴근 미태깅',
-  EARLY_DEPARTURE: '조기퇴근',
+  LATE:               '지각',
+  NO_CLOCK_IN:        '출근 미태깅',
+  NO_CLOCK_OUT:       '퇴근 미태깅',
+  ATTENDANCE_ANOMALY: '근무시간 미달',
+  EARLY_DEPARTURE:    '근무시간 미달',
 }
 
 const FLAG_BADGE: Record<string, string> = {
-  LATE:            'text-amber-700 bg-amber-50 border-amber-300',
-  NO_CLOCK_IN:     'text-red-700 bg-red-50 border-red-300',
-  NO_CLOCK_OUT:    'text-red-700 bg-red-50 border-red-300',
-  EARLY_DEPARTURE: 'text-sky-700 bg-sky-50 border-sky-300',
+  LATE:               'text-amber-700 bg-amber-50 border-amber-300',
+  NO_CLOCK_IN:        'text-red-700 bg-red-50 border-red-300',
+  NO_CLOCK_OUT:       'text-red-700 bg-red-50 border-red-300',
+  ATTENDANCE_ANOMALY: 'text-sky-700 bg-sky-50 border-sky-300',
+  EARLY_DEPARTURE:    'text-sky-700 bg-sky-50 border-sky-300',
 }
 
 
-const ALL_FLAGS: SieveFlag[] = ['LATE', 'NO_CLOCK_IN', 'NO_CLOCK_OUT', 'EARLY_DEPARTURE']
+const ALL_FLAGS: SieveFlag[] = ['LATE', 'NO_CLOCK_IN', 'NO_CLOCK_OUT', 'ATTENDANCE_ANOMALY']
 
 type SortField = 'date' | 'name'
 type SortDir   = 'none' | 'asc' | 'desc'
@@ -199,11 +203,14 @@ export default function AnomaliesPage() {
   )
 
   // Flag counts (unresolved only — for dropdown labels)
+  // EARLY_DEPARTURE(캐시된 레코드 하위호환)는 ATTENDANCE_ANOMALY와 같은 버킷(근무시간미달)으로 합산
   const flagCounts = useMemo(() => {
     const counts: Partial<Record<string, number>> = {}
     for (const r of processed) {
-      if (scopedEmployeeIds.has(r.employeeId) && r.flag && !(recKey(r.employeeId, r.date) in resolutions))
-        counts[r.flag] = (counts[r.flag] ?? 0) + 1
+      if (scopedEmployeeIds.has(r.employeeId) && r.flag && !(recKey(r.employeeId, r.date) in resolutions)) {
+        const key = r.flag === 'EARLY_DEPARTURE' ? 'ATTENDANCE_ANOMALY' : r.flag
+        counts[key] = (counts[key] ?? 0) + 1
+      }
     }
     return counts
   }, [processed, scopedEmployeeIds, resolutions])
@@ -217,7 +224,9 @@ export default function AnomaliesPage() {
         const isAnomaly  = r.flag !== null
         const isResolved = key in resolutions
         if (!isAnomaly && !isResolved) return false
-        if (filterFlag !== null && !isResolved && r.flag !== filterFlag) return false
+        const matchesFlag = r.flag === filterFlag ||
+          (filterFlag === 'ATTENDANCE_ANOMALY' && r.flag === 'EARLY_DEPARTURE')
+        if (filterFlag !== null && !isResolved && !matchesFlag) return false
         return true
       }),
     [processed, scopedEmployeeIds, filterFlag, resolutions],

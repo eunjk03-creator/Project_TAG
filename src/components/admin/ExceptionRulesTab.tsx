@@ -405,7 +405,7 @@ function AddModal({
               <div className="bg-pink-50 rounded-xl px-4 py-3">
                 <p className="text-xs font-semibold text-pink-700">육아휴직자 적용 내용</p>
                 <ul className="text-[10px] text-pink-600 mt-1.5 space-y-0.5 list-disc list-inside">
-                  <li>모든 근태 이상치 감지 면제 (지각·조기퇴근·미태깅·미신청OT)</li>
+                  <li>모든 근태 이상치 감지 면제 (지각·근무시간미달·미태깅·미신청OT)</li>
                   <li>해당 기간 데이터는 정상 또는 휴가로 표시</li>
                 </ul>
               </div>
