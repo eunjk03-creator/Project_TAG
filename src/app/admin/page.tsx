@@ -238,7 +238,7 @@ export default function AdminDashboard() {
         ...r,
         clockIn:      ov.clockIn,
         clockOut:     ov.clockOut,
-        erpOtApplied: ov.erpOtApplied !== null ? ov.erpOtApplied : r.erpOtApplied,
+        erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
       }
     })
 
@@ -416,7 +416,8 @@ export default function AdminDashboard() {
       })
       .map(r => {
         const ov = recordOverrides[`${r.employeeId}_${r.date}`]
-        return ov ? { ...r, ...ov } : r
+        if (!ov) return r
+        return { ...r, ...ov, erpOtApplied: ov.erpOtApplied ?? r.erpOtApplied }
       }),
     [allProcessed, scopedEmployeeIds, deletedKeys, hireDateMap, recordOverrides],
   )
