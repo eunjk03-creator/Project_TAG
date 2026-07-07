@@ -362,17 +362,20 @@ function AddModal({
 
           {/* ── 3. Rule-specific fields ── */}
           {draft.ruleType === 'manager_exemption' && (
-            <div className="bg-gray-50 rounded-xl px-4 py-3 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-semibold text-gray-700">OT 미산입</p>
-                <p className="text-[10px] text-gray-400 mt-0.5">연장근로 집계에서 제외</p>
+            <div className="space-y-2.5">
+              <div className="bg-gray-50 rounded-xl px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-gray-700">OT 미산입</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">연장근로 집계에서 제외</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Toggle on={draft.excludeFromOt} onChange={v => patch({ excludeFromOt: v })} />
+                  <span className={`text-[10px] font-bold w-6 ${draft.excludeFromOt ? 'text-blue-600' : 'text-gray-400'}`}>
+                    {draft.excludeFromOt ? 'ON' : 'OFF'}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Toggle on={draft.excludeFromOt} onChange={v => patch({ excludeFromOt: v })} />
-                <span className={`text-[10px] font-bold w-6 ${draft.excludeFromOt ? 'text-blue-600' : 'text-gray-400'}`}>
-                  {draft.excludeFromOt ? 'ON' : 'OFF'}
-                </span>
-              </div>
+              {renderDateRange('gray')}
             </div>
           )}
 
@@ -778,14 +781,35 @@ export function ExceptionRulesTab() {
                         </span>
                       )}
                       {r.ruleType === 'manager_exemption' && (
-                        <div className="flex items-center gap-2">
-                          <Toggle
-                            on={r.excludeFromOt}
-                            onChange={v => patchRule(r.id, { excludeFromOt: v })}
-                          />
-                          <span className={`text-[11px] font-semibold ${r.excludeFromOt ? 'text-blue-600' : 'text-gray-400'}`}>
-                            OT 미산입 {r.excludeFromOt ? 'ON' : 'OFF'}
-                          </span>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <Toggle
+                              on={r.excludeFromOt}
+                              onChange={v => patchRule(r.id, { excludeFromOt: v })}
+                            />
+                            <span className={`text-[11px] font-semibold ${r.excludeFromOt ? 'text-blue-600' : 'text-gray-400'}`}>
+                              OT 미산입 {r.excludeFromOt ? 'ON' : 'OFF'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-gray-400 whitespace-nowrap">발령:</span>
+                            <input
+                              type="date"
+                              value={r.validFrom}
+                              onChange={e => patchRule(r.id, { validFrom: e.target.value })}
+                              className="px-1.5 py-1 text-[10px] border border-gray-200 rounded-lg
+                                focus:outline-none focus:ring-2 focus:ring-blue-500 tabular-nums"
+                            />
+                            <span className="text-[10px] text-gray-400">~</span>
+                            <input
+                              type="date"
+                              value={r.validTo}
+                              min={r.validFrom}
+                              onChange={e => patchRule(r.id, { validTo: e.target.value })}
+                              className="px-1.5 py-1 text-[10px] border border-gray-200 rounded-lg
+                                focus:outline-none focus:ring-2 focus:ring-blue-500 tabular-nums"
+                            />
+                          </div>
                         </div>
                       )}
 
