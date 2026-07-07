@@ -426,7 +426,7 @@ export function AllowanceTab() {
         if (r.dayType !== 'WEEKDAY') {
           if (r.clockIn && r.clockOut) {
             const stayMins = Math.max(0, parseTimeToMins(r.clockOut) - parseTimeToMins(r.clockIn))
-            holidayByMonth[mm] += computeHolidayPayMins(stayMins, isLeaderToday) / 60
+            holidayByMonth[mm] += computeHolidayPayMins(stayMins) / 60
           }
         }
         if (r.flag === 'LATE' || r.flag === 'LATE_AND_EARLY_DEPARTURE' || r.flag === 'LATE_AND_ANOMALY') {

@@ -476,11 +476,11 @@ export function computeLeaderPayOtMins(
  * 급여용 휴일근로 — '4+1 반복 패턴' 휴게공제
  *   1차 휴게 (4h 초과): MIN(60, MAX(0, 체류 - 240))
  *   2차 휴게 (9h 초과): MIN(60, MAX(0, 체류 - 540))
- * 직책자는 절삭 없음.
+ * 직책자/비직책자 모두 30분 절삭. noTruncation=true는 실제값 버튼 전용.
  */
-export function computeHolidayPayMins(stayMins: number, isLeader?: boolean): number {
+export function computeHolidayPayMins(stayMins: number, noTruncation = false): number {
   const d1  = Math.min(60, Math.max(0, stayMins - 240))
   const d2  = Math.min(60, Math.max(0, stayMins - 540))
   const net = Math.max(0, stayMins - d1 - d2)
-  return isLeader ? net : Math.floor(net / 30) * 30
+  return noTruncation ? net : Math.floor(net / 30) * 30
 }

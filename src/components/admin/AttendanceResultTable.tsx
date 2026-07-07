@@ -534,11 +534,11 @@ export function AttendanceResultTable({
       const gasNightMins   = computeGasNightMins(r.clockOut, isExactMode ? true : (r.isLeader ?? false))
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60
-      // 급여용 휴일근로: 4+1 반복 패턴 휴게공제 — Button1/2=직책자 절삭없음·일반 30분절삭, Button3=전사 노절삭
+      // 급여용 휴일근로: 4+1 반복 패턴 휴게공제 — Button1/2=전사 30분절삭, Button3=전사 노절삭
       const payrollHolidayH = r.dayType !== 'WEEKDAY' && r.clockIn && r.clockOut
         ? computeHolidayPayMins(
             Math.max(0, parseTimeToMins(r.clockOut) - parseTimeToMins(r.clockIn)),
-            isExactMode ? true : (r.isLeader ?? false),
+            isExactMode,
           ) / 60
         : 0
       const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
