@@ -42,11 +42,10 @@ const TAG = {
   anomaly:   'border border-red-200    bg-red-50     text-red-600',
   bizTrip:   'border border-teal-200   bg-teal-50    text-teal-700',
   remote:    'border border-indigo-200 bg-indigo-50  text-indigo-700',
-  late:        'border border-amber-200  bg-amber-50   text-amber-600',
-  earlyExit:   'border border-orange-200 bg-orange-50  text-orange-600',
-  ot:          'border border-sky-200    bg-sky-50     text-sky-700',
-  otUnapplied: 'border border-rose-200   bg-rose-50    text-rose-600',
-  normal:      'border border-gray-200   bg-gray-50    text-gray-500',
+  late:      'border border-amber-200  bg-amber-50   text-amber-600',
+  earlyExit: 'border border-orange-200 bg-orange-50  text-orange-600',
+  ot:        'border border-sky-200    bg-sky-50     text-sky-700',
+  normal:    'border border-gray-200   bg-gray-50    text-gray-500',
 }
 
 const DOW_KR = ['일', '월', '화', '수', '목', '금', '토']
@@ -1107,15 +1106,8 @@ const empStats = useMemo(() => {
                       if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY' ||
                           flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE')
                                              tags.push({ cls: TAG.anomaly,   text: '근무시간 미달' })
-                      // 실제 연장근로(overtimeHours>0)는 ERP 신청 여부와 무관하게 항상 표시 —
-                      // 미신청자도 조회 가능해야 함 (급여 인정 여부는 초과근로 행에서 별도 0h 처리).
-                      if ((rec?.overtimeHours ?? 0) > 0 && !flag) {
-                        if (rec?.isLeader || rec?.erpOtApplied) {
-                          tags.push({ cls: TAG.ot,          text: '연장근로'    })
-                        } else {
-                          tags.push({ cls: TAG.otUnapplied, text: '연장 미신청' })
-                        }
-                      }
+                      if ((rec?.overtimeHours ?? 0) > 0 && !flag && (rec?.isLeader || rec?.erpOtApplied))
+                                             tags.push({ cls: TAG.ot,        text: '연장근로'    })
 
                       return (
                         <td key={date}
