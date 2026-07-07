@@ -1551,6 +1551,7 @@ export default function AdminDashboard() {
                 onHoursFilterChange={f => { setGridHoursFilter(f); setGridPage(0) }}
                 onSortChange={(key, dir) => { setGridSortKey(key); setGridSortDir(dir); setGridPage(0) }}
                 leaderIdSet={leaderIdSet}
+                attrMap={finalAttrMap}
               />
             </div>
           </div>
