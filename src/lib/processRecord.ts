@@ -7,7 +7,7 @@ import type {
   EmployeeAttributeOverrides,
   ErpLeaveType,
 } from '@/types/tag'
-import { normalizeLeaveType, computeDisplayBreakMins } from '@/utils/attendanceCalc'
+import { normalizeLeaveType, computeDisplayBreakMins, computeEffInMins } from '@/utils/attendanceCalc'
 
 export function parseTime(hhmm: string): number {
   const isNext = hhmm.startsWith('+')
@@ -552,7 +552,9 @@ export function processRecord(
       verificationNote: schedNote })
   }
 
-  const effectiveInMins = Math.max(actualInMins, flexStartMins)
+  // ERP 승인 반차 계열은 표준 출근 시각으로 스냅 (오전반반차→10:00, 오전반차→13:00)
+  // Slack 주입 반차(ERP 미신청)는 스냅 없이 08:00 floor만 적용
+  const effectiveInMins = computeEffInMins(actualInMins, effectiveLeaveType, !slackLeaveInjected)
 
   const effectiveLateThreshold =
     effectiveLeaveType === '오전반반차' ? parseTime('11:00') :
