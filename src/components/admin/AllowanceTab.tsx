@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx-js-style'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
+import { useAttendanceData }   from '@/context/AttendanceDataContext'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee, ProcessedRecord } from '@/types/tag'
@@ -272,6 +273,7 @@ const PAGE_SIZE = 50
 
 export function AllowanceTab() {
   const { processedRecords: serverProcessed, employees } = useAttendanceSource()
+  const { recordOverrides, deletedKeys }                 = useAttendanceData()
   const { employeeAttrMap } = useEmployeeExceptions()
 
   const [selectedMonths, setSelectedMonths] = useState<Set<string>>(() => {
@@ -337,7 +339,19 @@ export function AllowanceTab() {
 
   // ── Base aggregated rows ──────────────────────────────────────────────────
   const baseRows = useMemo<EmpRow[]>(() => {
-    const records  = serverProcessed ?? []
+    // 관리자 수정(override) 및 삭제 반영
+    const records = (serverProcessed ?? [])
+      .filter(r => !deletedKeys.has(`${r.employeeId}_${r.date}`))
+      .map(r => {
+        const ov = recordOverrides[`${r.employeeId}_${r.date}`]
+        if (!ov) return r
+        return {
+          ...r,
+          clockIn:      ov.clockIn      ?? r.clockIn,
+          clockOut:     ov.clockOut     ?? r.clockOut,
+          erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
+        }
+      })
     const monthSet = new Set(months)
 
     // 레코드에서 월 → "YYYY-MM" 맵 구성 (입사월 비교용)
@@ -434,7 +448,7 @@ export function AllowanceTab() {
     })
     return result
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverProcessed, employees, employeeAttrMap, selectedMonths])
+  }, [serverProcessed, recordOverrides, deletedKeys, employees, employeeAttrMap, selectedMonths])
 
   const divisions = useMemo(() => {
     const divSet = new Set(baseRows.map(r => r.emp.division))
