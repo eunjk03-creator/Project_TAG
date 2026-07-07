@@ -108,9 +108,9 @@ function getStatutoryLimit(selectedDays: number): number {
   return selectedDays <= 7 ? 52 : 209
 }
 
-function InfoTag({ cls, text }: { cls: string; text: string }) {
+function InfoTag({ cls, text, dashed }: { cls: string; text: string; dashed?: boolean }) {
   return (
-    <span className={`inline-block text-[7px] font-semibold rounded px-1 py-px leading-none shrink-0 ${cls}`}>
+    <span className={`inline-block text-[7px] font-semibold rounded px-1 py-px leading-none shrink-0 ${cls}${dashed ? ' border-dashed opacity-70' : ''}`}>
       {text}
     </span>
   )
@@ -893,6 +893,7 @@ const empStats = useMemo(() => {
                       // 하루에 ERP 신청 2건 이상(예: 오전반차+오후반차=연차)이면 합산 라벨 대신 실제 신청 코드를 보여줌
                       const comboCodes = (rec?.leaveCodesDetail?.length ?? 0) >= 2 ? rec!.leaveCodesDetail! : null
                       const amCombo    = comboCodes ? splitComboLeaveCodes(comboCodes).am : []
+                      const isSlackInjAM = (rec?.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
 
                       return (
                         <td key={date}
@@ -936,9 +937,9 @@ const empStats = useMemo(() => {
                                 })()}
                                 {(rec?.flag ?? '').includes('LATE') && <InfoTag cls={TAG.late} text="지각" />}
                                 {amCombo.length > 0 ? (
-                                  <InfoTag cls={TAG.amLeave} text={amCombo.join('+')} />
+                                  <InfoTag cls={TAG.amLeave} text={amCombo.join('+')} dashed={isSlackInjAM} />
                                 ) : rec?.leaveType && (rec.leaveType === '반차' || !rec.leaveType.includes('오후')) && (
-                                  <InfoTag cls={TAG.amLeave} text={rec.leaveType} />
+                                  <InfoTag cls={TAG.amLeave} text={rec.leaveType} dashed={isSlackInjAM} />
                                 )}
                               </button>
                             )
@@ -982,6 +983,7 @@ const empStats = useMemo(() => {
                       const isLeaveDay = rec?.finalStatus === '연차'
                       const comboCodes = (rec?.leaveCodesDetail?.length ?? 0) >= 2 ? rec!.leaveCodesDetail! : null
                       const pmCombo    = comboCodes ? splitComboLeaveCodes(comboCodes).pm : []
+                      const isSlackInjPM = (rec?.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
 
                       return (
                         <td key={date}
@@ -994,7 +996,7 @@ const empStats = useMemo(() => {
                               pmCombo.length > 0 ? (
                                 <div className="w-full flex flex-col items-center gap-0.5 py-0.5">
                                   <span className="text-gray-200 text-[10px] select-none">—</span>
-                                  <InfoTag cls={TAG.pmLeave} text={pmCombo.join('+')} />
+                                  <InfoTag cls={TAG.pmLeave} text={pmCombo.join('+')} dashed={isSlackInjPM} />
                                 </div>
                               ) : (
                                 <span className="text-gray-200 text-[10px] select-none">—</span>
@@ -1010,9 +1012,9 @@ const empStats = useMemo(() => {
                                   {rec!.clockOut ?? '미태깅'}
                                 </span>
                                 {pmCombo.length > 0 ? (
-                                  <InfoTag cls={TAG.pmLeave} text={pmCombo.join('+')} />
+                                  <InfoTag cls={TAG.pmLeave} text={pmCombo.join('+')} dashed={isSlackInjPM} />
                                 ) : rec?.leaveType && (rec.leaveType === '반차' || rec.leaveType.includes('오후')) && (
-                                  <InfoTag cls={TAG.pmLeave} text={rec.leaveType} />
+                                  <InfoTag cls={TAG.pmLeave} text={rec.leaveType} dashed={isSlackInjPM} />
                                 )}
                               </button>
                             )
