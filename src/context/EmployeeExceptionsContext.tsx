@@ -164,7 +164,7 @@ export function EmployeeExceptionsProvider({ children }: { children: ReactNode }
         case 'manager_exemption':
           merged.set(rule.employeeId, {
             ...ex,
-            isLeader:   rule.excludeFromOt ? true : ex.isLeader,
+            isLeader:   true,  // manager_exemption 규칙이 있으면 항상 직책자 (날짜 범위 체크는 isLeaderOnDate에서)
             leaderFrom: rule.validFrom || undefined,
             leaderTo:   rule.validTo   || undefined,
           })

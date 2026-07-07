@@ -383,13 +383,14 @@ export function AllowanceTab() {
 
       // 날짜 기준 직책자 판별 (발령일/해임일 적용)
       const isLeaderOnDate = (date: string): boolean => {
-        if (attrs?.isLeader === true) {
-          const from = attrs.leaderFrom
-          const to   = attrs.leaderTo
-          if (!from && !to) return true                           // 날짜 미설정 → 항상 직책자
-          return (!from || date >= from) && (!to || date <= to)   // 날짜 범위 내만 직책자
+        const from = attrs?.leaderFrom
+        const to   = attrs?.leaderTo
+        if (from || to) {
+          // 날짜 범위가 설정된 경우 → CSV 자동감지 무시, 기간 내만 직책자
+          return (!from || date >= from) && (!to || date <= to)
         }
-        return emp.isLeader === true  // 예외규칙 없으면 CSV 자동감지
+        // 날짜 없음 → attrs.isLeader 또는 CSV 자동감지 기준
+        return attrs?.isLeader === true || emp.isLeader === true
       }
 
       // 입사월 기준 활성 월 수 계산 (입사한 달 포함)
