@@ -110,7 +110,10 @@ function getStatutoryLimit(selectedDays: number): number {
 
 function InfoTag({ cls, text, dashed }: { cls: string; text: string; dashed?: boolean }) {
   return (
-    <span className={`inline-block text-[7px] font-semibold rounded px-1 py-px leading-none shrink-0 ${cls}${dashed ? ' border-dashed opacity-70' : ''}`}>
+    <span
+      className={`inline-block text-[7px] font-semibold rounded px-1 py-px leading-none shrink-0 ${cls}${dashed ? ' opacity-70' : ''}`}
+      style={dashed ? { borderStyle: 'dashed' } : undefined}
+    >
       {text}
     </span>
   )
