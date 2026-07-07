@@ -7,7 +7,7 @@ import type {
   EmployeeAttributeOverrides,
   ErpLeaveType,
 } from '@/types/tag'
-import { normalizeLeaveType, computeDisplayBreakMins, computeEffInMins } from '@/utils/attendanceCalc'
+import { normalizeLeaveType, computeDisplayBreakMins, computeEffInMins, computeVirtualInMins } from '@/utils/attendanceCalc'
 
 export function parseTime(hhmm: string): number {
   const isNext = hhmm.startsWith('+')
@@ -556,7 +556,9 @@ export function processRecord(
   // Slack 주입 반차(ERP 미신청)는 스냅 없이 08:00 floor만 적용
   const effectiveInMins = computeEffInMins(actualInMins, effectiveLeaveType, !slackLeaveInjected)
 
+  // ERP 미상신(Slack전용) 반차는 인사 통제 대원칙에 따라 일반 마지노선(09:00) 적용.
   const effectiveLateThreshold =
+    slackLeaveInjected ? flexEndMins :
     effectiveLeaveType === '오전반반차' ? parseTime('11:00') :
     effectiveLeaveType === '반차'       ? parseTime('11:00') :
     effectiveLeaveType === '오전반차'   ? parseTime('14:00') :
@@ -610,12 +612,19 @@ export function processRecord(
   const nightWorkEnd   = Math.min(outMins, nightEndMins)
   const nightHours     = Math.max(0, nightWorkEnd - nightWorkStart) / 60
 
-  // 근무시간 미달: 마감선(leaveMinRequired 또는 standardOutMins)을 1분이라도 못 채우면 즉시 판정.
-  // 기존 ±30분 여유(조기퇴근-경미 vs 근태이상-심각) 구분은 폐지 — 3종 체계(지각/근무시간미달/미태깅)로 통합.
-  const isInsufficientHours = !bypassAllAnomalies && !isEasyLogis && (() => {
-    if (leaveMinRequired !== null) return rawStayMins < leaveMinRequired
-    return outMins < standardOutMins
-  })()
+  // 근무시간 미달: Virtual In 기반 타임라인 대통합 (여유 없음, 1분이라도 못 채우면 즉시 판정).
+  // 마감선 = Virtual In + 유종별 기준선. 오전반차/오전반반차는 VirtualIn의 되돌림(backtrack)에
+  // 이미 반영되어 있어 9h 고정이 성립하고, 오후 유형은 되돌림이 없으므로 실제 필요 근무시간
+  // (4h/7h)을 그대로 더함. ERP 미상신(Slack전용) 반차는 effectiveInMins와 동일한 게이트로
+  // backtrack 없이 계산됨 (computeVirtualInMins의 isErpLeaveApproved 인자).
+  const virtualInMins = computeVirtualInMins(effectiveInMins, effectiveLeaveType, !slackLeaveInjected)
+  const insufficientBaselineMins =
+    effectiveLeaveType === '오후반차'   ? 4 * 60 :
+    effectiveLeaveType === '반차'       ? 4 * 60 :
+    effectiveLeaveType === '오후반반차' ? 7 * 60 :
+    9 * 60   // 일반(휴가없음) / 오전반차 / 오전반반차
+  const isInsufficientHours = !bypassAllAnomalies && !isEasyLogis &&
+    outMins < (virtualInMins + insufficientBaselineMins)
 
   let flag: SieveFlag = null
   if (isLate && isInsufficientHours) flag = 'LATE_AND_ANOMALY'
