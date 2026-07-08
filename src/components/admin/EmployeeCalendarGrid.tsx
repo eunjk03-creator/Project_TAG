@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds, EmployeeAttributeOverrides } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
-import { parseTimeToMins, compute4141BreakMins, computeEffClockIn, computeEffInMins, computeVirtualInMins } from '@/utils/attendanceCalc'
+import { parseTimeToMins, compute4141BreakMins, computeVirtualInMins } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
@@ -278,6 +278,8 @@ export function EmployeeCalendarGrid({
     return map
   }, [records])
 
+const dateSet = useMemo(() => new Set(dates), [dates])
+
 const empStats = useMemo(() => {
   const stats: Record<string, {
     total: number; nocreditTotal: number; rawTotal: number
@@ -288,7 +290,7 @@ const empStats = useMemo(() => {
   }> = {}
 
   for (const emp of employees) {
-    const recs     = records.filter(r => r.employeeId === emp.id)
+    const recs     = records.filter(r => r.employeeId === emp.id && dateSet.has(r.date))
     // DB 예외규칙(leaderIdSet) OR 직급명 자동감지(emp.isLeader) 둘 다 인정 — 날짜 기준 판별
     const isLeaderOnDate = makeIsLeaderOnDate(emp.id)
 
@@ -300,7 +302,9 @@ const empStats = useMemo(() => {
       const leaveAmt       = r.erpLeaveAmount ?? 0
       const isSlackInj     = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
       const isErpApproved  = r.leaveType ? !isSlackInj : true
-      const effIn          = computeEffClockIn(r.clockIn, r.leaveType, isErpApproved)
+      // r.effectiveClockIn(엔진이 계산한 값)을 그대로 사용 — 외근 09:00 동결 등 leaveType
+      // 기반 재계산(computeEffClockIn)이 모르는 보정까지 반영됨.
+      const effIn          = r.effectiveClockIn ?? r.clockIn
       const ciRec          = effIn     ? parseTimeToMins(effIn)     : null
       const ciExact     = r.clockIn ? parseTimeToMins(r.clockIn) : null
       const co          = r.clockOut ? parseTimeToMins(r.clockOut) : null
@@ -370,7 +374,7 @@ const empStats = useMemo(() => {
     }
   }
   return stats
-}, [employees, records, approvedKeys, leaderIdSet])
+}, [employees, records, approvedKeys, leaderIdSet, dateSet])
 
   // Hours compliance filter
   // - 52h: 주간 단위로 나눠서 어느 주든 52h 초과하면 표시 (주 52시간 법정 한도)
@@ -391,6 +395,7 @@ const empStats = useMemo(() => {
     // over52: 주별 집계 — 어느 한 주라도 52h 초과 시 표시
     const recsByEmp = new Map<string, ProcessedRecord[]>()
     for (const r of records) {
+      if (!dateSet.has(r.date)) continue
       const bucket = recsByEmp.get(r.employeeId)
       if (bucket) bucket.push(r)
       else recsByEmp.set(r.employeeId, [r])
@@ -419,12 +424,12 @@ const empStats = useMemo(() => {
           // 휴일근무: 직책자/비직책자 모두 30분 절삭
           addH = r.finalStatus === '휴일근무' ? floorTo30(r.holidayHours ?? 0) : 0
         } else {
-          const ciRaw = r.clockIn  ? parseTimeToMins(r.clockIn)  : null
+          const effClockInStr = r.effectiveClockIn ?? r.clockIn
+          const ciEff = effClockInStr ? parseTimeToMins(effClockInStr) : null
           const co    = r.clockOut ? parseTimeToMins(r.clockOut) : null
-          if (ciRaw === null || co === null) {
+          if (ciEff === null || co === null) {
             addH = credit
           } else {
-            const ciEff   = computeEffInMins(ciRaw, r.leaveType, isErpApproved)
             const elapsed = Math.max(0, co - ciEff)
             const netRecH = Math.max(0, elapsed - compute4141BreakMins(elapsed)) / 60
             if (isLeaderOnDate(r.date)) {
@@ -440,7 +445,7 @@ const empStats = useMemo(() => {
       }
       return Object.values(weekTotals).some(h => h >= 52)
     })
-  }, [displayEmployees, hoursFilter, empStats, timeMode, creditsOn, records])
+  }, [displayEmployees, hoursFilter, empStats, timeMode, creditsOn, records, dateSet])
 
   // Sort after stats are available
   const sortedEmployees = useMemo(() => {
@@ -1047,12 +1052,15 @@ const empStats = useMemo(() => {
                         const isSlack   = (rec.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
                         const isERP     = rec.leaveType ? !isSlack : true
                         const ciRawCell = rec.clockIn  ? parseTimeToMins(rec.clockIn)  : null
+                        const effClockInStr = rec.effectiveClockIn ?? rec.clockIn
                         const coMins    = rec.clockOut ? parseTimeToMins(rec.clockOut) : null
                         if (ciRawCell !== null && coMins !== null) {
-                          // OT = virtualIn + 10h 기준 — 크레딧 toggle과 무관하게 고정
+                          // OT = virtualIn + 10h 기준 — 크레딧 toggle과 무관하게 고정.
+                          // 인정시간은 rec.effectiveClockIn(엔진 계산값, 외근 09:00 동결 등 반영)을 사용 —
+                          // 원본 clockIn을 leaveType만으로 재계산(computeEffInMins)하면 이런 보정을 놓침.
                           const effInMins  = timeMode === 'exact'
                             ? ciRawCell
-                            : computeEffInMins(ciRawCell, rec.leaveType, isERP)
+                            : (effClockInStr ? parseTimeToMins(effClockInStr) : ciRawCell)
                           const virtualIn  = computeVirtualInMins(effInMins, rec.leaveType, isERP)
                           const rawOtMins  = Math.max(0, coMins - (virtualIn + 600))
                           if (timeMode === 'exact') {
