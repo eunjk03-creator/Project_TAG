@@ -82,6 +82,24 @@ if (직책자) {
   이 공식으로 계산됨. 세 지표는 서로 100% 일치한다.
 - **직책자는 원래부터 안전:** OT를 total에 더하지 않는 구조라 이중계상 버그 자체가 없었음.
 
+## 4b. 지각/근무시간미달 혼합 플래그 분류 (2026-07-08 수정 완료)
+
+`r.flag`가 `LATE_AND_ANOMALY`/`LATE_AND_EARLY_DEPARTURE`인 날은 **지각과 근무시간미달이 하루에
+겹친 혼합 케이스**다. 이걸 어떻게 분류하는지가 파일마다 달랐다:
+
+| 위치 | 혼합 플래그 처리 (수정 전) | 처리 (현재) |
+|---|---|---|
+| `AttendanceResultTable.tsx` (`anomalyTags`) | 지각 태그 + 근무시간미달 태그 **둘 다 push** | 그대로 (원래부터 맞음) |
+| `AllowanceTab.tsx` (`lateByMonth`) | 지각으로만 카운트 (근무시간미달 카운트 자체가 없음) | 그대로 (원래부터 맞음, 대응되는 근무시간미달 집계가 없어서 문제 없음) |
+| `deptReportExcel.ts` (`classifyFlag`) | **혼합 → null 반환, 지각/근무시간미달/미태깅 시트 전부에서 통째로 누락** | ✅ **수정됨** `classifyFlags`로 변경, 지각·근무시간미달 두 카테고리 모두에 +1 집계 (커밋 7c07eeb) |
+| `EmployeeCalendarGrid.tsx` (empStats.anomalies, 상단 "이상" 배지) | `finalStatus` 기준 1건으로만 카운트 (지각/근무시간미달 구분 없이 "이상 있는 날" 총합) | 변경 안 함 — 이건 "카테고리별 집계"가 아니라 "이상 있는 날 수" 개념이라 혼합이어도 1건이 맞다고 판단 |
+| `EmployeeCalendarGrid.tsx` (출근 행의 "지각" InfoTag, `flag.includes('LATE')`) | 혼합 포함 지각으로 표시 | 그대로 (원래부터 맞음) |
+
+**주의:** 그리드 상단 "이상" 배지는 지각 전용 카운트가 아니라 지각+근무시간미달+미태깅을 합친
+"이상 있는 날짜 수"다. 이 숫자를 AllowanceTab의 "지각" 총 횟수와 1:1로 비교하면 애초에 다른
+지표를 비교하는 것이라 안 맞는 게 정상 — 지각만 비교하려면 그리드 출근행의 지각 태그를 세거나
+`deptReportExcel.ts`의 "지각" 시트를 봐야 한다.
+
 ## 5. 체크리스트 — 새 집계 코드 작성 시
 
 1. `r.overtimeHours`(또는 `computePayOtMins`/`computeLeaderPayOtMins` 재계산값)를 쓴다면, 그 값이
@@ -122,4 +140,5 @@ if (직책자) {
 | B7 | 🟠 확인필요 | AllowanceTab 비직책자 clockIn/clockOut override 시 overtimeHours stale 가능성 |
 | B8 | 🟡 미수정 | EmployeeCalendarGrid per-day OT 셀 합계 ≠ empStats.ot |
 | B9 | ✅ 수정됨(2026-07-08, 커밋 4c921a6) | 연장근로 발생일 credit 이중계상 — 수정 내용은 §4로 이미 반영 |
+| B10 | ✅ 수정됨(2026-07-08, 커밋 7c07eeb) | deptReportExcel 지각+근무시간미달 혼합 플래그 누락 — 수정 내용은 §4b로 이미 반영 |
 | — | 🟠 확인필요 | ERP 연장 **미신청**이면 실제 심야근무(야간수당 포함)를 해도 총근로/연장/야간에서 전부 0 처리됨 — 법정 야간수당은 신청 여부 무관하게 발생하는 게 원칙이라 정책 재확인 필요 |
