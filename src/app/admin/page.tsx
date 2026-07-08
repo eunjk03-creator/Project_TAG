@@ -135,6 +135,16 @@ export default function AdminDashboard() {
   const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader'>('all')
   const [timeMode, setTimeMode] = useState<'recognized' | 'exact'>('recognized')
   const [gridCreditsOn, setGridCreditsOn] = useState(true)
+  // 그리드 인원 체크박스로 고른 사람만 조회 — 선택은 유지한 채 필터만 켜고 끌 수 있음
+  const [selectedGridEmployeeIds, setSelectedGridEmployeeIds] = useState<Set<string>>(new Set())
+  const [showOnlySelectedInGrid,  setShowOnlySelectedInGrid]  = useState(false)
+  const toggleGridEmployeeSelection = (id: string) => {
+    setSelectedGridEmployeeIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
   const [tableColVisibility, setTableColVisibility] = useState<Record<string, boolean>>({
     normalTags:    true,
     anomalyTags:   true,
@@ -405,21 +415,21 @@ export default function AdminDashboard() {
     return map
   }, [baseEmployees])
 
+  // NOTE: overrides (clockIn/clockOut/erpOtApplied/erpLeaveType) are already fully applied
+  // above in `allProcessed` via processRecord() — including next-day '+' prefix detection.
+  // Do NOT re-merge the raw override here: spreading it a second time clobbers the
+  // already-corrected clockOut (e.g. reverts '+02:12' back to '02:12'), which silently
+  // breaks every locally-recomputed table/grid column (근로A, 최종근무, 초과근로, 야간, 휴일근로)
+  // for any overnight shift that crosses midnight.
   const scopedRecords = useMemo(
-    () => allProcessed
-      .filter(r => {
-        if (!scopedEmployeeIds.has(r.employeeId)) return false
-        if (deletedKeys.has(`${r.employeeId}_${r.date}`)) return false
-        const hd = hireDateMap.get(r.employeeId)
-        if (hd && r.date < hd) return false
-        return true
-      })
-      .map(r => {
-        const ov = recordOverrides[`${r.employeeId}_${r.date}`]
-        if (!ov) return r
-        return { ...r, ...ov, erpOtApplied: ov.erpOtApplied ?? r.erpOtApplied }
-      }),
-    [allProcessed, scopedEmployeeIds, deletedKeys, hireDateMap, recordOverrides],
+    () => allProcessed.filter(r => {
+      if (!scopedEmployeeIds.has(r.employeeId)) return false
+      if (deletedKeys.has(`${r.employeeId}_${r.date}`)) return false
+      const hd = hireDateMap.get(r.employeeId)
+      if (hd && r.date < hd) return false
+      return true
+    }),
+    [allProcessed, scopedEmployeeIds, deletedKeys, hireDateMap],
   )
 
   const approvedKeys = useMemo(
@@ -757,8 +767,11 @@ export default function AdminDashboard() {
     if (gridFilterTeam) {
       result = result.filter(e => e.team === gridFilterTeam)
     }
+    if (showOnlySelectedInGrid && selectedGridEmployeeIds.size > 0) {
+      result = result.filter(e => selectedGridEmployeeIds.has(e.id))
+    }
     return result
-  }, [filteredRankedEmployees, searchQuery, selectedDivisions, gridFilterTeam])
+  }, [filteredRankedEmployees, searchQuery, selectedDivisions, gridFilterTeam, showOnlySelectedInGrid, selectedGridEmployeeIds])
 
   // ── Grid: parent-level sort (applied before pagination so order is correct across pages) ──
   const gridEmpStats = useMemo(() => {
@@ -1469,6 +1482,30 @@ export default function AdminDashboard() {
               )}
             </div>
 
+            {/* 인원 선택 필터 — 이름 옆 체크박스로 고른 사람만 조회 */}
+            {selectedGridEmployeeIds.size > 0 && (
+              <div className="flex items-center gap-1.5 text-[11px] shrink-0">
+                <span className="text-gray-400 whitespace-nowrap">{selectedGridEmployeeIds.size}명 선택</span>
+                <button
+                  onClick={() => setShowOnlySelectedInGrid(v => !v)}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors border ${
+                    showOnlySelectedInGrid
+                      ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                      : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                  }`}
+                  title="체크한 인원만 그리드에 표시"
+                >
+                  선택 인원만 보기 {showOnlySelectedInGrid ? 'ON' : 'OFF'}
+                </button>
+                <button
+                  onClick={() => { setSelectedGridEmployeeIds(new Set()); setShowOnlySelectedInGrid(false) }}
+                  className="px-2 py-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  선택 해제
+                </button>
+              </div>
+            )}
+
             {/* 시간 기준 토글 — 그리드 전용 */}
             <div className="flex flex-col gap-1 shrink-0">
               <div className="flex items-center gap-1.5 text-[11px]">
@@ -1557,6 +1594,8 @@ export default function AdminDashboard() {
                 onSortChange={(key, dir) => { setGridSortKey(key); setGridSortDir(dir); setGridPage(0) }}
                 leaderIdSet={leaderIdSet}
                 attrMap={finalAttrMap}
+                selectedIds={selectedGridEmployeeIds}
+                onToggleSelect={toggleGridEmployeeSelection}
               />
             </div>
           </div>

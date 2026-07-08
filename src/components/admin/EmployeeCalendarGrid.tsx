@@ -12,7 +12,7 @@ type Status = 'N' | 'OT' | 'L' | 'A' | 'H' | 'APPROVED' | 'WEEKEND' | 'ABSENT'
 type SortDir = 'none' | 'asc' | 'desc'
 
 // ── Column widths ──────────────────────────────────────────────────────────
-const W_NAME    = 80
+const W_NAME    = 100  // +20 vs base 80 to fit the selection checkbox
 const W_ORG     = 108   // merged 본부 + 팀/부서 into a single stacked cell
 const W_TOTAL   = 72
 const W_OT      = 48    // 분리됨
@@ -174,6 +174,10 @@ type Props = {
   leaderIdSet?: ReadonlySet<string>
   /** 직원별 속성 오버라이드 맵 (발령일/해임일 포함) — page.tsx의 finalAttrMap 전달 */
   attrMap?: ReadonlyMap<string, EmployeeAttributeOverrides>
+  /** 이름 옆 체크박스로 선택된 직원 ID 집합 (다중 선택) — page.tsx에서 상태 관리 */
+  selectedIds?: ReadonlySet<string>
+  /** 체크박스 클릭 시 호출 — 해당 직원의 선택 여부를 토글 */
+  onToggleSelect?: (employeeId: string) => void
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -196,6 +200,8 @@ export function EmployeeCalendarGrid({
   onSortChange,
   leaderIdSet,
   attrMap,
+  selectedIds,
+  onToggleSelect,
 }: Props) {
   const companyHolSet   = useMemo(() => new Set(companyHolidays.map(h => h.date)), [companyHolidays])
   const companyHolLabel = useMemo(() => new Map(companyHolidays.map(h => [h.date, h.label])), [companyHolidays])
@@ -750,29 +756,40 @@ const empStats = useMemo(() => {
                     <td className={`${spanTd} pl-2 pr-2 py-3 ${isTopRisk ? 'border-l-4 border-l-red-400' : ''}`}
                       style={{ left: L1, width: W_NAME, minWidth: W_NAME }}
                       rowSpan={4}>
-                      <button onClick={() => onNameClick(emp.id)} className="text-left block w-full">
-                        <div className="flex items-center gap-1 min-w-0" style={{ maxWidth: W_NAME - 20 }}>
-                          <span className="text-[11px] font-semibold text-gray-800 hover:text-blue-600 transition-colors leading-tight truncate">
-                            {emp.name}
-                          </span>
-                          {isLeader && (
-                            <span className="shrink-0 text-[8px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded px-1 py-px leading-tight">
-                              직책
+                      <div className="flex items-start gap-1">
+                        {onToggleSelect && (
+                          <input
+                            type="checkbox"
+                            checked={selectedIds?.has(emp.id) ?? false}
+                            onChange={() => onToggleSelect(emp.id)}
+                            className="mt-0.5 shrink-0 w-3 h-3 accent-blue-600 cursor-pointer"
+                            title={`${emp.name} 선택`}
+                          />
+                        )}
+                        <button onClick={() => onNameClick(emp.id)} className="text-left block w-full min-w-0">
+                          <div className="flex items-center gap-1 min-w-0" style={{ maxWidth: W_NAME - 40 }}>
+                            <span className="text-[11px] font-semibold text-gray-800 hover:text-blue-600 transition-colors leading-tight truncate">
+                              {emp.name}
+                            </span>
+                            {isLeader && (
+                              <span className="shrink-0 text-[8px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded px-1 py-px leading-tight">
+                                직책
+                              </span>
+                            )}
+                          </div>
+                          {emp.jobTitle && (
+                            <p className="text-[9px] text-gray-400 mt-0.5 leading-tight truncate"
+                              style={{ maxWidth: W_NAME - 40 }}>
+                              {emp.jobTitle}
+                            </p>
+                          )}
+                          {isTopRisk && (
+                            <span className="inline-flex items-center gap-px text-[8px] font-bold text-red-500 mt-1 leading-none">
+                              🚨 집중 관리
                             </span>
                           )}
-                        </div>
-                        {emp.jobTitle && (
-                          <p className="text-[9px] text-gray-400 mt-0.5 leading-tight truncate"
-                            style={{ maxWidth: W_NAME - 20 }}>
-                            {emp.jobTitle}
-                          </p>
-                        )}
-                        {isTopRisk && (
-                          <span className="inline-flex items-center gap-px text-[8px] font-bold text-red-500 mt-1 leading-none">
-                            🚨 집중 관리
-                          </span>
-                        )}
-                      </button>
+                        </button>
+                      </div>
                     </td>
 
                     {/* 소속 (본부 + 팀/부서 stacked) — rowSpan 4 */}
