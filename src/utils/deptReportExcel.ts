@@ -33,16 +33,18 @@ interface EmpRow {
   division: string
 }
 
-// ── 플래그 분류 (혼합 제외) ──────────────────────────────────────────────────
+// ── 플래그 분류 (혼합 플래그는 두 카테고리 모두에 개별 집계) ──────────────────────
 
 // 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE는 재계산 전 캐시된 레코드에서만
 // 남아있을 수 있음(하위호환), 근무시간미달로 통합.
-function classifyFlag(flag: SieveFlag): AnomalyCategory | null {
-  if (flag === 'LATE')                                    return '지각'
-  if (flag === 'ATTENDANCE_ANOMALY' || flag === 'EARLY_DEPARTURE') return '근무시간미달'
-  if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT')  return '미태깅'
-  // LATE_AND_* → 혼합, 제외
-  return null
+// LATE_AND_ANOMALY/LATE_AND_EARLY_DEPARTURE는 지각+근무시간미달이 한 날에 겹친 혼합 케이스라
+// 어느 한쪽으로만 분류하거나 제외하면 실제 발생 건수를 놓치게 됨 → 두 카테고리 모두에 +1.
+function classifyFlags(flag: SieveFlag): AnomalyCategory[] {
+  if (flag === 'LATE')                                    return ['지각']
+  if (flag === 'ATTENDANCE_ANOMALY' || flag === 'EARLY_DEPARTURE') return ['근무시간미달']
+  if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT')  return ['미태깅']
+  if (flag === 'LATE_AND_ANOMALY' || flag === 'LATE_AND_EARLY_DEPARTURE') return ['지각', '근무시간미달']
+  return []
 }
 
 const ANOM_LABEL: Record<string, string> = {
@@ -51,6 +53,8 @@ const ANOM_LABEL: Record<string, string> = {
   EARLY_DEPARTURE:          '근무시간미달',
   NO_CLOCK_IN:              '미태깅',
   NO_CLOCK_OUT:             '미태깅',
+  LATE_AND_ANOMALY:         '지각+근무시간미달',
+  LATE_AND_EARLY_DEPARTURE: '지각+근무시간미달',
 }
 
 // ── 셀 / 스타일 헬퍼 ─────────────────────────────────────────────────────────
@@ -113,21 +117,21 @@ function buildAnomSheet(
   period:   string,
 ) {
   // 사번별 이상치 집계
-  const anomRecords = records.filter(r => classifyFlag(r.flag) !== null)
+  const anomRecords = records.filter(r => classifyFlags(r.flag).length > 0)
 
   const empSbn: Record<string, EmpRow> = {}
   const counts:  Record<string, Record<AnomalyCategory, number>> = {}
   const details: Record<string, ProcessedRecord[]> = {}
 
   anomRecords.forEach(r => {
-    const cat = classifyFlag(r.flag)!
+    const cats = classifyFlags(r.flag)
     const emp = empMap.get(r.employeeId)
     if (!emp) return
     const key = r.employeeId
     if (!empSbn[key])  empSbn[key]  = { sbn: emp.rawId ?? r.employeeId, name: emp.name, division: emp.division }
     if (!counts[key])  counts[key]  = { 지각: 0, 근무시간미달: 0, 미태깅: 0 }
     if (!details[key]) details[key] = []
-    counts[key][cat]++
+    cats.forEach(cat => { counts[key][cat]++ })
     details[key].push(r)
   })
 
@@ -542,9 +546,10 @@ export function buildDeptReportBuffer(
 
   XLSX.utils.book_append_sheet(wb, buildAnomSheet(records, empMap, period),   '이상치_요약')
   XLSX.utils.book_append_sheet(wb, buildOvertimeSheet(records, empMap, period), '법정근로초과')
-  XLSX.utils.book_append_sheet(wb, buildTypeSheet(records, empMap, ['LATE'],                           '지각 현황',         period), '지각')
+  // LATE_AND_ANOMALY/LATE_AND_EARLY_DEPARTURE(지각+근무미달 혼합)는 두 시트 모두에 포함
+  XLSX.utils.book_append_sheet(wb, buildTypeSheet(records, empMap, ['LATE', 'LATE_AND_ANOMALY', 'LATE_AND_EARLY_DEPARTURE'], '지각 현황', period), '지각')
   // 조기퇴근은 근무시간미달로 통합 — EARLY_DEPARTURE는 재계산 전 캐시된 레코드 하위호환용으로 같이 포함
-  XLSX.utils.book_append_sheet(wb, buildTypeSheet(records, empMap, ['ATTENDANCE_ANOMALY', 'EARLY_DEPARTURE'], '근무시간 미달 현황', period), '근무시간미달')
+  XLSX.utils.book_append_sheet(wb, buildTypeSheet(records, empMap, ['ATTENDANCE_ANOMALY', 'EARLY_DEPARTURE', 'LATE_AND_ANOMALY', 'LATE_AND_EARLY_DEPARTURE'], '근무시간 미달 현황', period), '근무시간미달')
   XLSX.utils.book_append_sheet(wb, buildTypeSheet(records, empMap, ['NO_CLOCK_IN', 'NO_CLOCK_OUT'],   '미태깅 현황',       period), '미태깅')
   XLSX.utils.book_append_sheet(wb, buildHolidaySheet(records, empMap, period), '휴일근로')
 
