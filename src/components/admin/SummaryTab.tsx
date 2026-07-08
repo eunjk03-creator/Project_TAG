@@ -205,7 +205,8 @@ export function SummaryTab({ records, employees, dateFrom, dateTo, leaderIdSet }
             a.baseH += netRecH + credit
           } else {
             const approvedOt = r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
-            a.baseH += Math.min(netRecH, 8) + approvedOt + credit
+            // 연장근로 발생일은 급여용 연장(backtrack 흡수됨)만 사용, credit 별도가산 없음
+            a.baseH += approvedOt > 0 ? (8 + approvedOt) : (Math.min(netRecH, 8) + credit)
           }
         }
       }

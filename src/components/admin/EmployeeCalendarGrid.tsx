@@ -333,10 +333,14 @@ const empStats = useMemo(() => {
         } else {
           const approvedOt = r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
           const stdH       = Math.min(netRecH, 8)
+          // 연장근로 발생일: 급여용 연장(approvedOt)이 이미 backtrack(반차보정)을 흡수했으므로
+          // credit을 별도로 더하면 이중계상됨 → 8h 고정 + approvedOt만 사용
+          const dayTotal    = approvedOt > 0 ? (8 + approvedOt) : (stdH + credit)
+          const dayNoCredit = approvedOt > 0 ? (8 + approvedOt) : stdH
           roundedOt    += approvedOt
           roundedNight += r.erpOtApplied ? floorTo30(r.nightHours ?? 0) : 0
-          roundedTotal  += stdH + approvedOt + credit
-          nocreditTotal += stdH + approvedOt
+          roundedTotal  += dayTotal
+          nocreditTotal += dayNoCredit
         }
       } else if (r.finalStatus === '휴일근무') {
         const holH    = r.holidayHours ?? 0
@@ -436,7 +440,8 @@ const empStats = useMemo(() => {
               addH = netRecH + credit
             } else {
               const approvedOt = r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
-              addH = Math.min(netRecH, 8) + approvedOt + credit
+              // empStats.roundedTotal과 동일 기준: 연장근로 발생일은 credit 별도가산 없이 8h+approvedOt
+              addH = approvedOt > 0 ? (8 + approvedOt) : (Math.min(netRecH, 8) + credit)
             }
           }
         }
