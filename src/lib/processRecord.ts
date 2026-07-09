@@ -630,11 +630,13 @@ export function processRecord(
   // (4h/7h)을 그대로 더함. ERP 미상신(Slack전용) 반차는 effectiveInMins와 동일한 게이트로
   // backtrack 없이 계산됨 (computeVirtualInMins의 isErpLeaveApproved 인자).
   const virtualInMins = computeVirtualInMins(effectiveInMins, effectiveLeaveType, !slackLeaveInjected)
+  // 일반(휴가없음)/오전반차/오전반반차 기준선 = effectiveStdH(단축근로·임신기 단축 반영) + 점심 60분.
+  // 표준 8h 근무자는 8+1=9h로 기존과 동일 — 단축근로자만 그 값만큼 기준선이 낮아짐.
   const insufficientBaselineMins =
     effectiveLeaveType === '오후반차'   ? 4 * 60 :
     effectiveLeaveType === '반차'       ? 4 * 60 :
     effectiveLeaveType === '오후반반차' ? 7 * 60 :
-    9 * 60   // 일반(휴가없음) / 오전반차 / 오전반반차
+    effectiveStdH * 60 + 60
   const isInsufficientHours = !bypassAllAnomalies && !isEasyLogis &&
     outMins < (virtualInMins + insufficientBaselineMins)
 
