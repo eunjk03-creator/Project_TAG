@@ -495,9 +495,6 @@ function buildOtMap(
 
 // ── Employee extraction ───────────────────────────────────────────────────
 
-// 🔍 임시 진단 — 박지예(E23052201)/김민경(E25060902) 동명이인 미표시 이슈 추적
-const _DIAG_IDS = new Set(['E23052201', 'E25060902'])
-
 function extractEmployees(capsData: CapsRow[]): Employee[] {
   const seen = new Map<string, Employee>()
 
@@ -508,19 +505,11 @@ function extractEmployees(capsData: CapsRow[]): Employee[] {
     // 컬럼명에 숨은 공백·인코딩 차이 대응: '이름' 키를 공백 제거 후 fuzzy 매칭
     const nameKey = Object.keys(r).find(k => k.replace(/\s+/g, '') === '이름') ?? '이름'
     const name    = normalizeName(r[nameKey] ?? r['성명'] ?? '')
-    if (typeof window !== 'undefined' && _DIAG_IDS.has(rawId)) {
-      console.log(`[DIAG extractEmployees] rawId="${rawId}" name="${name}" 부서="${r['부서']}" raw사원번호="${r['사원번호']}"`)
-    }
     if (!rawId || !name) continue
 
     // Rule: invalid IDs and excluded departments are silently dropped at parse time
     const dept = String(r['부서'] ?? '').trim()
-    if (!isValidEmpId(rawId) || EXCLUDED_DEPTS.has(dept)) {
-      if (typeof window !== 'undefined' && _DIAG_IDS.has(rawId)) {
-        console.log(`[DIAG extractEmployees] DROPPED rawId="${rawId}" validId=${isValidEmpId(rawId)} dept="${dept}" excluded=${EXCLUDED_DEPTS.has(dept)}`)
-      }
-      continue
-    }
+    if (!isValidEmpId(rawId) || EXCLUDED_DEPTS.has(dept)) continue
 
     // Composite primary key: employeeId + name → unique per person.
     const compositeKey = `${rawId}_${name}`
