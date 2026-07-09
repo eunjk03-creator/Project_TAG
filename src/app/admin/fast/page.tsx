@@ -15,9 +15,19 @@ import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
 import { DateRangePicker } from '@/components/admin/DateRangePicker'
 import { MetricDeepDive } from '@/components/admin/MetricDeepDive'
 import type { Section } from '@/components/admin/MetricDeepDive'
-import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
+import type { Employee, ProcessedRecord, EmployeeAttributeOverrides, ErpLeaveType } from '@/types/tag'
 import { HR_THRESHOLDS } from '@/types/tag'
 import { sortByDivisionOrder } from '@/data/orgChart'
+import { erpLeaveTypeToAmount } from '@/utils/attendanceCalc'
+
+// erpLeaveType override → { leaveType, erpLeaveAmount } (admin/page.tsx allProcessed와 동일 기준)
+function leaveTypeOverrideFields(erpLeaveType: string): { leaveType: ErpLeaveType | null; erpLeaveAmount: number } {
+  const amount = erpLeaveTypeToAmount(erpLeaveType)
+  const primaryType: ErpLeaveType | null = erpLeaveType === '없음' ? null
+    : amount >= 1.0 ? '연차'
+    : (erpLeaveType.split(',')[0].trim() as ErpLeaveType)
+  return { leaveType: primaryType, erpLeaveAmount: amount }
+}
 
 const GRID_PAGE_SIZE = 40
 
@@ -144,7 +154,13 @@ export default function FastDashboard() {
     return baseRecords.map(r => {
       const ov = recordOverrides[`${r.employeeId}_${r.date}`]
       if (!ov) return r
-      return { ...r, clockIn: ov.clockIn, clockOut: ov.clockOut, erpOtApplied: ov.erpOtApplied !== null ? ov.erpOtApplied : r.erpOtApplied }
+      return {
+        ...r,
+        clockIn:      ov.clockIn,
+        clockOut:     ov.clockOut,
+        erpOtApplied: ov.erpOtApplied !== null ? ov.erpOtApplied : r.erpOtApplied,
+        ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+      }
     })
   }, [recordOverrides, baseRecords])
 
@@ -160,7 +176,13 @@ export default function FastDashboard() {
     return dateFiltered.map(r => {
       const ov = recordOverrides[`${r.employeeId}_${r.date}`]
       if (!ov) return r
-      return processRecord({ ...r, clockIn: ov.clockIn ?? r.clockIn, clockOut: ov.clockOut ?? r.clockOut, erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied }, policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId))
+      return processRecord({
+        ...r,
+        clockIn:      ov.clockIn      ?? r.clockIn,
+        clockOut:     ov.clockOut     ?? r.clockOut,
+        erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
+        ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+      }, policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId))
     })
   }, [serverProcessed, clientProcessed, dateRange.from, dateRange.to, recordOverrides, policy, otExemptIds, slackNoteMap, finalAttrMap])
 

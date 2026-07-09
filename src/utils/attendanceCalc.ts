@@ -230,6 +230,19 @@ export function computePayrollMetrics(p: {
  *   clockIn  ≥ 12:00  →  오전반차  (arrived late → took morning off)
  *   otherwise         →  오전반차  (safe default)
  */
+/** erpLeaveType 문자열(단일 또는 comma-separated) → erpLeaveAmount 숫자 변환.
+ *  관리자 override(erpLeaveType)를 적용하는 모든 화면(admin/page.tsx, admin/fast/page.tsx)이
+ *  같은 금액 산정 기준을 쓰도록 여기 한 곳에서만 정의한다. */
+export function erpLeaveTypeToAmount(leaveType: string): number {
+  if (leaveType === '없음') return 0
+  if (leaveType.includes(',')) {
+    return leaveType.split(',').reduce((sum, t) => sum + erpLeaveTypeToAmount(t.trim()), 0)
+  }
+  if (leaveType === '오전반반차' || leaveType === '오후반반차') return 0.25
+  if (leaveType === '연차') return 1.0
+  return 0.5  // 오전반차, 오후반차, 생일반차, 기타 반차류
+}
+
 export function normalizeLeaveType(
   text: string | null | undefined,
   clockIn?: string | null,

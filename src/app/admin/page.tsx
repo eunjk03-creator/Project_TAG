@@ -22,7 +22,7 @@ import { SummaryTab }            from '@/components/admin/SummaryTab'
 import { AllowanceTab }          from '@/components/admin/AllowanceTab'
 import {
   computeWorkA, computeStatusN,
-  computeDisplayBreakMins, parseTimeToMins,
+  computeDisplayBreakMins, parseTimeToMins, erpLeaveTypeToAmount,
 } from '@/utils/attendanceCalc'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
@@ -32,15 +32,14 @@ import { HR_THRESHOLDS, EXEC_THRESHOLDS } from '@/types/tag'
 import type { RiskView, ProcessedRecord as PR } from '@/types/tag'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
-// erpLeaveType 문자열(단일 또는 comma-separated) → erpLeaveAmount 숫자 변환
-function erpLeaveTypeToAmount(leaveType: string): number {
-  if (leaveType === '없음') return 0
-  if (leaveType.includes(',')) {
-    return leaveType.split(',').reduce((sum, t) => sum + erpLeaveTypeToAmount(t.trim()), 0)
-  }
-  if (leaveType === '오전반반차' || leaveType === '오후반반차') return 0.25
-  if (leaveType === '연차') return 1.0
-  return 0.5  // 오전반차, 오후반차, 생일반차, 기타 반차류
+// erpLeaveType override → { leaveType, erpLeaveAmount }. amount>=1.0(오전+오후 반차 합산 등)이면
+// buildLeaveMap 정규화와 일관되게 '연차'로 통일.
+function leaveTypeOverrideFields(erpLeaveType: string): { leaveType: ErpLeaveType | null; erpLeaveAmount: number } {
+  const amount = erpLeaveTypeToAmount(erpLeaveType)
+  const primaryType: ErpLeaveType | null = erpLeaveType === '없음' ? null
+    : amount >= 1.0 ? '연차'
+    : (erpLeaveType.split(',')[0].trim() as ErpLeaveType)
+  return { leaveType: primaryType, erpLeaveAmount: amount }
 }
 
 // 3종 체계(지각/근무시간미달/미태깅) — 조기퇴근은 근무시간미달로 통합.
@@ -249,6 +248,7 @@ export default function AdminDashboard() {
         clockIn:      ov.clockIn,
         clockOut:     ov.clockOut,
         erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
+        ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
       }
     })
 
@@ -387,15 +387,7 @@ export default function AdminDashboard() {
             erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
             // erpLeaveType이 명시적으로 설정된 경우에만 연차 정보를 덮어씀
             // null = 미수정(원본 유지), '없음' = 명시적 삭제, 그 외 = 해당 연차 유형으로 교체
-            ...(ov.erpLeaveType !== null ? (() => {
-              const amount = erpLeaveTypeToAmount(ov.erpLeaveType)
-              // ERP 원본과 동일한 정규화: 합산 1.0 이상이면 '연차'로 통일
-              // (buildLeaveMap 로직과 일관성 유지)
-              const primaryType: ErpLeaveType | null = ov.erpLeaveType === '없음' ? null
-                : amount >= 1.0 ? '연차'
-                : (ov.erpLeaveType.split(',')[0].trim() as ErpLeaveType)
-              return { leaveType: primaryType, erpLeaveAmount: amount }
-            })() : {}),
+            ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
           } : {}),
         },
         policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId),
