@@ -143,4 +143,5 @@ if (직책자) {
 | B10 | ✅ 수정됨(2026-07-08, 커밋 7c07eeb) | deptReportExcel 지각+근무시간미달 혼합 플래그 누락 — 수정 내용은 §4b로 이미 반영 |
 | B11 | ✅ 수정됨(2026-07-09, 커밋 7eda511) | 휴일근무 부분태깅(clockIn/clockOut 중 하나만 있음) 시 '휴일근무' 뱃지는 뜨는데 holidayHours=0으로 집계 → 휴일/총근로 과소산정. 하나만 있으면 '출퇴근누락'(신규 사용, flag도 NO_CLOCK_IN/OUT)으로 분류하도록 수정. Slack 확인된 휴일근무는 뱃지만 유지하고 `holidayHours` 임의 대체(`|| effectiveStdH`) 로직 제거 — 시간은 크로스체크로만 씀 |
 | B12 | ✅ 수정됨(2026-07-09, 커밋 607b241) | `admin/fast/page.tsx`의 override 재처리(overriddenRawRecords/allProcessed)가 erpLeaveType을 누락해서, 일별 상세탭에서 연차/휴가 수정해도 effectiveClockIn/OT 등 파생값이 재계산 안 됨. `admin/page.tsx`는 원래 처리하고 있었으나 인라인 중복 정의라 두 페이지가 어긋나 있었음 — `erpLeaveTypeToAmount`를 `attendanceCalc.ts`로 이동해 단일 정의로 공유 |
+| B13 | ✅ 수정됨(2026-07-09, 커밋 d2b5b21) | `processRecord.ts`의 근무시간 미달(`isInsufficientHours`) 판정이 `insufficientBaselineMins`를 일반근무일 기준 `9*60`(표준 8h+점심 1h)으로 하드코딩 — 단축근로(`isShortenedHours`)/임신기 단축(`isPregnantReduced`) 예외규칙으로 `effectiveStdH`를 낮춰도 미달 기준선은 그대로 8h 기준이라 정상 단축근무자가 미달로 잘못 잡힘. `effectiveStdH*60+60`으로 수정 — 표준 8h 근무자는 영향 없음(8*60+60=9h로 동일) |
 | — | 🟠 확인필요 | ERP 연장 **미신청**이면 실제 심야근무(야간수당 포함)를 해도 총근로/연장/야간에서 전부 0 처리됨 — 법정 야간수당은 신청 여부 무관하게 발생하는 게 원칙이라 정책 재확인 필요 |
