@@ -47,7 +47,7 @@ function classifyFlags(flag: SieveFlag): AnomalyCategory[] {
   return []
 }
 
-const ANOM_LABEL: Record<string, string> = {
+export const ANOM_LABEL: Record<string, string> = {
   LATE:                     '지각',
   ATTENDANCE_ANOMALY:       '근무시간미달',
   EARLY_DEPARTURE:          '근무시간미달',
@@ -59,10 +59,10 @@ const ANOM_LABEL: Record<string, string> = {
 
 // ── 셀 / 스타일 헬퍼 ─────────────────────────────────────────────────────────
 
-const BDR = { style: 'thin', color: { rgb: 'D0D0D0' } } as const
-function bd() { return { top: BDR, bottom: BDR, left: BDR, right: BDR } }
+export const BDR = { style: 'thin', color: { rgb: 'D0D0D0' } } as const
+export function bd() { return { top: BDR, bottom: BDR, left: BDR, right: BDR } }
 
-function S(fill: string, bold: boolean, color = '333333', align = 'center', sz = 10) {
+export function S(fill: string, bold: boolean, color = '333333', align = 'center', sz = 10) {
   return {
     font:      { bold, color: { rgb: color }, sz },
     fill:      { fgColor: { rgb: fill } },
@@ -70,8 +70,8 @@ function S(fill: string, bold: boolean, color = '333333', align = 'center', sz =
     border:    bd(),
   }
 }
-function hdr(fill = 'C00000') { return S(fill, true, 'FFFFFF', 'center', 10) }
-function titleS(fill = 'C00000') {
+export function hdr(fill = 'C00000') { return S(fill, true, 'FFFFFF', 'center', 10) }
+export function titleS(fill = 'C00000') {
   return {
     font:      { bold: true, color: { rgb: 'FFFFFF' }, sz: 12 },
     fill:      { fgColor: { rgb: fill } },
@@ -79,7 +79,7 @@ function titleS(fill = 'C00000') {
   }
 }
 
-function cellKey(c: number, r: number): string {
+export function cellKey(c: number, r: number): string {
   let col = ''
   let cc  = c
   while (cc >= 0) { col = String.fromCharCode(65 + (cc % 26)) + col; cc = Math.floor(cc / 26) - 1 }
@@ -87,13 +87,13 @@ function cellKey(c: number, r: number): string {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function sc(ws: Record<string, any>, c: number, r: number, v: string | number, s: object) {
+export function sc(ws: Record<string, any>, c: number, r: number, v: string | number, s: object) {
   ws[cellKey(c, r)] = { v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s }
 }
 
 // ── 기간 라벨 ────────────────────────────────────────────────────────────────
 
-function periodLabel(records: ProcessedRecord[]): string {
+export function periodLabel(records: ProcessedRecord[]): string {
   const dates = records.map(r => r.date).sort()
   if (!dates.length) return ''
   const fmt = (d: string) => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`

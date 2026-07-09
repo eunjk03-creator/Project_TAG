@@ -6,7 +6,7 @@ import { prisma }           from '@/lib/prisma'
 import { processRecord }    from '@/lib/processRecord'
 import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
 import { DEFAULT_POLICY }   from '@/types/tag'
-import type { PolicySettings, RawRecord, Employee, ProcessedRecord } from '@/types/tag'
+import type { PolicySettings, RawRecord, Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
 
 interface AttendanceMeta {
   employees:   Employee[]
@@ -18,12 +18,12 @@ export async function getProcessedRecords(opts?: {
   from?:   string
   to?:     string
   policy?: Partial<PolicySettings>
-}): Promise<{ employees: Employee[]; records: ProcessedRecord[] }> {
+}): Promise<{ employees: Employee[]; records: ProcessedRecord[]; finalAttrMap: Map<string, EmployeeAttributeOverrides> }> {
   const policy: PolicySettings = { ...DEFAULT_POLICY, ...(opts?.policy ?? {}) }
 
   // 1. 직원 목록 + 청크 수
   const metaRow = await prisma.sharedDataStore.findUnique({ where: { key: 'attendance_data' } })
-  if (!metaRow?.data) return { employees: [], records: [] }
+  if (!metaRow?.data) return { employees: [], records: [], finalAttrMap: new Map() }
 
   const meta       = metaRow.data as unknown as AttendanceMeta
   const employees  = meta.employees ?? []
@@ -49,11 +49,11 @@ export async function getProcessedRecords(opts?: {
     (!opts?.from || r.date >= opts.from) &&
     (!opts?.to   || r.date <= opts.to),
   )
-  if (raw.length === 0) return { employees, records: [] }
-
   // 3. 예외규칙 + 직책자 맵
   const dbRules = await prisma.exceptionRule.findMany()
   const { finalAttrMap, otExemptIds } = buildFinalAttrMap(employees, dbRules)
+
+  if (raw.length === 0) return { employees, records: [], finalAttrMap }
 
   // 4. 관리자 수동 수정 반영
   const overrides   = await prisma.attendanceOverride.findMany()
@@ -84,5 +84,5 @@ export async function getProcessedRecords(opts?: {
     processRecord(r, policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId)),
   )
 
-  return { employees, records }
+  return { employees, records, finalAttrMap }
 }

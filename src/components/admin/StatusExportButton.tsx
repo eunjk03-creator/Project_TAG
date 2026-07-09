@@ -8,7 +8,7 @@ interface Props {
   divisions: string[]
 }
 
-type LoadingType = null | 'pptx' | 'excel'
+type LoadingType = null | 'pptx' | 'excel' | 'productivity'
 
 export default function StatusExportButton({ dateRange, divisions }: Props) {
   const [open,        setOpen]        = useState(false)
@@ -33,12 +33,13 @@ export default function StatusExportButton({ dateRange, divisions }: Props) {
     return () => document.removeEventListener('mousedown', onDown)
   }, [])
 
-  async function download(type: 'pptx' | 'excel') {
+  async function download(type: 'pptx' | 'excel' | 'productivity') {
     setLoading(type)
     try {
-      const endpoint = type === 'pptx'
-        ? '/api/export/status-slides'
-        : '/api/export/dept-report'
+      const endpoint =
+        type === 'pptx'        ? '/api/export/status-slides' :
+        type === 'productivity' ? '/api/export/productivity-report' :
+        '/api/export/dept-report'
 
       const res = await fetch(endpoint, {
         method:  'POST',
@@ -178,6 +179,29 @@ export default function StatusExportButton({ dateRange, divisions }: Props) {
               )}
             </button>
           </div>
+
+          <button
+            onClick={() => download('productivity')}
+            disabled={loading !== null}
+            className="flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-sky-600 text-white text-xs font-medium hover:bg-sky-700 disabled:opacity-50 transition-colors"
+          >
+            {loading === 'productivity' ? (
+              <>
+                <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                </svg>
+                생성 중...
+              </>
+            ) : (
+              <>
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14"/>
+                </svg>
+                근로시간 활용현황 Excel
+              </>
+            )}
+          </button>
 
           <p className="text-[10px] text-gray-400 text-center leading-tight">
             슬라이드는 구글 슬라이드에서 바로 열 수 있어요
