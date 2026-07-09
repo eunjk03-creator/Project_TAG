@@ -160,8 +160,13 @@ export function processRecord(
 
   function computeFinalStatus(r: ProcessedRecord): FinalStatus {
     if (r.dayType !== 'WEEKDAY') {
-      if (r.dayType === 'HOLIDAY') return r.clockIn ? '휴일근무' : '공휴일'
-      return r.clockIn ? '휴일근무' : '주말'
+      // 출근/퇴근 둘 다 있어야 '휴일근무' 확정. 하나만 있으면 실근무시간을 알 수 없으므로
+      // '휴일근무'로 확정(=0분 집계)하지 않고 '출퇴근누락' 이상치로 내려 관리자 확인을 받는다.
+      const hasBoth    = !!r.clockIn && !!r.clockOut
+      const hasPartial = !!r.clockIn !== !!r.clockOut
+      if (hasBoth)    return '휴일근무'
+      if (hasPartial) return '출퇴근누락'
+      return r.dayType === 'HOLIDAY' ? '공휴일' : '주말'
     }
     // Full-day absence: 연차 or combo leave (erpLeaveAmount >= 1.0)
     if (!r.clockIn && (r.leaveType === '연차' || (r.erpLeaveAmount ?? 0) >= 1.0)) return '연차'
@@ -326,10 +331,11 @@ export function processRecord(
           verificationNote: [...(r.verificationNote ?? []), `슬랙 휴일근무 공유 확인${dupSuffix}`],
         }
       }
+      // 시간은 임의로 채우지 않음 — 뱃지만 띄워서 관리자가 실제 근무시간을 CAPS/직접 확인 후
+      // 크로스체크하도록 함 (clockIn/clockOut이 없으면 holidayHours는 0 그대로 유지됨)
       return {
         ...r,
         flag:        null,
-        holidayHours: r.holidayHours || effectiveStdH,
         finalStatus: '휴일근무',
         verificationNote: [...(r.verificationNote ?? []), '슬랙 휴일근무 공유 확인'],
       }
@@ -488,6 +494,12 @@ export function processRecord(
         lunchDeducted,
         breakMinutes:     breakMins,
       })
+    }
+    // clockIn/clockOut 중 하나만 있으면 실근무시간을 알 수 없음 — flag를 미태깅 계열로 세팅해서
+    // (AttendanceResultTable/deptReportExcel/CSV 등 flag 기반 뷰에서도) '출퇴근누락' 이상치로
+    // 일관되게 잡히도록 함. holidayHours는 0 그대로 유지(임의 계산 안 함).
+    if (clockIn || clockOut) {
+      return applySlack({ ...base, flag: clockIn ? 'NO_CLOCK_OUT' : 'NO_CLOCK_IN' })
     }
     return applySlack(base)
   }

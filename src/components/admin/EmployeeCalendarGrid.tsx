@@ -1133,6 +1133,7 @@ const empStats = useMemo(() => {
                       if (fs === '연차')      tags.push({ cls: TAG.dayLeave,  text: '연차'       })
                       if (fs === '외근')      tags.push({ cls: TAG.bizTrip,   text: '외근'       })
                       if (fs === '휴일근무')  tags.push({ cls: TAG.holiday,   text: '휴일근로'   })
+                      if (fs === '출퇴근누락') tags.push({ cls: TAG.anomaly,  text: '출퇴근누락' })
                       // 3종 체계 — EARLY_DEPARTURE/LATE_AND_EARLY_DEPARTURE는 재계산 전 캐시된 레코드 하위호환
                       if (flag === 'ATTENDANCE_ANOMALY' || flag === 'LATE_AND_ANOMALY' ||
                           flag === 'EARLY_DEPARTURE' || flag === 'LATE_AND_EARLY_DEPARTURE')
