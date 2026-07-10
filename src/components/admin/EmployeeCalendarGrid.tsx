@@ -1129,8 +1129,12 @@ const empStats = useMemo(() => {
                       const fs     = rec?.finalStatus
                       const flag   = rec?.flag
 
-                      const tags: { cls: string; text: string }[] = []
-                      if (fs === '연차')      tags.push({ cls: TAG.dayLeave,  text: '연차'       })
+                      // 연차가 ERP 미신청·Slack 공유만으로 확정된 경우 — 반차/반반차 콤보 뱃지와
+                      // 동일하게 점선 처리해서 "ERP 승인건과 다르다"는 걸 구분되게 함.
+                      const isSlackLeaveInj = (rec?.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+
+                      const tags: { cls: string; text: string; dashed?: boolean }[] = []
+                      if (fs === '연차')      tags.push({ cls: TAG.dayLeave,  text: '연차', dashed: isSlackLeaveInj })
                       if (fs === '외근')      tags.push({ cls: TAG.bizTrip,   text: '외근'       })
                       if (fs === '휴일근무')  tags.push({ cls: TAG.holiday,   text: '휴일근로'   })
                       if (fs === '출퇴근누락') tags.push({ cls: TAG.anomaly,  text: '출퇴근누락' })
@@ -1149,7 +1153,7 @@ const empStats = useMemo(() => {
                             <button onClick={() => onCellClick(emp.id, date)}
                               className="w-full flex flex-col items-center gap-0.5 py-0.5">
                               {tags.length > 0
-                                ? tags.map(t => <InfoTag key={t.text} cls={t.cls} text={t.text} />)
+                                ? tags.map(t => <InfoTag key={t.text} cls={t.cls} text={t.text} dashed={t.dashed} />)
                                 : <span className="text-gray-300 text-[10px] select-none">—</span>}
                             </button>
                           ) : isWknd ? (
