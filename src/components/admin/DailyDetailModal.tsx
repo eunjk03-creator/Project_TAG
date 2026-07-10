@@ -187,6 +187,11 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
   const [capsIn,        setCapsIn]        = useState(record.clockIn?.replace(/^\+/, '')  ?? '')
   const [capsOut,       setCapsOut]       = useState(record.clockOut?.replace(/^\+/, '') ?? '')
 
+  // record.leaveType는 ERP 원본과 Slack 주입(ERP 미신청) 값이 한 필드에 섞여 있음 —
+  // "ERP 연차·휴가" 패널이 실제 ERP 신청 여부를 구분해서 보여주려면 이 플래그가 필요.
+  const isSlackLeaveInjected = (record.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+  const isErpConfirmedLeave  = initialErpLeaveType != null || !isSlackLeaveInjected
+
   // ── ERP granular edit ─────────────────────────────────────────────────
   const [isEditingErp, setIsEditingErp] = useState(false)
   const [erpOtEdit,    setErpOtEdit]    = useState<string>(
@@ -510,7 +515,7 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
               <SourceBlock
                 icon="📋"
                 label="ERP 연차·휴가"
-                statusDot="ok"
+                statusDot={isErpConfirmedLeave ? 'ok' : 'warn'}
                 editButton={
                   <button
                     onClick={() => {
@@ -591,12 +596,24 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
                         erpLeaveEntries.length > 0 ? (
                           <span className="flex items-center gap-1.5 flex-wrap">
                             {erpLeaveEntries.map((entry, i) => (
-                              <span key={i} className="text-blue-700 font-semibold">{entry}</span>
+                              <span
+                                key={i}
+                                className={isErpConfirmedLeave
+                                  ? 'text-blue-700 font-semibold'
+                                  : 'text-blue-700/60 font-semibold border border-dashed border-blue-300 rounded px-1'}
+                              >
+                                {entry}
+                              </span>
                             ))}
                             <span className="text-gray-400 text-xs">({totalLeaveAmount}일)</span>
                             {record.rawLeaveCode && (
                               <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
                                 {record.rawLeaveCode}
+                              </span>
+                            )}
+                            {!isErpConfirmedLeave && (
+                              <span className="text-[10px] text-amber-600 font-medium">
+                                ⚠ ERP 미신청 · Slack 공유만 확인됨
                               </span>
                             )}
                           </span>
@@ -684,12 +701,14 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
           <section>
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">상태 계산 과정</p>
             <div className="bg-gray-50 rounded-xl px-4 py-3 space-y-2 text-xs">
-              {/* ERP 연차 */}
+              {/* ERP 연차 / Slack 주입 연차 — record.leaveType는 둘을 구분 안 하므로 label을 분기 */}
               {record.leaveType && (
                 <div className="flex items-start gap-2">
                   <span className="text-gray-400 shrink-0 w-5">①</span>
                   <span>
-                    <span className="font-medium text-blue-700">ERP 연차</span>
+                    <span className="font-medium text-blue-700">
+                      {isSlackLeaveInjected ? 'Slack 공유(ERP 미신청)' : 'ERP 연차'}
+                    </span>
                     {' '}인식 →{' '}
                     <span className="font-semibold">{record.rawLeaveCode ?? record.leaveType}</span>
                     {record.erpLeaveAmount ? ` (${record.erpLeaveAmount}일)` : ''}
