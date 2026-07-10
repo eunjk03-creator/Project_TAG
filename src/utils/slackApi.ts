@@ -25,7 +25,9 @@ export interface SlackException {
 const AM_HALF_RE        = /오전\s*반\s*차/
 const PM_HALF_RE        = /오후\s*반\s*차/
 const HALF_RE           = /반\s*차/                              // generic half-day
-const QUARTER_RE        = /반\s*반\s*차|빈\s*반\s*차|반\s*휴/   // quarter-day + typos
+const AM_QUARTER_RE     = /오전\s*반\s*반\s*차/
+const PM_QUARTER_RE     = /오후\s*반\s*반\s*차/
+const QUARTER_RE        = /반\s*반\s*차|빈\s*반\s*차|반\s*휴/   // quarter-day + typos, direction 미명시
 const HOLIDAY_WORK_RE   = /휴일\s*근무/
 const ANNUAL_LEAVE_RE   = /연차|공가|리프레시|경조|병가|육아|예비군|민방위|포상휴가|대체휴가|기타휴가|휴가/
 const TRIP_RE           = /출장/
@@ -33,6 +35,10 @@ const OUTSIDE_RE        = /외근|외부교육|교육|직출|직퇴|감리|공�
 
 function classifyMessage(text: string): { type: SlackExcType; note: string } | null {
   if (HOLIDAY_WORK_RE.test(text)) return { type: 'holiday_work', note: '휴일근무'  }
+  // 방향 명시된 반반차를 먼저 체크 — 안 그러면 generic QUARTER_RE가 먼저 매칭되면서
+  // "오후반반차"라고 명시해도 방향 정보가 '반반차'로 뭉개짐 (normalizeLeaveType 재추론 대상이 됨)
+  if (AM_QUARTER_RE.test(text))   return { type: 'quarter_day',  note: '오전반반차' }
+  if (PM_QUARTER_RE.test(text))   return { type: 'quarter_day',  note: '오후반반차' }
   if (QUARTER_RE.test(text))      return { type: 'quarter_day',  note: '반반차'    }
   if (AM_HALF_RE.test(text))      return { type: 'half_day',     note: '오전반차'  }
   if (PM_HALF_RE.test(text))      return { type: 'half_day',     note: '오후반차'  }

@@ -676,25 +676,29 @@ export function parseAttendanceData(
     const leaveEntry = leaveMap.get(lookupKey)
     let leaveType: ErpLeaveType | null = leaveEntry?.type ?? null
 
-    // 방향 미명시 반차 재추론: rawCode에 '오전'/'오후'가 없으면 출퇴근 시각으로 방향 결정
+    // 방향 미명시 반차/반반차 재추론: rawCode에 '오전'/'오후'가 없으면 출퇴근 시각으로 방향 결정
     // e.g. '생일반차휴가' → normalizeLeaveType이 퇴근≤14:00이면 '오후반차'로 정정
     // e.g. '건강검진휴가' → normalizeLeaveType이 null 반환 시 시각 직접 추론
+    const isHalfOrQuarter =
+      leaveType === '오전반차' || leaveType === '오후반차' ||
+      leaveType === '오전반반차' || leaveType === '오후반반차'
     if (
-      (leaveType === '오전반차' || leaveType === '오후반차') &&
+      isHalfOrQuarter &&
       leaveEntry?.rawCode &&
       !leaveEntry.rawCode.includes('오전') &&
       !leaveEntry.rawCode.includes('오후')
     ) {
       const inferred = normalizeLeaveType(leaveEntry.rawCode, clockIn, clockOut)
-      if (inferred === '오전반차' || inferred === '오후반차') {
+      if (inferred === '오전반차' || inferred === '오후반차' ||
+          inferred === '오전반반차' || inferred === '오후반반차') {
         leaveType = inferred
       } else if (inferred === null && (clockIn || clockOut)) {
-        // rawCode에 '반차' 키워드 없는 코드(건강검진휴가 등) → 시각으로 직접 추론
+        // rawCode에 '반차'/'반반차' 키워드 없는 코드(건강검진휴가 등) → 시각으로 직접 추론
         // 퇴근 ≤ 14:00: 오전 근무 후 오후에 자리 비움 → 오후반차
         // 출근 ≥ 12:00: 오후에 출근 → 오전을 쉰 것 → 오전반차
         if (clockOut && toMinutes(clockOut) <= 14 * 60) leaveType = '오후반차'
         else if (clockIn && toMinutes(clockIn) >= 12 * 60) leaveType = '오전반차'
-        // else: 기존 '오전반차' 유지
+        // else: 기존 값 유지
       }
     }
 

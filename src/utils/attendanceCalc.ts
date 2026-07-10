@@ -254,6 +254,11 @@ export function normalizeLeaveType(
   if (t.includes('반반차')) {
     if (t.includes('오전')) return '오전반반차'
     if (t.includes('오후')) return '오후반반차'
+    // 방향 미명시 반반차 — 반차와 동일한 방식으로 clockIn/clockOut 기반 추론.
+    // 반반차는 2h 단위 이동이므로 기준점도 반차(14:00/12:00, 4h 단위)의 절반 폭으로 잡음:
+    // 표준 09:00~18:00 기준 오후반반차 조기퇴근 경계 16:00(+30분 여유), 오전반반차 지연출근 경계 11:00(-30분 여유).
+    if (clockOut && parseTimeToMins(clockOut) <= parseTimeToMins('16:30')) return '오후반반차'
+    if (clockIn  && parseTimeToMins(clockIn)  >= parseTimeToMins('10:30')) return '오전반반차'
     return '오전반반차'
   }
 
