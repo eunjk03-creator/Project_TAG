@@ -29,7 +29,9 @@ export function SlackIntegrationTab() {
   const [matchResult,    setMatchResult]    = useState<MatchResult | null>(null)
   const [isMatching,     setIsMatching]     = useState(false)
   const [matchError,     setMatchError]     = useState('')
-  const [manualPick,     setManualPick]     = useState<Record<string, string>>({}) // employeeId → slackUserId
+  const [manualPick,     setManualPick]     = useState<Record<string, string>>({}) // employeeId → slackUserId ('__manual__' = 직접입력)
+  const [manualIdText,   setManualIdText]   = useState<Record<string, string>>({}) // employeeId → 직접 입력한 ID (U... 또는 D...)
+  const [unmatchedIdText, setUnmatchedIdText] = useState<Record<string, string>>({}) // 미매칭 직원용 직접입력
 
   useEffect(() => {
     fetch('/api/slack/user-mappings').then(r => r.json()).then(setSavedMappings).catch(() => {})
@@ -303,41 +305,79 @@ export function SlackIntegrationTab() {
 
             {matchResult.ambiguous.length > 0 && (
               <ul className="space-y-1.5">
-                {matchResult.ambiguous.map(a => (
-                  <li key={a.employeeId} className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    <span className="text-xs font-medium text-amber-800 w-24 shrink-0 truncate">{a.employeeName}</span>
-                    <select
-                      value={manualPick[a.employeeId] ?? ''}
-                      onChange={e => setManualPick(prev => ({ ...prev, [a.employeeId]: e.target.value }))}
-                      className="flex-1 text-xs border border-amber-300 rounded-md px-2 py-1 bg-white"
-                    >
-                      <option value="">계정 선택…</option>
-                      {a.candidates.map(c => (
-                        <option key={c.slackUserId} value={c.slackUserId}>{c.slackName} ({c.slackUserId})</option>
-                      ))}
-                    </select>
-                    <button
-                      disabled={!manualPick[a.employeeId]}
-                      onClick={() => {
-                        const slackUserId = manualPick[a.employeeId]
-                        const cand = a.candidates.find(c => c.slackUserId === slackUserId)
-                        saveMappings([{ employeeId: a.employeeId, employeeName: a.employeeName, slackUserId, slackName: cand?.slackName, matchedBy: 'manual' }])
-                      }}
-                      className="shrink-0 px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-white border border-amber-300 rounded-md hover:bg-amber-100 disabled:opacity-40 transition-colors"
-                    >
-                      저장
-                    </button>
-                  </li>
-                ))}
+                {matchResult.ambiguous.map(a => {
+                  const isManual = manualPick[a.employeeId] === '__manual__'
+                  const resolvedId = isManual ? (manualIdText[a.employeeId] ?? '').trim() : manualPick[a.employeeId]
+                  return (
+                    <li key={a.employeeId} className="flex flex-col gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-amber-800 w-24 shrink-0 truncate">{a.employeeName}</span>
+                        <select
+                          value={manualPick[a.employeeId] ?? ''}
+                          onChange={e => setManualPick(prev => ({ ...prev, [a.employeeId]: e.target.value }))}
+                          className="flex-1 text-xs border border-amber-300 rounded-md px-2 py-1 bg-white"
+                        >
+                          <option value="">계정 선택…</option>
+                          {a.candidates.map(c => (
+                            <option key={c.slackUserId} value={c.slackUserId}>{c.slackName} ({c.slackUserId})</option>
+                          ))}
+                          <option value="__manual__">직접 입력 (DM/User ID)…</option>
+                        </select>
+                        <button
+                          disabled={!resolvedId}
+                          onClick={() => {
+                            const cand = a.candidates.find(c => c.slackUserId === resolvedId)
+                            saveMappings([{ employeeId: a.employeeId, employeeName: a.employeeName, slackUserId: resolvedId, slackName: cand?.slackName, matchedBy: 'manual' }])
+                          }}
+                          className="shrink-0 px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-white border border-amber-300 rounded-md hover:bg-amber-100 disabled:opacity-40 transition-colors"
+                        >
+                          저장
+                        </button>
+                      </div>
+                      {isManual && (
+                        <input
+                          type="text"
+                          placeholder="예: D0BHL8MDQTA 또는 U09CFA51XTM"
+                          value={manualIdText[a.employeeId] ?? ''}
+                          onChange={e => setManualIdText(prev => ({ ...prev, [a.employeeId]: e.target.value }))}
+                          className="text-xs font-mono border border-amber-300 rounded-md px-2 py-1 bg-white"
+                        />
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
             )}
 
             {matchResult.unmatched.length > 0 && (
-              <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-1.5">
                 <p className="text-[11px] text-gray-500">
-                  Slack에서 이름이 안 잡힌 직원 (닉네임이 다르면 아래 저장된 목록에서 수동으로 추가하세요):
-                  {' '}{matchResult.unmatched.map(u => u.employeeName).join(', ')}
+                  Slack에서 이름이 안 잡힌 직원 — 닉네임이 다르면 직접 ID를 찾아서 입력하세요:
                 </p>
+                <ul className="space-y-1.5">
+                  {matchResult.unmatched.map(u => (
+                    <li key={u.employeeId} className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-gray-700 w-24 shrink-0 truncate">{u.employeeName}</span>
+                      <input
+                        type="text"
+                        placeholder="예: D0BHL8MDQTA 또는 U09CFA51XTM"
+                        value={unmatchedIdText[u.employeeId] ?? ''}
+                        onChange={e => setUnmatchedIdText(prev => ({ ...prev, [u.employeeId]: e.target.value }))}
+                        className="flex-1 text-xs font-mono border border-gray-300 rounded-md px-2 py-1 bg-white"
+                      />
+                      <button
+                        disabled={!(unmatchedIdText[u.employeeId] ?? '').trim()}
+                        onClick={() => saveMappings([{
+                          employeeId: u.employeeId, employeeName: u.employeeName,
+                          slackUserId: (unmatchedIdText[u.employeeId] ?? '').trim(), matchedBy: 'manual',
+                        }])}
+                        className="shrink-0 px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-100 disabled:opacity-40 transition-colors"
+                      >
+                        저장
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </div>
