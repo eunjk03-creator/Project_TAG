@@ -1,7 +1,14 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useSlack, type SlackConfig } from '@/context/SlackContext'
 import { usePolicy } from '@/context/PolicyContext'
+import { useAttendanceSource } from '@/context/AttendanceSourceContext'
+import { matchEmployeesToSlackUsers, type SlackUserLite, type MatchResult } from '@/utils/slackUserMatch'
+
+interface SavedMapping {
+  employeeId: string; employeeName: string
+  slackUserId: string; slackName: string; matchedBy: string
+}
 
 export function SlackIntegrationTab() {
   const {
@@ -11,10 +18,61 @@ export function SlackIntegrationTab() {
     fetchAndParse, clearExceptions,
   } = useSlack()
   const { policy, setPolicy } = usePolicy()
+  const { employees } = useAttendanceSource()
 
   const [draft, setDraft] = useState<SlackConfig>({ ...config })
   const [groupIdInput,  setGroupIdInput]  = useState('')
   const [groupDivInput, setGroupDivInput] = useState('')
+
+  // ── 직원 ↔ Slack 개인계정 매칭 ─────────────────────────────────────────
+  const [savedMappings,  setSavedMappings]  = useState<SavedMapping[]>([])
+  const [matchResult,    setMatchResult]    = useState<MatchResult | null>(null)
+  const [isMatching,     setIsMatching]     = useState(false)
+  const [matchError,     setMatchError]     = useState('')
+  const [manualPick,     setManualPick]     = useState<Record<string, string>>({}) // employeeId → slackUserId
+
+  useEffect(() => {
+    fetch('/api/slack/user-mappings').then(r => r.json()).then(setSavedMappings).catch(() => {})
+  }, [])
+
+  async function handleMatchUsers() {
+    setIsMatching(true); setMatchError(''); setMatchResult(null)
+    try {
+      const res  = await fetch('/api/slack/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: draft.token }),
+      })
+      const data = await res.json() as { ok: boolean; error?: string; users?: SlackUserLite[] }
+      if (!data.ok || !data.users) { setMatchError(data.error ?? '매칭 실패'); return }
+      const alreadyMapped = new Set(savedMappings.map(m => m.employeeId))
+      const targets = employees.filter(e => !alreadyMapped.has(e.id))
+      setMatchResult(matchEmployeesToSlackUsers(targets, data.users))
+    } catch (err) {
+      setMatchError(String(err))
+    } finally {
+      setIsMatching(false)
+    }
+  }
+
+  async function saveMappings(mappings: { employeeId: string; employeeName: string; slackUserId: string; slackName?: string; matchedBy: string }[]) {
+    if (!mappings.length) return
+    const res = await fetch('/api/slack/user-mappings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mappings }),
+    })
+    if (res.ok) {
+      const fresh = await fetch('/api/slack/user-mappings').then(r => r.json())
+      setSavedMappings(fresh)
+    }
+  }
+
+  async function deleteMapping(employeeId: string) {
+    await fetch('/api/slack/user-mappings', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeIds: [employeeId] }),
+    })
+    setSavedMappings(prev => prev.filter(m => m.employeeId !== employeeId))
+  }
 
   const isDirty = JSON.stringify(draft) !== JSON.stringify(config)
 
@@ -192,6 +250,117 @@ export function SlackIntegrationTab() {
           <p className="px-5 pb-4 text-xs text-blue-500">
             메시지를 페이지 단위로 가져오는 중입니다. 기간이 길수록 더 오래 걸릴 수 있습니다.
           </p>
+        )}
+      </div>
+
+      {/* ── 직원 ↔ Slack 개인계정 매칭 (DM 발송용) ── */}
+      <div>
+        <h2 className="text-base font-semibold text-gray-800">직원 ↔ Slack 계정 매칭</h2>
+        <p className="text-xs text-gray-400 mt-1">
+          테이블에서 &quot;미상신 연차 알림&quot;을 개인 DM으로 보내려면, 먼저 직원과 Slack 계정을 연결해야 합니다.
+          이름이 유니크하게 하나의 계정과만 일치하면 자동으로 연결하고, 동명이인 등으로 애매하면 직접 골라주세요.
+        </p>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-gray-500">
+            연결됨 <span className="font-semibold text-gray-700">{savedMappings.length}</span>명
+          </span>
+          <button
+            onClick={handleMatchUsers}
+            disabled={isMatching || !draft.token || employees.length === 0}
+            className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg
+              hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+          >
+            {isMatching ? '매칭 중…' : '나머지 직원 자동매칭 시도'}
+          </button>
+        </div>
+
+        {matchError && <p className="text-xs text-red-500">{matchError}</p>}
+
+        {matchResult && (
+          <div className="space-y-3 pt-1 border-t border-gray-100">
+            <p className="text-[11px] text-gray-500">
+              자동매칭 <span className="font-semibold text-emerald-600">{matchResult.matched.length}</span>명 ·
+              확인필요 <span className="font-semibold text-amber-600">{matchResult.ambiguous.length}</span>명 ·
+              미매칭 <span className="font-semibold text-gray-500">{matchResult.unmatched.length}</span>명
+            </p>
+
+            {matchResult.matched.length > 0 && (
+              <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                <span className="text-xs text-emerald-700">
+                  {matchResult.matched.map(m => m.employeeName).join(', ')}
+                </span>
+                <button
+                  onClick={() => saveMappings(matchResult.matched.map(m => ({ ...m, matchedBy: 'auto' })))}
+                  className="shrink-0 ml-3 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 bg-white border border-emerald-300 rounded-md hover:bg-emerald-100 transition-colors"
+                >
+                  전체 저장
+                </button>
+              </div>
+            )}
+
+            {matchResult.ambiguous.length > 0 && (
+              <ul className="space-y-1.5">
+                {matchResult.ambiguous.map(a => (
+                  <li key={a.employeeId} className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    <span className="text-xs font-medium text-amber-800 w-24 shrink-0 truncate">{a.employeeName}</span>
+                    <select
+                      value={manualPick[a.employeeId] ?? ''}
+                      onChange={e => setManualPick(prev => ({ ...prev, [a.employeeId]: e.target.value }))}
+                      className="flex-1 text-xs border border-amber-300 rounded-md px-2 py-1 bg-white"
+                    >
+                      <option value="">계정 선택…</option>
+                      {a.candidates.map(c => (
+                        <option key={c.slackUserId} value={c.slackUserId}>{c.slackName} ({c.slackUserId})</option>
+                      ))}
+                    </select>
+                    <button
+                      disabled={!manualPick[a.employeeId]}
+                      onClick={() => {
+                        const slackUserId = manualPick[a.employeeId]
+                        const cand = a.candidates.find(c => c.slackUserId === slackUserId)
+                        saveMappings([{ employeeId: a.employeeId, employeeName: a.employeeName, slackUserId, slackName: cand?.slackName, matchedBy: 'manual' }])
+                      }}
+                      className="shrink-0 px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-white border border-amber-300 rounded-md hover:bg-amber-100 disabled:opacity-40 transition-colors"
+                    >
+                      저장
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {matchResult.unmatched.length > 0 && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                <p className="text-[11px] text-gray-500">
+                  Slack에서 이름이 안 잡힌 직원 (닉네임이 다르면 아래 저장된 목록에서 수동으로 추가하세요):
+                  {' '}{matchResult.unmatched.map(u => u.employeeName).join(', ')}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {savedMappings.length > 0 && (
+          <ul className="space-y-1 pt-1 border-t border-gray-100">
+            {savedMappings.map(m => (
+              <li key={m.employeeId} className="flex items-center justify-between px-3 py-1.5 hover:bg-gray-50 rounded-lg">
+                <span className="text-xs text-gray-700">
+                  {m.employeeName}
+                  <span className="text-gray-400 ml-2">→ {m.slackName || m.slackUserId}</span>
+                  <span className="text-[10px] text-gray-300 ml-2">({m.matchedBy === 'auto' ? '자동' : '수동'})</span>
+                </span>
+                <button
+                  onClick={() => deleteMapping(m.employeeId)}
+                  className="text-[11px] text-red-400 hover:text-red-600 transition-colors"
+                >
+                  삭제
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 

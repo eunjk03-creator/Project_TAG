@@ -18,6 +18,7 @@ import { CsvUploader } from '@/components/admin/CsvUploader'
 import { ManualEntryModal } from '@/components/admin/ManualEntryModal'
 import type { ManualEntryPayload } from '@/components/admin/ManualEntryModal'
 import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
+import { SlackReminderModal } from '@/components/admin/SlackReminderModal'
 import { SummaryTab }            from '@/components/admin/SummaryTab'
 import { AllowanceTab }          from '@/components/admin/AllowanceTab'
 import {
@@ -114,7 +115,8 @@ export default function AdminDashboard() {
     processedRecords: serverProcessed, isProcessing: isServerProcessing,
     recomputeProcessed,
   } = useAttendanceSource()
-  const { slackNoteMap } = useSlack()
+  const { slackNoteMap, config: slackConfig } = useSlack()
+  const [showSlackReminder, setShowSlackReminder] = useState(false)
 
   const [isMounted,             setIsMounted]             = useState(false)
   const [manualCell,            setManualCell]            = useState<{ employeeId: string; date: string } | null>(null)
@@ -1626,6 +1628,12 @@ export default function AdminDashboard() {
                     {tableViewSelected ? '전체 보기' : '선택만 보기'}
                   </button>
                   <button
+                    onClick={() => setShowSlackReminder(true)}
+                    className="px-3 py-1 rounded-md text-xs font-medium border border-blue-300 bg-white text-blue-700 hover:bg-blue-50 transition-colors"
+                  >
+                    미상신 연차 알림 발송
+                  </button>
+                  <button
                     onClick={() => {
                       for (const key of tableSelectedKeys) {
                         const [empId, date] = key.split('_')
@@ -1706,6 +1714,14 @@ export default function AdminDashboard() {
           onClose={() => setModalCell(null)}
           onSave={handleModalSave}
           onDelete={() => handleDeleteRecord(modalCell.employeeId, modalCell.date)}
+        />
+      )}
+
+      {showSlackReminder && (
+        <SlackReminderModal
+          records={tabFilteredRecords.filter(r => tableSelectedKeys.has(`${r.employeeId}_${r.date}`))}
+          slackToken={slackConfig.token}
+          onClose={() => setShowSlackReminder(false)}
         />
       )}
 

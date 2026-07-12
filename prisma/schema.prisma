@@ -258,6 +258,19 @@ model AttendanceNote {
   @@map("attendance_notes")
 }
 
+// ─── 직원 ↔ Slack 개인계정 매핑 (DM 발송용) ──────────────
+model SlackUserMapping {
+  id           String   @id @default(uuid())
+  employeeId   String   @unique @map("employee_id")
+  employeeName String   @map("employee_name")
+  slackUserId  String   @map("slack_user_id")
+  slackName    String   @default("") @map("slack_name")
+  matchedBy    String   @default("auto") @map("matched_by") // 'auto' | 'manual'
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("slack_user_mappings")
+}
+
 // ─── 예외 규칙 (Settings UI → GAS pipeline) ──────────
 model ExceptionRule {
   id             String   @id @default(uuid())
