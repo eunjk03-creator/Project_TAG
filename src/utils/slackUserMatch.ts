@@ -20,7 +20,9 @@ export interface MatchResult {
 }
 
 function normName(s: string): string {
-  return s.trim().replace(/\s+/g, '')
+  // NFC 정규화 필수 — Slack 프로필과 CAPS/ERP 원본이 다른 유니코드 정규화 형태(NFC/NFD)로
+  // 저장돼 있으면 눈으로는 같은 글자인데 문자열 비교에서 실패해서 미매칭으로 빠짐.
+  return s.normalize('NFC').trim().replace(/\s+/g, '')
 }
 
 export function matchEmployeesToSlackUsers(
