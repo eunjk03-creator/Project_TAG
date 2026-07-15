@@ -7,7 +7,7 @@ import { usePolicy } from '@/context/PolicyContext'
 import { EmployeeCalendarGrid } from '@/components/admin/EmployeeCalendarGrid'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { useDateRange, DEFAULT_RANGE } from '@/context/DateRangeContext'
-import { exportXlsx } from '@/utils/exportCsv'
+import { exportXlsx, exportTableXlsx } from '@/utils/exportCsv'
 import StatusExportButton from '@/components/admin/StatusExportButton'
 import { DailyDetailModal } from '@/components/admin/DailyDetailModal'
 import type { SavePayload } from '@/components/admin/DailyDetailModal'
@@ -922,7 +922,7 @@ export default function AdminDashboard() {
       'division', 'empId', 'name', 'date', 'clockIn', 'clockOut',
       'leaveAmt', 'leaveType', 'leaveSource', 'breakH',
       'finalWorkH', 'attendanceStatus', 'normalTags', 'anomalyTags', 'systemOtH',
-      'payrollOtH', 'payrollNightH', 'erpOtApplied',
+      'payrollOtH', 'payrollNightH', 'payrollHolidayH', 'erpOtApplied',
     ]
     const visibleColIds = new Set(ALL_DETAIL_IDS.filter(id => tableColVisibility[id] !== false))
 
@@ -1677,10 +1677,10 @@ export default function AdminDashboard() {
                   'division','empId','name','date','clockIn','clockOut',
                   'leaveAmt','leaveType','leaveSource','breakH',
                   'finalWorkH','attendanceStatus','normalTags','anomalyTags','systemOtH',
-                  'payrollOtH','payrollNightH','erpOtApplied',
+                  'payrollOtH','payrollNightH','payrollHolidayH','erpOtApplied',
                 ]
                 const visibleColIds = new Set(ALL_DETAIL_IDS.filter(id => tableColVisibility[id] !== false))
-                exportXlsx(filtered, baseEmployees, filename, visibleColIds)
+                exportTableXlsx(filtered, baseEmployees, filename, visibleColIds)
               }}
             />
 

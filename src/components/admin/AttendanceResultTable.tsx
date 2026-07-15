@@ -20,7 +20,7 @@ import {
 
 // ── Row shape ─────────────────────────────────────────────────────────────
 
-interface GridRow {
+export interface GridRow {
   record:         ProcessedRecord
   division:       string
   team:           string
@@ -64,8 +64,8 @@ export interface Props {
   selectedKeys?:            Set<string>
   onSelectionChange?:       (keys: Set<string>) => void
   otExemptIds?:             Set<string>
-  /** 엑셀 내보내기 — 테이블 내부 필터 적용된 records를 전달 */
-  onExport?:                (filteredRecords: ProcessedRecord[]) => void
+  /** 엑셀 내보내기 — 테이블 내부 필터·정렬·토글(인정시간/실제값, 크레딧) 반영된 화면 표시 행 그대로 전달 */
+  onExport?:                (filteredRows: GridRow[]) => void
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -872,7 +872,7 @@ export function AttendanceResultTable({
         {onExport && (
           <button
             onClick={() => {
-              const filtered = table.getFilteredRowModel().rows.map(r => r.original.record)
+              const filtered = table.getSortedRowModel().rows.map(r => r.original)
               onExport(filtered)
             }}
             className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 flex items-center gap-1.5 transition-colors"

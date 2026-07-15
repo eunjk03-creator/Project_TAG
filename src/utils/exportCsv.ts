@@ -1,6 +1,7 @@
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx-js-style'
 import type { ProcessedRecord, Employee } from '@/types/tag'
+import type { GridRow } from '@/components/admin/AttendanceResultTable'
 import {
   computeWorkA, parseTimeToMins, computeDisplayBreakMins,
   computePayOtMins, computeLeaderPayOtMins, computeGasNightMins,
@@ -184,9 +185,10 @@ const DETAIL_COL_DEFS: DetailColDef[] = [
   { id: 'normalTags',       header: '정상정보',        wch: 14 },
   { id: 'anomalyTags',      header: '비정상정보',      wch: 18 },
   { id: 'systemOtH',        header: '시스템 초과근로', wch: 14 },
-  { id: 'payrollOtH',    header: '급여용 연장(최종)', wch: 16 },
-  { id: 'payrollNightH', header: '급여용 야간(최종)', wch: 16 },
-  { id: 'erpOtApplied',  header: 'ERP 연장 신청',    wch: 12 },
+  { id: 'payrollOtH',      header: '급여용 연장(최종)', wch: 16 },
+  { id: 'payrollNightH',   header: '급여용 야간(최종)', wch: 16 },
+  { id: 'payrollHolidayH', header: '급여용 휴일(최종)', wch: 16 },
+  { id: 'erpOtApplied',    header: 'ERP 연장 신청',    wch: 12 },
 ]
 
 function buildDetailRowData(
@@ -331,7 +333,7 @@ export function exportXlsx(
   }
 
   // Apply 0.00 number format to all numeric columns
-  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'breakH', 'finalWorkH', 'systemOtH', 'payrollOtH', 'payrollNightH'])
+  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'breakH', 'finalWorkH', 'systemOtH', 'payrollOtH', 'payrollNightH', 'payrollHolidayH'])
   const numericColIndices = activeCols
     .map((c, i) => ({ id: c.id, idx: i }))
     .filter(({ id }) => NUMERIC_COL_IDS.has(id))
@@ -517,6 +519,279 @@ export function exportXlsx(
     alignment: { horizontal: c >= 3 ? 'center' : 'left', vertical: 'center' },
   }))
   // 합계 행
+  const anomalyTotalRowIdx = anomalyDataRows.length + 1
+  styleBlock(wsAnomaly, anomalyTotalRowIdx, 1, ANOMALY_HEADERS.length, (_r, c, v) => ({
+    fill:      { patternType: 'solid', fgColor: { rgb: 'FFE0E0' } },
+    font:      { sz: 9, bold: true, color: { rgb: c >= 3 && v ? 'C00000' : '333333' } },
+    alignment: { horizontal: c >= 3 ? 'center' : 'left', vertical: 'center' },
+  }))
+
+  // ── Build and download workbook ───────────────────────────────────────
+
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, wsDetail,  '근태결과')
+  XLSX.utils.book_append_sheet(wb, wsSum,     '요약')
+  XLSX.utils.book_append_sheet(wb, wsAnomaly, '이상치')
+
+  const buf  = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href     = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * Exports attendance data as an Excel workbook using the exact values already
+ * computed for on-screen display in AttendanceResultTable (respects the
+ * 인정시간/실제값 + 크레딧 ON/OFF toggle state) — the 근태결과 detail sheet is a
+ * direct passthrough of GridRow fields with NO recomputation, so it always
+ * matches whatever the table currently shows. 요약/이상치 sheets are category
+ * counts derived from the underlying ProcessedRecord (unaffected by the
+ * toggle), so they reuse the same logic as exportXlsx.
+ */
+export function exportTableXlsx(
+  rows:          GridRow[],
+  employees:     Employee[],
+  filename =     '근태결과_export.xlsx',
+  visibleColIds?: Set<string>,
+) {
+  const empMap = new Map(employees.map(e => [e.id, e]))
+
+  // Same rawId → date ordering as exportXlsx, applied across all three sheets.
+  const sortedRows = [...rows].sort((a, b) => {
+    if (a.empId < b.empId) return -1
+    if (a.empId > b.empId) return  1
+    if (a.date < b.date) return -1
+    if (a.date > b.date) return  1
+    return 0
+  })
+
+  // ── Sheet 1: 근태결과 — GridRow 값 그대로 사용 (재계산 없음) ─────────────
+
+  const activeCols = visibleColIds
+    ? DETAIL_COL_DEFS.filter(c => visibleColIds.has(c.id))
+    : DETAIL_COL_DEFS
+
+  const detailRows = sortedRows.map(row => {
+    const rowData: Record<string, unknown> = {
+      division:         row.division,
+      empId:            row.empId,
+      name:             row.name,
+      date:             dateToExcelSerial(row.date),
+      clockIn:          row.clockIn ?? '',
+      clockOut:         row.clockOut ?? '',
+      leaveAmt:         row.leaveAmt > 0 ? row.leaveAmt : null,
+      leaveType:        row.leaveType,
+      leaveSource:      row.leaveSource || null,
+      breakH:           row.breakH > 0 ? row.breakH : null,
+      finalWorkH:       row.finalWorkH > 0 ? row.finalWorkH : null,
+      attendanceStatus: row.attendanceStatus,
+      normalTags:       row.normalTags.length  > 0 ? row.normalTags.join(', ')  : null,
+      anomalyTags:      row.anomalyTags.length > 0 ? row.anomalyTags.join(', ') : null,
+      systemOtH:        row.systemOtH  > 0 ? row.systemOtH  : null,
+      payrollOtH:       row.payrollOtH > 0 ? row.payrollOtH : null,
+      payrollNightH:    row.payrollNightH > 0 ? row.payrollNightH : null,
+      payrollHolidayH:  row.payrollHolidayH > 0 ? row.payrollHolidayH : null,
+      erpOtApplied:     row.erpOtStatus === '—' ? null : row.erpOtStatus,
+    }
+    return activeCols.map(c => rowData[c.id] ?? null)
+  })
+
+  const wsDetail = XLSX.utils.aoa_to_sheet([
+    activeCols.map(c => c.header),
+    ...detailRows,
+  ])
+
+  const dateColIdx = activeCols.findIndex(c => c.id === 'date')
+  if (dateColIdx >= 0) {
+    const letter = String.fromCharCode(65 + dateColIdx)
+    for (let i = 0; i < sortedRows.length; i++) {
+      const ref = `${letter}${i + 2}`
+      if (wsDetail[ref]) wsDetail[ref].z = 'yyyy-mm-dd'
+    }
+  }
+
+  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'breakH', 'finalWorkH', 'systemOtH', 'payrollOtH', 'payrollNightH', 'payrollHolidayH'])
+  const numericColIndices = activeCols
+    .map((c, i) => ({ id: c.id, idx: i }))
+    .filter(({ id }) => NUMERIC_COL_IDS.has(id))
+
+  for (let rowIdx = 0; rowIdx < sortedRows.length; rowIdx++) {
+    for (const { idx } of numericColIndices) {
+      const ref = XLSX.utils.encode_cell({ r: rowIdx + 1, c: idx })
+      if (wsDetail[ref] && typeof wsDetail[ref].v === 'number') {
+        wsDetail[ref].t = 'n'
+        wsDetail[ref].z = '0.00'
+      }
+    }
+  }
+
+  wsDetail['!cols'] = activeCols.map(c => ({ wch: c.wch }))
+  styleHeader(wsDetail, activeCols.length, '1F3864')
+  styleBlock(wsDetail, 1, sortedRows.length, activeCols.length, (r, _c, _v) => ({
+    fill:      { patternType: 'solid', fgColor: { rgb: r % 2 === 0 ? 'F5F8FF' : 'FFFFFF' } },
+    font:      { sz: 9, color: { rgb: '333333' } },
+    alignment: { vertical: 'center' },
+  }))
+
+  // ── Sheet 2: 요약 (exportXlsx와 동일 로직 — ProcessedRecord 기준 카테고리 집계) ──
+
+  const SUM_HEADERS = [
+    '사번', '이름', '본부',
+    '정상', '지각', '근무시간 미달', '지각/근무시간 미달', '근태이상',
+    '연차', '휴일근무',
+    '휴가 미신청', '외근 (확인 필요)', '휴가 미신청 (확인 필요)',
+    '총일수',
+  ]
+
+  const empOrder: string[] = []
+  const recsByEmp = new Map<string, ProcessedRecord[]>()
+  for (const row of sortedRows) {
+    const r = row.record
+    if (!recsByEmp.has(r.employeeId)) {
+      recsByEmp.set(r.employeeId, [])
+      empOrder.push(r.employeeId)
+    }
+    recsByEmp.get(r.employeeId)!.push(r)
+  }
+
+  const summaryRows = empOrder.map(empId => {
+    const emp       = empMap.get(empId)
+    const recs      = recsByEmp.get(empId)!
+    const cats: Partial<Record<SumCat, number>> = {}
+    let totalDays   = 0
+
+    for (const r of recs) {
+      const cat = categorizeForSummary(r)
+      if (cat === null) continue
+      totalDays++
+      cats[cat] = (cats[cat] ?? 0) + 1
+    }
+
+    const n = (key: SumCat) => (cats[key] ?? 0) > 0 ? cats[key]! : null
+
+    return [
+      emp?.rawId ?? empId.split('_')[0],
+      emp?.name ?? empId,
+      emp?.division ?? '',
+      n('정상'),
+      n('지각'),
+      n('근무시간 미달'),
+      n('지각/근무시간 미달'),
+      n('근태이상'),
+      n('연차'),
+      n('휴일근무'),
+      n('휴가 미신청'),
+      n('외근 (확인 필요)'),
+      n('휴가 미신청 (확인 필요)'),
+      totalDays || null,
+    ]
+  })
+
+  const wsSum = XLSX.utils.aoa_to_sheet([SUM_HEADERS, ...summaryRows])
+  wsSum['!cols'] = [
+    { wch: 12 }, { wch: 10 }, { wch: 14 },
+    { wch: 6  }, { wch: 6  }, { wch: 8  }, { wch: 10 }, { wch: 8  },
+    { wch: 6  }, { wch: 8  },
+    { wch: 10 }, { wch: 14 }, { wch: 18 },
+    { wch: 8  },
+  ]
+
+  styleHeader(wsSum, SUM_HEADERS.length, '404040')
+  styleBlock(wsSum, 1, summaryRows.length, SUM_HEADERS.length, (r, c, v) => ({
+    fill:      { patternType: 'solid', fgColor: { rgb: r % 2 === 0 ? 'F7F7F7' : 'FFFFFF' } },
+    font:      { sz: 9, color: { rgb: c >= 3 && v ? '1F3864' : '333333' } },
+    alignment: { horizontal: c >= 3 ? 'center' : 'left', vertical: 'center' },
+  }))
+
+  // ── Sheet 3: 이상치 (개인별 이상치 유형 집계, exportXlsx와 동일 로직) ────────
+
+  const ANOMALY_HEADERS = [
+    '사번', '이름', '본부',
+    '지각', '근무시간 미달', '미태깅', '혼합', '총합계',
+  ]
+
+  type AnomalyKey = '지각' | '근무시간 미달' | '미태깅' | '혼합'
+
+  function classifyAnomalyFlag(flag: string | null): AnomalyKey | null {
+    switch (flag) {
+      case 'LATE':                     return '지각'
+      case 'ATTENDANCE_ANOMALY':
+      case 'EARLY_DEPARTURE':          return '근무시간 미달'
+      case 'NO_CLOCK_IN':
+      case 'NO_CLOCK_OUT':             return '미태깅'
+      case 'LATE_AND_EARLY_DEPARTURE':
+      case 'LATE_AND_ANOMALY':         return '혼합'
+      default:                         return null
+    }
+  }
+
+  const anomalyDataRows: (string | number | null)[][] = []
+  const anomalyTotals: Record<AnomalyKey, number> = {
+    '지각': 0, '근무시간 미달': 0, '미태깅': 0, '혼합': 0,
+  }
+
+  for (const empId of empOrder) {
+    const emp  = empMap.get(empId)
+    const recs = recsByEmp.get(empId)!
+    const counts: Record<AnomalyKey, number> = {
+      '지각': 0, '근무시간 미달': 0, '미태깅': 0, '혼합': 0,
+    }
+    for (const r of recs) {
+      if (r.dayType !== 'WEEKDAY') continue
+      const cat = classifyAnomalyFlag(r.flag)
+      if (cat) counts[cat]++
+    }
+    const total = Object.values(counts).reduce((s, v) => s + v, 0)
+    if (total === 0) continue   // 이상치 없는 직원 제외
+
+    for (const k of Object.keys(anomalyTotals) as AnomalyKey[]) {
+      anomalyTotals[k] += counts[k]
+    }
+
+    anomalyDataRows.push([
+      emp?.rawId ?? empId.split('_')[0],
+      emp?.name  ?? empId,
+      emp?.division ?? '',
+      counts['지각']          || null,
+      counts['근무시간 미달'] || null,
+      counts['미태깅']        || null,
+      counts['혼합']          || null,
+      total,
+    ])
+  }
+
+  const grandTotal = Object.values(anomalyTotals).reduce((s, v) => s + v, 0)
+  const anomalyTotalRow: (string | number | null)[] = [
+    null, '합계', null,
+    anomalyTotals['지각']          || null,
+    anomalyTotals['근무시간 미달'] || null,
+    anomalyTotals['미태깅']        || null,
+    anomalyTotals['혼합']          || null,
+    grandTotal || null,
+  ]
+
+  const wsAnomaly = XLSX.utils.aoa_to_sheet([
+    ANOMALY_HEADERS,
+    ...anomalyDataRows,
+    anomalyTotalRow,
+  ])
+  wsAnomaly['!cols'] = [
+    { wch: 12 }, { wch: 10 }, { wch: 14 },
+    { wch: 8  }, { wch: 14 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
+  ]
+
+  styleHeader(wsAnomaly, ANOMALY_HEADERS.length, 'C00000')
+  styleBlock(wsAnomaly, 1, anomalyDataRows.length, ANOMALY_HEADERS.length, (r, c, v) => ({
+    fill:      { patternType: 'solid', fgColor: { rgb: r % 2 === 0 ? 'FFF5F5' : 'FFFFFF' } },
+    font:      { sz: 9, bold: c === 7 && !!v, color: { rgb: c >= 3 && v ? 'C00000' : '333333' } },
+    alignment: { horizontal: c >= 3 ? 'center' : 'left', vertical: 'center' },
+  }))
   const anomalyTotalRowIdx = anomalyDataRows.length + 1
   styleBlock(wsAnomaly, anomalyTotalRowIdx, 1, ANOMALY_HEADERS.length, (_r, c, v) => ({
     fill:      { patternType: 'solid', fgColor: { rgb: 'FFE0E0' } },
