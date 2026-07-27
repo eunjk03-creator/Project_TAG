@@ -1,22 +1,28 @@
 'use client'
 import { useState } from 'react'
-import type { Employee } from '@/types/tag'
+import type { Employee, DayType } from '@/types/tag'
+import { erpLeaveTypeToAmount } from '@/utils/attendanceCalc'
 
 export interface ManualEntryPayload {
   clockIn:        string | null
   clockOut:       string | null
-  attendanceType: string        // '재택근무' | '출장' | '휴일근무' | '기타'
+  attendanceType: string        // '재택근무' | '출장' | '휴일근무' | '연장근무' | '연차' | '기타'
+  /** attendanceType === '연차'일 때의 서브유형: '연차'|'오전반차'|'오후반차'|'오전반반차'|'오후반반차'. 그 외엔 null. */
+  leaveType:      string | null
   memo:           string
 }
 
 interface Props {
   employee: Employee
   date:     string
+  /** 평일이 아니면(주말/공휴일) 연차 옵션을 숨김 — 연차는 근무일에서만 의미가 있음 */
+  dayType?: DayType
   /** Pre-filled values when editing an existing manual entry */
   initial?: {
     clockIn?:        string | null
     clockOut?:       string | null
     attendanceType?: string
+    leaveType?:      string | null
     memo?:           string
   }
   onClose:   () => void
@@ -24,7 +30,9 @@ interface Props {
   onDelete?: () => void
 }
 
-const TYPES = ['재택근무', '출장', '휴일근무', '연장근무', '기타'] as const
+const TYPES = ['재택근무', '출장', '휴일근무', '연장근무', '연차', '기타'] as const
+
+const LEAVE_SUBTYPES = ['연차', '오전반차', '오후반차', '오전반반차', '오후반반차'] as const
 
 const DOW_KR = ['일', '월', '화', '수', '목', '금', '토']
 
@@ -33,19 +41,25 @@ function fmtDate(dateStr: string) {
   return `${d.getMonth() + 1}월 ${d.getDate()}일 (${DOW_KR[d.getDay()]})`
 }
 
-export function ManualEntryModal({ employee, date, initial, onClose, onSave, onDelete }: Props) {
+export function ManualEntryModal({ employee, date, dayType, initial, onClose, onSave, onDelete }: Props) {
   const [clockIn,        setClockIn]        = useState(initial?.clockIn  ?? '')
   const [clockOut,       setClockOut]       = useState(initial?.clockOut ?? '')
   const [attendanceType, setAttendanceType] = useState(initial?.attendanceType ?? '재택근무')
+  const [leaveType,      setLeaveType]      = useState(initial?.leaveType ?? '연차')
   const [memo,           setMemo]           = useState(initial?.memo ?? '')
+
+  const isLeave        = attendanceType === '연차'
+  const isFullDayLeave  = isLeave && leaveType === '연차'
+  const allowLeave      = !dayType || dayType === 'WEEKDAY'  // 평일에만 연차 등록 허용
 
   const orgPath = [employee.division, employee.team, employee.part].filter(Boolean).join(' / ')
 
   function handleSave() {
     onSave({
-      clockIn:        clockIn  || null,
-      clockOut:       clockOut || null,
+      clockIn:        isFullDayLeave ? null : (clockIn  || null),
+      clockOut:       isFullDayLeave ? null : (clockOut || null),
       attendanceType,
+      leaveType:      isLeave ? leaveType : null,
       memo,
     })
   }
@@ -81,32 +95,61 @@ export function ManualEntryModal({ employee, date, initial, onClose, onSave, onD
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-2">근태 유형</label>
             <div className="flex flex-wrap gap-2">
-              {TYPES.map(t => (
-                <button key={t} onClick={() => setAttendanceType(t)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                    attendanceType === t
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
-                  }`}>
-                  {t}
-                </button>
-              ))}
+              {TYPES.map(t => {
+                const disabled = t === '연차' && !allowLeave
+                return (
+                  <button key={t}
+                    onClick={() => !disabled && setAttendanceType(t)}
+                    disabled={disabled}
+                    title={disabled ? '연차는 평일에만 등록할 수 있습니다' : undefined}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      disabled
+                        ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
+                        : attendanceType === t
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                    }`}>
+                    {t}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
-          {/* 출퇴근 시간 */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* 연차 서브유형 */}
+          {isLeave && (
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5">출근 시간</label>
-              <input type="time" value={clockIn} onChange={e => setClockIn(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              <label className="block text-xs font-semibold text-gray-500 mb-2">연차 종류</label>
+              <div className="flex flex-wrap gap-2">
+                {LEAVE_SUBTYPES.map(lt => (
+                  <button key={lt} onClick={() => setLeaveType(lt)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      leaveType === lt
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                    }`}>
+                    {lt} <span className={leaveType === lt ? 'text-blue-100' : 'text-gray-400'}>({erpLeaveTypeToAmount(lt)}일)</span>
+                  </button>
+                ))}
+              </div>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5">퇴근 시간</label>
-              <input type="time" value={clockOut} onChange={e => setClockOut(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          )}
+
+          {/* 출퇴근 시간 — 전일 연차는 근무하지 않으므로 숨김 */}
+          {!isFullDayLeave && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1.5">출근 시간</label>
+                <input type="time" value={clockIn} onChange={e => setClockIn(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1.5">퇴근 시간</label>
+                <input type="time" value={clockOut} onChange={e => setClockOut(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              </div>
             </div>
-          </div>
+          )}
 
           {/* 메모 */}
           <div>

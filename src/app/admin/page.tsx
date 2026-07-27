@@ -23,25 +23,20 @@ import { SummaryTab }            from '@/components/admin/SummaryTab'
 import { AllowanceTab }          from '@/components/admin/AllowanceTab'
 import {
   computeWorkA, computeStatusN,
-  computeDisplayBreakMins, parseTimeToMins, erpLeaveTypeToAmount,
+  computeDisplayBreakMins, parseTimeToMins,
+  leaveTypeOverrideFields, synthesizeOverrideRecord,
 } from '@/utils/attendanceCalc'
+import { getDayInfo } from '@/utils/dataParser'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useSlack } from '@/context/SlackContext'
-import type { Employee, ProcessedRecord, EmployeeAttributeOverrides, ErpLeaveType } from '@/types/tag'
+import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
 import { HR_THRESHOLDS, EXEC_THRESHOLDS } from '@/types/tag'
 import type { RiskView, ProcessedRecord as PR } from '@/types/tag'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
-// erpLeaveType override → { leaveType, erpLeaveAmount }. amount>=1.0(오전+오후 반차 합산 등)이면
-// buildLeaveMap 정규화와 일관되게 '연차'로 통일.
-function leaveTypeOverrideFields(erpLeaveType: string): { leaveType: ErpLeaveType | null; erpLeaveAmount: number } {
-  const amount = erpLeaveTypeToAmount(erpLeaveType)
-  const primaryType: ErpLeaveType | null = erpLeaveType === '없음' ? null
-    : amount >= 1.0 ? '연차'
-    : (erpLeaveType.split(',')[0].trim() as ErpLeaveType)
-  return { leaveType: primaryType, erpLeaveAmount: amount }
-}
+// 수기입력 모달에서 선택 가능한 연차 서브유형 — 저장된 override가 연차 계열인지 판별할 때 재사용
+const LEAVE_SUBTYPES = new Set(['연차', '오전반차', '오후반차', '오전반반차', '오후반반차'])
 
 // 3종 체계(지각/근무시간미달/미태깅) — 조기퇴근은 근무시간미달로 통합.
 const ANOMALY_STATUSES = new Set(['지각', '미태깅', '이상치'])
@@ -241,6 +236,12 @@ export default function AdminDashboard() {
   }, [dateRange.from, dateRange.to])
 
   // ── Data pipeline ─────────────────────────────────────────────────────────
+  // 회사 지정 공휴일 맵 — 수기입력 synthetic record의 dayType/dayLabel 산정에 재사용
+  const companyHolsMap = useMemo(
+    () => new Map((policy.companyHolidays ?? []).map(h => [h.date, h.label])),
+    [policy.companyHolidays],
+  )
+
   const overriddenRawRecords = useMemo(() => {
     const mapped = baseRecords.map(r => {
       const ov = recordOverrides[`${r.employeeId}_${r.date}`]
@@ -257,27 +258,16 @@ export default function AdminDashboard() {
     // Add synthetic records for manual entries (overrides with no base CAPS record)
     const baseKeys = new Set(baseRecords.map(r => `${r.employeeId}_${r.date}`))
     for (const [key, ov] of Object.entries(recordOverrides)) {
-      if (baseKeys.has(key) || (!ov.clockIn && !ov.clockOut)) continue
+      // 연차 전용 override(clockIn/clockOut 없이 erpLeaveType만 설정)도 합성 대상에 포함
+      if (baseKeys.has(key) || (!ov.clockIn && !ov.clockOut && !ov.erpLeaveType)) continue
       // key = "${employeeId}_${date}", date is always 10 chars (YYYY-MM-DD)
       const date  = key.slice(-10)
       const empId = key.slice(0, -(10 + 1))
-      const dow   = new Date(date + 'T12:00').getDay()
-      const isHol = (policy.companyHolidays ?? []).some(h => h.date === date)
-      const dayType = isHol ? 'HOLIDAY' as const : (dow === 0 || dow === 6) ? 'WEEKEND' as const : 'WEEKDAY' as const
-      mapped.push({
-        employeeId:        empId,
-        date,
-        dayType,
-        dayLabel:          '수기',
-        clockIn:           ov.clockIn  ?? null,
-        clockOut:          ov.clockOut ?? null,
-        erpOtApplied:      false,
-        leaveType:         null,
-        verificationNote:  [ov.memo ? `수기 입력: ${ov.memo}` : '수기 입력'],
-      })
+      const { dayType, dayLabel } = getDayInfo(date, companyHolsMap)
+      mapped.push(synthesizeOverrideRecord(empId, date, dayType, dayLabel, ov))
     }
     return mapped
-  }, [recordOverrides, baseRecords, policy.companyHolidays])
+  }, [recordOverrides, baseRecords, companyHolsMap])
 
   // ── Hardcoded defaults — applied by raw masked employee ID ──────────────
   // These are always active regardless of what's configured in Settings > 예외 규칙.
@@ -373,8 +363,7 @@ export default function AdminDashboard() {
 
     // Apply admin overrides + company-holiday fixup locally
     const needsAnyReprocess = Object.keys(recordOverrides).length > 0 || compHolDates.size > 0
-    if (!needsAnyReprocess) return dateFiltered
-    return dateFiltered.map(r => {
+    const reprocessedExisting = !needsAnyReprocess ? dateFiltered : dateFiltered.map(r => {
       const ov = recordOverrides[`${r.employeeId}_${r.date}`]
       // Re-process if there's an override, OR if this date is now a company holiday
       // but the cached record was processed as WEEKDAY (stale flag)
@@ -395,7 +384,25 @@ export default function AdminDashboard() {
         policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId),
       )
     })
-  }, [serverProcessed, clientProcessed, dateRange.from, dateRange.to, recordOverrides, policy, otExemptIds, slackNoteMap, finalAttrMap])
+
+    // 원본 CAPS/ERP 행이 아예 없는 override(예: 결근일/주말 수기입력) — dateFiltered에 대응 행이
+    // 없어서 위 map에서 재계산될 기회조차 없었다. 이런 override만 골라 새 레코드로 합성해서 추가.
+    // 캐시된 대량 레코드는 그대로 두고, 합성된 소수의 신규 행만 processRecord()로 계산 — 성능 영향 없음.
+    if (Object.keys(recordOverrides).length === 0) return reprocessedExisting
+    const existingKeys = new Set(dateFiltered.map(r => `${r.employeeId}_${r.date}`))
+    const synthesized: ProcessedRecord[] = []
+    for (const [key, ov] of Object.entries(recordOverrides)) {
+      if (existingKeys.has(key)) continue
+      const date = key.slice(-10)
+      if (date < dateRange.from || date > dateRange.to) continue
+      if (!ov.clockIn && !ov.clockOut && !ov.erpLeaveType) continue
+      const empId = key.slice(0, -(10 + 1))
+      const { dayType, dayLabel } = getDayInfo(date, companyHolsMap)
+      const raw = synthesizeOverrideRecord(empId, date, dayType, dayLabel, ov)
+      synthesized.push(processRecord(raw, policy, otExemptIds, slackNoteMap, finalAttrMap.get(empId)))
+    }
+    return synthesized.length ? [...reprocessedExisting, ...synthesized] : reprocessedExisting
+  }, [serverProcessed, clientProcessed, dateRange.from, dateRange.to, recordOverrides, policy, otExemptIds, slackNoteMap, finalAttrMap, companyHolsMap])
 
   // Build hire-date map from employee rawId (format E{YY}{MM}{DD}{SEQ} → 20YY-MM-DD).
   // Used to exclude records before an employee's hire date even when cached data predates this fix.
@@ -432,12 +439,12 @@ export default function AdminDashboard() {
   )
 
   // 기간 내 재직 중인 직원만 headcount 산정에 포함
-  // - 퇴사자: resignedFrom이 기간 시작 이전이면 제외 (기간 중 퇴사는 포함)
+  // - 퇴사자: resignedFrom 미설정 시 무조건 제외, 설정돼 있으면 기간 시작 이전일 때만 제외 (기간 중 퇴사는 포함)
   // - 미입사자: 입사일이 기간 종료 이후이면 제외
   const metricsEmployees = useMemo(
     () => scopedEmployees.filter(e => {
       const attrs = finalAttrMap.get(e.id)
-      if (attrs?.isResigned && attrs.resignedFrom && attrs.resignedFrom < dateRange.from) return false
+      if (attrs?.isResigned && (!attrs.resignedFrom || attrs.resignedFrom < dateRange.from)) return false
       const hd = hireDateMap.get(e.id)
       if (hd && hd > dateRange.to) return false
       return true
@@ -828,18 +835,23 @@ export default function AdminDashboard() {
     if (!manualCell) return
     const { employeeId, date } = manualCell
     const key = `${employeeId}_${date}`
+    // 연차(및 서브유형)는 payload.leaveType으로 전달됨 — 그 외 재택근무/출장은 기존처럼 erpLeaveType에 직접 매핑.
+    // 둘 다 동일한 erpLeaveType override 파이프라인(leaveTypeOverrideFields → processRecord)을 탄다.
+    const erpLeaveType = payload.leaveType
+      ?? (payload.attendanceType === '재택근무' ? '재택근무'
+        : payload.attendanceType === '출장'    ? '출장'
+        : null)
+    const displayLabel = payload.leaveType ?? payload.attendanceType
     const next = {
       ...recordOverrides,
       [key]: {
         clockIn:      payload.clockIn,
         clockOut:     payload.clockOut,
         erpOtApplied: null,
-        erpLeaveType: payload.attendanceType === '재택근무' ? '재택근무'
-                    : payload.attendanceType === '출장'    ? '출장'
-                    : null,
+        erpLeaveType,
         memo:         payload.memo || undefined,
         editHistory:  [],
-        reasonLabel:  `수기 입력 (${payload.attendanceType})`,
+        reasonLabel:  `수기 입력 (${displayLabel})`,
       },
     }
     setRecordOverrides(next as typeof recordOverrides)
@@ -1730,14 +1742,18 @@ export default function AdminDashboard() {
         const emp = baseEmployees.find(e => e.id === manualCell.employeeId) ?? null
         if (!emp) return null
         const ov = recordOverrides[`${manualCell.employeeId}_${manualCell.date}`]
+        const isLeaveOv = !!(ov && ov.erpLeaveType && LEAVE_SUBTYPES.has(ov.erpLeaveType))
+        const { dayType } = getDayInfo(manualCell.date, companyHolsMap)
         return (
           <ManualEntryModal
             employee={emp}
             date={manualCell.date}
+            dayType={dayType}
             initial={ov ? {
               clockIn:        ov.clockIn  ?? undefined,
               clockOut:       ov.clockOut ?? undefined,
-              attendanceType: ov.reasonLabel?.replace('수기 입력 (', '').replace(')', '') ?? '기타',
+              attendanceType: isLeaveOv ? '연차' : (ov.reasonLabel?.replace('수기 입력 (', '').replace(')', '') ?? '기타'),
+              leaveType:      isLeaveOv ? ov.erpLeaveType : null,
               memo:           ov.memo,
             } : undefined}
             onClose={() => setManualCell(null)}

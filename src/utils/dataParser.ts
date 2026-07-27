@@ -207,7 +207,7 @@ export function normalizeTime(raw: string | null | undefined): string | null {
 
 // ── Day-type helper ───────────────────────────────────────────────────────
 
-function getDayInfo(
+export function getDayInfo(
   dateStr: string,
   companyHols: Map<string, string> = new Map(),
 ): { dayType: DayType; dayLabel: string } {

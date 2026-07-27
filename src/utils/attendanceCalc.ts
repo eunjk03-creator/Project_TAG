@@ -5,7 +5,7 @@
  * Single source of truth for both the UI table and Excel export.
  * All hour values are decimal (e.g. 8h 30m = 8.5).
  */
-import type { DayType, ErpLeaveType } from '@/types/tag'
+import type { DayType, ErpLeaveType, RawRecord } from '@/types/tag'
 
 /** Parse "HH:MM" or "+HH:MM" (next-day punch) → total minutes from midnight. */
 export function parseTimeToMins(t: string): number {
@@ -241,6 +241,53 @@ export function erpLeaveTypeToAmount(leaveType: string): number {
   if (leaveType === '오전반반차' || leaveType === '오후반반차') return 0.25
   if (leaveType === '연차') return 1.0
   return 0.5  // 오전반차, 오후반차, 생일반차, 기타 반차류
+}
+
+/** erpLeaveType override 문자열 → { leaveType, erpLeaveAmount }. amount>=1.0(오전+오후 반차 합산 등)이면
+ *  buildLeaveMap 정규화와 일관되게 '연차'로 통일.
+ *  admin/page.tsx, admin/fast/page.tsx, compute-attendance route, recompute 스크립트, 리포트 export가
+ *  모두 이 함수 하나만 참조하도록 단일 정의로 공유한다 (과거 페이지마다 따로 정의했던 것을 통합). */
+export function leaveTypeOverrideFields(erpLeaveType: string): { leaveType: ErpLeaveType | null; erpLeaveAmount: number } {
+  const amount = erpLeaveTypeToAmount(erpLeaveType)
+  const primaryType: ErpLeaveType | null = erpLeaveType === '없음' ? null
+    : amount >= 1.0 ? '연차'
+    : (erpLeaveType.split(',')[0].trim() as ErpLeaveType)
+  return { leaveType: primaryType, erpLeaveAmount: amount }
+}
+
+/** 관리자 override의 clockIn/clockOut/erpOtApplied/erpLeaveType 필드 형태 — 클라이언트 RecordOverride와
+ *  Prisma AttendanceOverride 행 양쪽 모두 구조적으로 호환된다. */
+export interface OverridePatch {
+  clockIn:      string | null
+  clockOut:     string | null
+  erpOtApplied: boolean | null
+  erpLeaveType: string | null
+  memo?:        string | null
+}
+
+/**
+ * 관리자가 수기 입력한 근태(예: 재택근무·연차)인데 원본 CAPS/ERP 행이 아예 없는 경우를 위한
+ * 합성 RawRecord 생성. dayType/dayLabel은 호출부가 dataParser.getDayInfo()로 미리 계산해 전달한다
+ * (attendanceCalc.ts는 dataParser.ts가 이미 import하고 있어 순환참조를 피하려고 직접 import하지 않음).
+ */
+export function synthesizeOverrideRecord(
+  employeeId: string,
+  date:       string,
+  dayType:    DayType,
+  dayLabel:   string,
+  ov:         OverridePatch,
+): RawRecord {
+  return {
+    employeeId,
+    date,
+    dayType,
+    dayLabel,
+    clockIn:          ov.clockIn  ?? null,
+    clockOut:         ov.clockOut ?? null,
+    erpOtApplied:     ov.erpOtApplied ?? false,
+    verificationNote: [ov.memo ? `수기 입력: ${ov.memo}` : '수기 입력'],
+    ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+  }
 }
 
 export function normalizeLeaveType(

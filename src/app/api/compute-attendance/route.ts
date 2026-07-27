@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { processRecord } from '@/lib/processRecord'
 import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
+import { leaveTypeOverrideFields, synthesizeOverrideRecord } from '@/utils/attendanceCalc'
+import { getDayInfo } from '@/utils/dataParser'
 import { DEFAULT_POLICY } from '@/types/tag'
 import type { PolicySettings, RawRecord, Employee } from '@/types/tag'
 
@@ -60,7 +62,7 @@ export async function POST(req: NextRequest) {
     const overrideMap = new Map(
       overrides.map(ov => [`${ov.employeeId}_${ov.workDate}`, ov]),
     )
-    const overriddenRecords = rawRecords.map(r => {
+    const overriddenRecords: RawRecord[] = rawRecords.map(r => {
       const ov = overrideMap.get(`${r.employeeId}_${r.date}`)
       if (!ov) return r
       return {
@@ -68,8 +70,24 @@ export async function POST(req: NextRequest) {
         clockIn:      ov.clockIn      ?? r.clockIn,
         clockOut:     ov.clockOut     ?? r.clockOut,
         erpOtApplied: ov.erpOtApplied !== null ? ov.erpOtApplied : r.erpOtApplied,
+        // erpLeaveType 반영 누락 버그 수정 — null=미수정, '없음'=명시적 삭제, 그 외=해당 연차유형으로 교체
+        ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
       }
     })
+
+    // 원본 CAPS/ERP 행이 아예 없는 override(예: 결근일/주말 수기입력)는 위 map에서 재계산될 기회가
+    // 없었다 — 대응하는 새 레코드를 합성해서 추가.
+    const companyHolsMap = new Map((policy.companyHolidays ?? []).map(h => [h.date, h.label]))
+    const rawKeys = new Set(rawRecords.map(r => `${r.employeeId}_${r.date}`))
+    const synthesizedRecords: RawRecord[] = []
+    for (const ov of overrides) {
+      if (ov.reasonLabel === '__DELETED__') continue
+      const key = `${ov.employeeId}_${ov.workDate}`
+      if (rawKeys.has(key)) continue
+      if (!ov.clockIn && !ov.clockOut && !ov.erpLeaveType) continue
+      const { dayType, dayLabel } = getDayInfo(ov.workDate, companyHolsMap)
+      synthesizedRecords.push(synthesizeOverrideRecord(ov.employeeId, ov.workDate, dayType, dayLabel, ov))
+    }
 
     // 4. Load Slack notes
     const slackExcs = await prisma.slackException.findMany()
@@ -81,8 +99,8 @@ export async function POST(req: NextRequest) {
       slackNoteMap.set(key, arr)
     }
 
-    // 5. Process all records server-side
-    const processed = overriddenRecords.map(r =>
+    // 5. Process all records server-side (기존 레코드 + 원본 없는 수기입력 합성 레코드)
+    const processed = [...overriddenRecords, ...synthesizedRecords].map(r =>
       processRecord(r, policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId)),
     )
 
