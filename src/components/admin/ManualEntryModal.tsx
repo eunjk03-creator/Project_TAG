@@ -30,7 +30,7 @@ interface Props {
   onDelete?: () => void
 }
 
-const TYPES = ['재택근무', '출장', '휴일근무', '연장근무', '연차', '기타'] as const
+const TYPES = ['일반근무', '재택근무', '출장', '휴일근무', '연장근무', '연차', '기타'] as const
 
 const LEAVE_SUBTYPES = ['연차', '오전반차', '오후반차', '오전반반차', '오후반반차'] as const
 
@@ -44,7 +44,7 @@ function fmtDate(dateStr: string) {
 export function ManualEntryModal({ employee, date, dayType, initial, onClose, onSave, onDelete }: Props) {
   const [clockIn,        setClockIn]        = useState(initial?.clockIn  ?? '')
   const [clockOut,       setClockOut]       = useState(initial?.clockOut ?? '')
-  const [attendanceType, setAttendanceType] = useState(initial?.attendanceType ?? '재택근무')
+  const [attendanceType, setAttendanceType] = useState(initial?.attendanceType ?? '일반근무')
   const [leaveType,      setLeaveType]      = useState(initial?.leaveType ?? '연차')
   const [memo,           setMemo]           = useState(initial?.memo ?? '')
 
