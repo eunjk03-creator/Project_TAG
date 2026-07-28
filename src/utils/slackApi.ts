@@ -20,6 +20,36 @@ export interface SlackException {
   rawText:  string
 }
 
+export interface SlackAmbiguousCandidate {
+  empId:    string
+  empName:  string
+  division: string
+  team:     string
+}
+
+/**
+ * A 동명이인(same-name) name-group found in one Slack message, surfaced for admin
+ * review regardless of whether the 4-tier heuristic managed to auto-resolve it —
+ * an auto-resolved pick can still be WRONG, so it's shown too, not just failures.
+ */
+export interface SlackAmbiguousMatch {
+  /** `${slack message ts}::${employee name}` — stable per name-group per message,
+   *  used as the key for admin-saved resolutions (SlackNameResolution table). */
+  key:        string
+  empName:    string
+  dates:      string[]
+  type:       SlackExcType
+  note:       string
+  rawText:    string
+  candidates: SlackAmbiguousCandidate[]
+  /** Best guess from the 4-tier dept heuristic — null if it couldn't narrow to 1. */
+  autoPickId: string | null
+  /** True when an admin has explicitly saved a resolution for this key. */
+  isConfirmed: boolean
+  /** Final applied choice: the saved resolution if present, else the auto-pick. */
+  resolvedId: string | null
+}
+
 // ── Keyword patterns ───────────────────────────────────────────────────────
 
 const AM_HALF_RE        = /오전\s*반\s*차/
@@ -217,10 +247,12 @@ export async function fetchSlackMessages(
  *  2. Classify the exception type from keywords.
  *  3. Collect ALL employees whose name-regex matches the message.
  *     - If exactly 1 match → unambiguous, safe to record.
- *     - If >1 matches → require department context disambiguation:
- *         a. Filter to employees whose division or team name appears in the message.
- *         b. If exactly 1 survives → use it.
- *         c. Otherwise → skip (log warning). Never guess.
+ *     - If >1 matches (동명이인) → four-tier dept-context disambiguation (see below).
+ *       Every 동명이인 name-group is ALSO recorded in `ambiguousMatches` — even when
+ *       the heuristic narrows to exactly 1 candidate — because the heuristic can be
+ *       wrong; an admin can review/override it in Settings > 슬랙 연동 (persisted via
+ *       `nameResolutions`, keyed by `${msg.ts}::${empName}`, so corrections survive
+ *       the next re-sync instead of being silently recomputed away).
  *     - If 0 matches → skip silently.
  */
 // ── Classification priority (higher = preferred in dedup) ─────────────────
@@ -255,7 +287,10 @@ export function parseSlackExceptions(
   employees: Employee[],
   year:      number,
   slackGroupMap?: Record<string, string>,
-): SlackException[] {
+  /** Admin-confirmed 동명이인 picks from a prior session — key: `${msg.ts}::${empName}` → empId.
+   *  Applied ahead of (and overriding) the 4-tier heuristic so corrections survive re-sync. */
+  nameResolutions: Record<string, string> = {},
+): { exceptions: SlackException[]; ambiguousMatches: SlackAmbiguousMatch[] } {
   // Pre-build per-employee regex (only once per parse)
   const employeePatterns = employees.map(e => ({
     emp:   e,
@@ -263,6 +298,7 @@ export function parseSlackExceptions(
   }))
 
   const results: SlackException[] = []
+  const ambiguousMatches: SlackAmbiguousMatch[] = []
   let noDateCount    = 0
   let noKeywordCount = 0
   let noMatchCount   = 0
@@ -345,7 +381,7 @@ export function parseSlackExceptions(
       console.log(`  메시지: "${text.slice(0, 100)}"`)
     }
 
-    for (const [, group] of byName) {
+    for (const [groupName, group] of byName) {
       if (group.length === 1) {
         // Unique name among matches — record directly, no disambiguation needed
         const { emp } = group[0]
@@ -399,10 +435,31 @@ export function parseSlackExceptions(
           deptMatches = group.filter(({ emp }) => text.includes(emp.division) || text.includes(emp.team))
         }
 
-        if (deptMatches.length === 1) {
-          const { emp } = deptMatches[0]
+        // 자동판별 결과(성공/실패 무관) — 관리자가 파싱 결과 화면에서 확인/수정할 수 있도록
+        // 동명이인 그룹은 항상 ambiguousMatches에 기록한다 (자동판별이 틀렸을 수도 있으므로).
+        const autoPickId = deptMatches.length === 1 ? deptMatches[0].emp.id : null
+        const resolutionKey = `${msg.ts}::${groupName}`
+        const savedPick  = nameResolutions[resolutionKey]
+        const isConfirmed = savedPick != null
+        const resolvedId  = savedPick ?? autoPickId ?? null
+        const resolvedEmp = resolvedId ? group.find(m => m.emp.id === resolvedId)?.emp : undefined
+
+        ambiguousMatches.push({
+          key:         resolutionKey,
+          empName:     groupName,
+          dates,
+          type:        effectiveCls.type,
+          note:        effectiveCls.note,
+          rawText:     text,
+          candidates:  group.map(m => ({ empId: m.emp.id, empName: m.emp.name, division: m.emp.division, team: m.emp.team })),
+          autoPickId,
+          isConfirmed,
+          resolvedId:  resolvedEmp ? resolvedEmp.id : null,
+        })
+
+        if (resolvedEmp) {
           for (const date of dates) {
-            results.push({ empId: emp.id, empName: emp.name, date, type: effectiveCls.type, note: effectiveCls.note, rawText: text })
+            results.push({ empId: resolvedEmp.id, empName: resolvedEmp.name, date, type: effectiveCls.type, note: effectiveCls.note, rawText: text })
           }
         } else {
           ambiguousCount++
@@ -412,7 +469,7 @@ export function parseSlackExceptions(
           const unknownSubteams = extractSubteamIds(text).filter(id => !slackGroupMap?.[id])
           console.warn(
             `[TAG Slack] ⚠ 동명이인 충돌 — ${group.length}명 (${rangeStr}): ${candidateInfo}\n` +
-            `  부서 컨텍스트로도 구분 불가 (deptMatches=${deptMatches.length}). 스킵.\n` +
+            `  부서 컨텍스트로도 구분 불가 (deptMatches=${deptMatches.length}). 파싱 결과 > 동명이인 확인에서 지정하세요.\n` +
             `  메시지: "${text.slice(0, 100)}"` +
             (unknownSubteams.length > 0
               ? `\n  💡 미등록 Subteam ID: [${unknownSubteams.join(', ')}] → 설정 > 슬랙 연동 > 동명이인 부서 구분에 등록하세요.`
@@ -449,6 +506,9 @@ export function parseSlackExceptions(
   if (final.length > 0) {
     console.log('[TAG Slack] 매칭 샘플:', final.slice(0, 5).map(e => `${e.empName}/${e.date}/${e.note}`).join(', '))
   }
+  if (ambiguousMatches.length > 0) {
+    console.log(`[TAG Slack] 동명이인 확인 필요/검토용 ${ambiguousMatches.length}건 (자동판별 ${ambiguousMatches.filter(m => m.resolvedId).length}건 포함)`)
+  }
 
-  return final
+  return { exceptions: final, ambiguousMatches }
 }

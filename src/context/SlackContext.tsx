@@ -8,7 +8,7 @@ import {
   useCallback,
   type ReactNode,
 } from 'react'
-import type { SlackException } from '@/utils/slackApi'
+import type { SlackException, SlackAmbiguousMatch } from '@/utils/slackApi'
 import { fetchSlackMessages, parseSlackExceptions } from '@/utils/slackApi'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { usePolicy } from '@/context/PolicyContext'
@@ -32,12 +32,15 @@ interface SlackContextValue {
   setConfig:       (c: SlackConfig) => void
   exceptions:      SlackException[]
   slackNoteMap:    Map<string, { note: string; rawText: string }[]>
+  ambiguousMatches: SlackAmbiguousMatch[]
   isLoading:       boolean
   lastSynced:      string | null       // human-readable timestamp
   syncedRange:     SyncedRange | null  // machine-readable range that was last synced
   error:           string | null
   fetchAndParse:   () => Promise<void>
   clearExceptions: () => void
+  /** Admin picks (or overrides) which employee an ambiguous 동명이인 match belongs to. */
+  saveNameResolution: (match: SlackAmbiguousMatch, empId: string, empName: string) => Promise<void>
 }
 
 // ── Defaults ──────────────────────────────────────────────────────────────
@@ -96,6 +99,9 @@ export function SlackProvider({ children }: { children: ReactNode }) {
   const [exceptions,  setExceptions]  = useState<SlackException[]>(
     () => loadLS<SlackException[]>(LS_EXCEPTIONS, []),
   )
+  const [ambiguousMatches, setAmbiguousMatches] = useState<SlackAmbiguousMatch[]>([])
+  // msgKey(`${ts}::${empName}`) → 관리자가 확정한 empId. 새로고침해도 남아있어야 하므로 DB에서 로드.
+  const [nameResolutions, setNameResolutions] = useState<Record<string, string>>({})
 
   // 마운트 시 DB에서 공유 Slack 예외 로드 (다른 사용자가 동기화한 데이터 반영)
   useEffect(() => {
@@ -106,6 +112,16 @@ export function SlackProvider({ children }: { children: ReactNode }) {
           setExceptions(rows)
           try { localStorage.setItem(LS_EXCEPTIONS, JSON.stringify(rows)) } catch { localStorage.removeItem(LS_EXCEPTIONS) }
         }
+      })
+      .catch(() => {})
+  }, [])
+
+  // 마운트 시 동명이인 수동 확정 내역 로드 — 다음 파싱부터 바로 반영되도록
+  useEffect(() => {
+    fetch('/api/slack/name-resolutions')
+      .then(r => r.json())
+      .then((rows: { msgKey: string; empId: string }[]) => {
+        setNameResolutions(Object.fromEntries(rows.map(r => [r.msgKey, r.empId])))
       })
       .catch(() => {})
   }, [])
@@ -162,9 +178,11 @@ export function SlackProvider({ children }: { children: ReactNode }) {
       const messages = await fetchSlackMessages(config.token, config.channelId, oldest, latest)
       console.log(`[TAG Slack] API 응답: ${messages.length}건 메시지 수신 (bot/join 제외)`)
 
-      const parsed = parseSlackExceptions(messages, employees, year, policy.slackGroupMap)
+      const { exceptions: parsed, ambiguousMatches: ambig } =
+        parseSlackExceptions(messages, employees, year, policy.slackGroupMap, nameResolutions)
 
       setExceptions(parsed)
+      setAmbiguousMatches(ambig)
       try {
         localStorage.setItem(LS_EXCEPTIONS, JSON.stringify(parsed))
       } catch {
@@ -203,7 +221,7 @@ export function SlackProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false)
     }
-  }, [config, employees])
+  }, [config, employees, nameResolutions])
 
   function clearExceptions() {
     setExceptions([])
@@ -214,12 +232,57 @@ export function SlackProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(LS_SYNCED_RANGE)
   }
 
+  const saveNameResolution = useCallback(async (match: SlackAmbiguousMatch, empId: string, empName: string) => {
+    // 1. DB에 저장 — 재동기화해도 유지되도록
+    try {
+      await fetch('/api/slack/name-resolutions', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ resolutions: [{ msgKey: match.key, empId, empName }] }),
+      })
+    } catch {
+      // DB 저장 실패해도 아래 로컬 반영은 진행 — 다음 새로고침 시 유실될 수 있음을 감수
+    }
+    setNameResolutions(prev => ({ ...prev, [match.key]: empId }))
+    setAmbiguousMatches(prev => prev.map(m =>
+      m.key === match.key ? { ...m, isConfirmed: true, resolvedId: empId } : m,
+    ))
+
+    // 2. 이 메시지로부터 이미 생성된 (잘못됐을 수 있는) exceptions 항목을 제거하고,
+    //    확정된 직원 기준으로 다시 채워넣는다.
+    setExceptions(prev => {
+      const isFromThisMatch = (e: SlackException) =>
+        e.rawText === match.rawText && e.type === match.type && e.note === match.note &&
+        match.dates.includes(e.date) && match.candidates.some(c => c.empId === e.empId)
+      const kept = prev.filter(e => !isFromThisMatch(e))
+      const added = match.dates.map(date => ({
+        empId, empName, date, type: match.type, note: match.note, rawText: match.rawText,
+      }))
+      const next = [...kept, ...added]
+      try { localStorage.setItem(LS_EXCEPTIONS, JSON.stringify(next)) } catch { /* quota */ }
+      // 다른 사용자에게도 반영되도록 DB 전체 교체 — 지금 이 state가 곧 "다음" 전체 목록
+      fetch('/api/slack/exceptions', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(next.map(e => ({
+          empId: e.empId, empName: e.empName, date: e.date,
+          type: e.type, note: e.note, rawText: e.rawText,
+        }))),
+      }).catch(() => {})
+      return next
+    })
+
+    if (isLiveData) {
+      recomputeProcessed().catch(() => {})
+    }
+  }, [isLiveData, recomputeProcessed])
+
   return (
     <SlackContext.Provider value={{
       config, setConfig,
-      exceptions, slackNoteMap,
+      exceptions, slackNoteMap, ambiguousMatches,
       isLoading, lastSynced, syncedRange, error,
-      fetchAndParse, clearExceptions,
+      fetchAndParse, clearExceptions, saveNameResolution,
     }}>
       {children}
     </SlackContext.Provider>

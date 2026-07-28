@@ -13,9 +13,9 @@ interface SavedMapping {
 export function SlackIntegrationTab() {
   const {
     config, setConfig,
-    exceptions,
+    exceptions, ambiguousMatches,
     isLoading, lastSynced, syncedRange, error,
-    fetchAndParse, clearExceptions,
+    fetchAndParse, clearExceptions, saveNameResolution,
   } = useSlack()
   const { policy, setPolicy } = usePolicy()
   const { employees } = useAttendanceSource()
@@ -23,6 +23,10 @@ export function SlackIntegrationTab() {
   const [draft, setDraft] = useState<SlackConfig>({ ...config })
   const [groupIdInput,  setGroupIdInput]  = useState('')
   const [groupDivInput, setGroupDivInput] = useState('')
+
+  // ── 동명이인 확인 (OOO 메시지 파싱 결과) ────────────────────────────────
+  // key(match.key) → 관리자가 드롭다운에서 고른 empId. 초기값은 저장된/자동판별 결과.
+  const [nameResPick, setNameResPick] = useState<Record<string, string>>({})
 
   // ── 직원 ↔ Slack 개인계정 매칭 ─────────────────────────────────────────
   const [savedMappings,  setSavedMappings]  = useState<SavedMapping[]>([])
@@ -497,6 +501,74 @@ export function SlackIntegrationTab() {
           <li>이름: 마스킹된 이름 패턴 자동 매칭 (예: <code className="bg-amber-100 px-1 rounded">기*미</code>)</li>
         </ul>
       </div>
+
+      {/* ── 동명이인 확인 (OOO 메시지 파싱) ── */}
+      {ambiguousMatches.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">
+            동명이인 확인 — {ambiguousMatches.length}건
+          </h3>
+          <p className="text-xs text-gray-400 mb-3">
+            같은 이름의 직원이 여러 명이라 자동판별한 결과입니다. 자동판별도 틀릴 수 있으니 확인 후
+            맞는 직원을 골라 저장해 주세요 — 저장한 선택은 다음 재동기화에도 유지됩니다.
+          </p>
+          <ul className="space-y-2">
+            {ambiguousMatches.map(m => {
+              const picked = nameResPick[m.key] ?? m.resolvedId ?? ''
+              const badge = m.isConfirmed
+                ? { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', label: '✓ 확인됨' }
+                : m.autoPickId
+                ? { cls: 'bg-amber-50 text-amber-700 border-amber-200', label: '자동판별 (미확인)' }
+                : { cls: 'bg-red-50 text-red-700 border-red-200', label: '미해결' }
+              return (
+                <li key={m.key} className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium text-gray-800">{m.empName}</span>
+                    <span className="text-[11px] text-gray-400 tabular-nums">
+                      {m.dates.length > 1 ? `${m.dates[0]} ~ ${m.dates[m.dates.length - 1]}` : m.dates[0]}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      {m.note}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold border ${badge.cls}`}>
+                      {badge.label}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400 truncate" title={m.rawText}>
+                    {m.rawText.length > 80 ? m.rawText.slice(0, 80) + '…' : m.rawText}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={picked}
+                      onChange={e => setNameResPick(prev => ({ ...prev, [m.key]: e.target.value }))}
+                      className="flex-1 text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white"
+                    >
+                      <option value="">직원 선택…</option>
+                      {m.candidates.map(c => (
+                        <option key={c.empId} value={c.empId}>
+                          {c.empName} — {c.division}{c.team && c.team !== c.division ? ` / ${c.team}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      disabled={!picked}
+                      onClick={() => {
+                        const cand = m.candidates.find(c => c.empId === picked)
+                        if (cand) saveNameResolution(m, cand.empId, cand.empName)
+                      }}
+                      className="shrink-0 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-white
+                        border border-blue-200 rounded-md hover:bg-blue-50 disabled:opacity-40
+                        disabled:cursor-not-allowed transition-colors"
+                    >
+                      저장
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
 
       {/* ── Results table ── */}
       {exceptions.length > 0 && (

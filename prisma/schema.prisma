@@ -236,6 +236,19 @@ model SlackException {
   @@map("slack_exceptions")
 }
 
+// ─── 동명이인 Slack 메시지 수동 확정 (재동기화해도 유지) ──
+// msgKey = `${slack message ts}::${employee name}` — 한 메시지 안에 동명이인 그룹이
+// 여러 개일 수 있어 ts 단독이 아니라 이름까지 합쳐야 그룹별로 고유하게 식별된다.
+model SlackNameResolution {
+  id        String   @id @default(uuid())
+  msgKey    String   @unique @map("msg_key")
+  empId     String   @map("emp_id")
+  empName   String   @map("emp_name")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("slack_name_resolutions")
+}
+
 // ─── 공유 데이터 저장소 (CAPS/ERP 공통 공유) ─────────────
 model SharedDataStore {
   key       String   @id
