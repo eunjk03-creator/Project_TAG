@@ -14,7 +14,7 @@ import { EMPLOYEES } from '@/data/orgChart'
 import {
   parseTimeToMins,
   computeGasNightMins,
-  computePayOtMins, computeLeaderPayOtMins, computeHolidayPayMins,
+  computePayOtMins, computeLeaderPayOtMins,
   compute4141BreakMins, computeEffClockIn,
 } from '@/utils/attendanceCalc'
 
@@ -534,13 +534,10 @@ export function AttendanceResultTable({
       const gasNightMins   = computeGasNightMins(r.clockOut, isExactMode ? true : (r.isLeader ?? false))
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60
-      // 급여용 휴일근로: 4+1 반복 패턴 휴게공제 — Button1/2=전사 30분절삭, Button3=전사 노절삭
-      const payrollHolidayH = r.dayType !== 'WEEKDAY' && r.clockIn && r.clockOut
-        ? computeHolidayPayMins(
-            Math.max(0, parseTimeToMins(r.clockOut) - parseTimeToMins(r.clockIn)),
-            isExactMode,
-          ) / 60
-        : 0
+      // 급여용 휴일근로: "최종근무"(r.holidayHours, processRecord.ts의 30분절삭+4단계 고정차감
+      // 공식으로 계산된 인정시간)와 항상 동일한 값을 쓴다 — 휴일근무는 인정값/실제값 토글과
+      // 무관하게 이 값 하나만 존재한다 (연장근로처럼 절삭 전 "실제값" 개념이 없음).
+      const payrollHolidayH = r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0
       const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
       const isOtExempt = r.isLeader === true || otExemptIds?.has(r.employeeId) === true
       // payrollOtH는 미신청 시 0으로 강제되어 '미신청'을 절대 나타낼 수 없었음 — 실제

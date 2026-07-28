@@ -6,7 +6,7 @@ import { useAttendanceData }   from '@/context/AttendanceDataContext'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee, ProcessedRecord } from '@/types/tag'
-import { parseTimeToMins, computeLeaderPayOtMins, computeHolidayPayMins } from '@/utils/attendanceCalc'
+import { computeLeaderPayOtMins } from '@/utils/attendanceCalc'
 
 // ── Format helpers (UI only) ──────────────────────────────────────────────
 
@@ -424,10 +424,9 @@ export function AllowanceTab() {
           }
         }
         if (r.dayType !== 'WEEKDAY') {
-          if (r.clockIn && r.clockOut) {
-            const stayMins = Math.max(0, parseTimeToMins(r.clockOut) - parseTimeToMins(r.clockIn))
-            holidayByMonth[mm] += computeHolidayPayMins(stayMins) / 60
-          }
+          // processRecord.ts의 holidayHours(30분절삭+4단계 고정차감 공식)를 그대로 사용 —
+          // 예전엔 여기서 4+1 반복패턴으로 별도 재계산해서 그리드/최종근무와 숫자가 어긋났음.
+          holidayByMonth[mm] += r.holidayHours ?? 0
         }
         if (r.flag === 'LATE' || r.flag === 'LATE_AND_EARLY_DEPARTURE' || r.flag === 'LATE_AND_ANOMALY') {
           lateByMonth[mm] += 1

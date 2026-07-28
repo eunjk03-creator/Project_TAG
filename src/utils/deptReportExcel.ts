@@ -9,6 +9,10 @@ import { parseTimeToMins, compute4141BreakMins, computeEffInMins } from '@/utils
 // ── 인정시간 크레딧 ON 기준 근무시간 ─────────────────────────────────────────────
 // 그리드 인정시간 크레딧 ON과 동일 계산: effectiveClockIn(반차보정) + 4/1/4/1 휴게 + 연차크레딧
 function recognizedHours(r: ProcessedRecord): number {
+  // 휴일근무는 processRecord.ts의 holidayHours(30분절삭+4단계 고정차감)를 그대로 사용 —
+  // 평일용 4/1/4/1 슬라이딩 공식을 적용하면 그리드/최종근무와 숫자가 어긋난다.
+  if (r.dayType !== 'WEEKDAY') return r.holidayHours ?? 0
+
   const isSlackInj    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
   const isErpApproved = r.leaveType ? !isSlackInj : true
   const credit        = (isErpApproved && !r.isUnpaidLeave && r.erpLeaveAmount) ? r.erpLeaveAmount * 8 : 0
