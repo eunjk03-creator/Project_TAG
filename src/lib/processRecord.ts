@@ -482,11 +482,16 @@ export function processRecord(
       const outMins   = parseTime(clockOut)
       const rawElapsed    = outMins - inMins
       const lunchDeducted = outMins > lunchEndMins && inMins < lunchStartMins
-      const breakMins     = rawElapsed >= 10 * 60 ? 120
-        : rawElapsed >= 8 * 60 ? 60
-        : rawElapsed >= 4 * 60 ? 30
-        : 0
-      const elapsed       = Math.max(0, rawElapsed - breakMins)
+      // 휴일근무 전용 산정 — 평일(computeDisplayBreakMins)과 다른 별도 규칙:
+      // 1) 체류시간을 30분 단위로 내림 (1~29분 버림, 30~59분→30분)
+      // 2) 내림된 시간 구간별로 휴게시간 고정 차감 (구간 경계값은 아래쪽 구간에 포함,
+      //    단 12시간 경계만 예외적으로 위쪽 구간에 포함 — 실측 예시 기준)
+      const truncatedElapsed = Math.floor(rawElapsed / 30) * 30
+      const breakMins = truncatedElapsed <= 240 ? 0
+        : truncatedElapsed <= 480 ? 30
+        : truncatedElapsed < 720  ? 60
+        : 120
+      const elapsed = Math.max(0, truncatedElapsed - breakMins)
       return applySlack({
         ...base,
         effectiveClockIn: fmtMins(inMins),
