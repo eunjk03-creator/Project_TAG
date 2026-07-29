@@ -324,6 +324,49 @@ export function CsvUploader() {
   const [expanded,  setExpanded]  = useState(false)
   const [isSaving,  setIsSaving]  = useState(false)
 
+  // ── 업로드 잠금 — 탭당 1회만 확인(sessionStorage), 새로고침하면 다시 물어봄 ──────
+  const [unlocked,     setUnlocked]     = useState(
+    () => typeof window !== 'undefined' && sessionStorage.getItem('tag_upload_unlocked') === '1',
+  )
+  const [showPwPrompt, setShowPwPrompt] = useState(false)
+  const [pwInput,      setPwInput]      = useState('')
+  const [pwError,      setPwError]      = useState<string | null>(null)
+  const [pwChecking,   setPwChecking]   = useState(false)
+
+  function handleUploadToggleClick() {
+    if (expanded)  { setExpanded(false); return }
+    if (unlocked)  { setExpanded(true);  return }
+    setPwError(null)
+    setShowPwPrompt(true)
+  }
+
+  async function submitUploadPassword() {
+    if (!pwInput || pwChecking) return
+    setPwChecking(true)
+    setPwError(null)
+    try {
+      const res  = await fetch('/api/upload-auth', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ password: pwInput }),
+      })
+      const data = await res.json() as { ok: boolean }
+      if (data.ok) {
+        setUnlocked(true)
+        sessionStorage.setItem('tag_upload_unlocked', '1')
+        setShowPwPrompt(false)
+        setPwInput('')
+        setExpanded(true)
+      } else {
+        setPwError('암호가 올바르지 않습니다.')
+      }
+    } catch {
+      setPwError('확인 중 오류가 발생했습니다. 다시 시도해 주세요.')
+    } finally {
+      setPwChecking(false)
+    }
+  }
+
   function setCapsSlot(idx: number, s: SlotState) {
     setCapsSlots(prev => prev.map((v, i) => i === idx ? s : v))
   }
@@ -578,7 +621,7 @@ export function CsvUploader() {
             </button>
           )}
           <button
-            onClick={() => setExpanded(v => !v)}
+            onClick={handleUploadToggleClick}
             className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 transition-colors font-medium"
             aria-label={expanded ? '업로더 접기' : '업로더 펼치기'}
           >
@@ -592,6 +635,40 @@ export function CsvUploader() {
           </button>
         </div>
       </div>
+
+      {/* ── Password gate — 파일 업로드 펼치기 전 확인 ───────────────────── */}
+      {showPwPrompt && (
+        <div className="border-t border-gray-100 px-4 py-3 bg-gray-50">
+          <p className="text-[11px] font-semibold text-gray-600 mb-1.5">파일 업로드 암호 확인</p>
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              autoFocus
+              value={pwInput}
+              onChange={e => { setPwInput(e.target.value); setPwError(null) }}
+              onKeyDown={e => { if (e.key === 'Enter') void submitUploadPassword() }}
+              placeholder="암호 입력"
+              className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg
+                focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+            />
+            <button
+              onClick={() => void submitUploadPassword()}
+              disabled={!pwInput || pwChecking}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 text-white
+                hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {pwChecking ? '확인 중…' : '확인'}
+            </button>
+            <button
+              onClick={() => { setShowPwPrompt(false); setPwInput(''); setPwError(null) }}
+              className="text-xs text-gray-400 hover:text-gray-600 px-1"
+            >
+              취소
+            </button>
+          </div>
+          {pwError && <p className="text-[10px] text-red-500 mt-1">{pwError}</p>}
+        </div>
+      )}
 
       {/* ── Expandable upload body ──────────────────────────────────────── */}
       {expanded && (
