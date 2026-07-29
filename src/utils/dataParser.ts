@@ -546,12 +546,16 @@ export interface ParseResult {
 }
 
 export function parseAttendanceData(
-  capsData: CapsRow[],
-  erpData:  ErpUnifiedRow[],   // single unified ERP array — leave + OT rows mixed
-  policy:   PolicySettings = DEFAULT_POLICY,
+  capsData:       CapsRow[],
+  erpData:        ErpUnifiedRow[],   // single unified ERP array — leave + OT rows mixed
+  policy:         PolicySettings = DEFAULT_POLICY,
+  // Merge 업로드 시 이번 CAPS 배치에 없는 기존 직원도 ERP 휴가/연장 매칭 대상에 포함시키기 위한 목록.
+  // (그렇지 않으면 이번에 CAPS를 재업로드하지 않은 직원의 ERP 행이 전부 "직원 목록에 없음"으로 스킵됨)
+  knownEmployees: Employee[] = [],
 ): ParseResult {
   const employees   = extractEmployees(capsData)
   const employeeMap = new Map(employees.map(e => [e.id, e]))
+  for (const e of knownEmployees) if (!employeeMap.has(e.id)) employeeMap.set(e.id, e)
 
   // Both maps receive the same unified array; each filters internally by 근태코드
   const companyHolsMap = new Map((policy.companyHolidays ?? []).map(h => [h.date, h.label]))

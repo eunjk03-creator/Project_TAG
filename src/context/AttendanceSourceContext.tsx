@@ -433,11 +433,13 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     caps: CapsRow[],
     erp:  ErpUnifiedRow[],
   ): Promise<ParseResult & { addedCount: number; updatedCount: number }> => {
-    const newResult     = parseAttendanceData(caps, erp, policy)
-    const newNormalized = normalizeDivisions(newResult.employees)
-
-    // 기존 DB 데이터 로드
+    // 기존 DB 데이터 먼저 로드 — 이번 CAPS 배치에 없는 기존 직원도 ERP 휴가/연장 매칭 대상에
+    // 포함시켜야 함(안 그러면 이번에 CAPS를 재업로드하지 않은 직원의 ERP 행이 전부
+    // "직원 목록에 없음"으로 스킵되어 매칭 건수가 실제보다 크게 적게 나옴).
     const { data: existing } = await dbGet()
+
+    const newResult     = parseAttendanceData(caps, erp, policy, existing?.employees ?? [])
+    const newNormalized = normalizeDivisions(newResult.employees)
 
     // 기존 데이터 없으면 전체 교체와 동일하게 처리
     if (!existing || existing.rawRecords.length === 0) {
