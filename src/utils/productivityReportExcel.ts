@@ -23,6 +23,13 @@ function isLeaderOnDate(emp: Employee, attrs: EmployeeAttributeOverrides | undef
 // ── 일자별 근로시간/연장/크레딧 (그리드·SummaryTab §4 공식과 동일) ──────────────
 
 function computeDaily(r: ProcessedRecord, isLeaderToday: boolean): { total: number; ot: number; night: number } {
+  // 휴일근무는 평일과 다른 별도 휴게공식(processRecord.ts의 holidayHours, 30분절삭+4단계
+  // 고정차감)을 쓰고 OT/연장 개념 자체가 없음(전체 인정시간이 그대로 휴일근로) — 아래
+  // compute4141BreakMins 기반 평일 공식으로 재계산하면 안 됨. r.holidayHours를 그대로 사용.
+  if (r.isHolidayWork || r.finalStatus === '휴일근무') {
+    return { total: r.holidayHours ?? 0, ot: 0, night: r.nightHours ?? 0 }
+  }
+
   const isSlackInj    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
   const isErpApproved = r.leaveType ? !isSlackInj : true
   const credit         = (!r.isUnpaidLeave && !isSlackInj && r.erpLeaveAmount) ? r.erpLeaveAmount * 8 : 0
@@ -131,16 +138,21 @@ function buildProductivitySheet(
 
     // 상세행 (접힘)
     const dayRows = p.rows.sort((a, b) => a.r.date.localeCompare(b.r.date))
-    ;['', '근무일자', '출근', '퇴근', '근무시간(h)', '연장(h)', '야간(h)', '비고'].forEach((h, ci) =>
+    ;['', '근무일자', '출근', '퇴근', '근무시간(h)', '연장(h)', '야간(h)', '연차일수', '연차코드', '비고'].forEach((h, ci) =>
       sc(ws, ci, R, h, h ? S('E8E8E8', true, '555555', 'center', 9) : S('E8E8E8', false, 'AAAAAA', 'center', 9))
     )
     rowHpt.push({ hpt: 15, level: 1, hidden: 1 }); R++
 
     dayRows.forEach(({ r, total, ot, night }) => {
+      // 출근/퇴근 미기록이 '연차라서 원래 안 찍힘'인지 '진짜 미태깅(이상치)'인지 구분
+      const isFlaggedNoTag = r.flag === 'NO_CLOCK_IN' || r.flag === 'NO_CLOCK_OUT'
+      const inLabel  = r.clockIn  ?? (isFlaggedNoTag ? '미태깅' : (r.leaveType ? '-' : '미태깅'))
+      const outLabel = r.clockOut ?? (isFlaggedNoTag ? '미태깅' : (r.leaveType ? '-' : '미태깅'))
       const note = (r.flag ? ANOM_LABEL[r.flag] : '') || (r.isHolidayWork || r.finalStatus === '휴일근무' ? '휴일근무' : '')
-      ;['', r.date, r.clockIn ?? '미태깅', r.clockOut ?? '미태깅',
-        +total.toFixed(2), +ot.toFixed(2), +night.toFixed(2), note].forEach((v, ci) => {
-        const color = ci === 7 && v ? 'C00000' : '555555'
+      ;['', r.date, inLabel, outLabel,
+        +total.toFixed(2), +ot.toFixed(2), +night.toFixed(2),
+        r.erpLeaveAmount ?? '', r.leaveType ?? '', note].forEach((v, ci) => {
+        const color = ci === 9 && v ? 'C00000' : '555555'
         sc(ws, ci, R, v as string | number, S('FFFFFF', false, color, 'center', 9))
       })
       rowHpt.push({ hpt: 16, level: 1, hidden: 1 }); R++
