@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import type { ProcessedRecord, Employee } from '@/types/tag'
 import { DIVISION_ORDER } from '@/data/orgChart'
-import { computeEffInMins, compute4141BreakMins, parseTimeToMins } from '@/utils/attendanceCalc'
+import { computeEffInMins, compute4141BreakMins, parseTimeToMins, flagToAnomalyCategories } from '@/utils/attendanceCalc'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -250,18 +250,6 @@ export function SummaryTab({ records, employees, dateFrom, dateTo, leaderIdSet }
 
   type AnomalyCounts = { late: number; shortage: number; notag: number; total: number }
 
-  // 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE/LATE_AND_EARLY_DEPARTURE는
-  // 재계산 전 캐시된 레코드에서만 남아있을 수 있음(하위호환), 근무시간미달로 통합.
-  function flagToCategories(flag: string): Array<keyof Omit<AnomalyCounts, 'total'>> {
-    if (flag === 'LATE')                     return ['late']
-    if (flag === 'EARLY_DEPARTURE')          return ['shortage']
-    if (flag === 'LATE_AND_EARLY_DEPARTURE') return ['late', 'shortage']
-    if (flag === 'ATTENDANCE_ANOMALY')       return ['shortage']
-    if (flag === 'LATE_AND_ANOMALY')         return ['late', 'shortage']
-    if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') return ['notag']
-    return []
-  }
-
   const divAnomalyData = useMemo(() => {
     type DivRow = AnomalyCounts & { division: string }
     const divMap = new Map<string, DivRow>()
@@ -271,7 +259,7 @@ export function SummaryTab({ records, employees, dateFrom, dateTo, leaderIdSet }
       const div = empMap.get(r.employeeId)?.division ?? '—'
       if (!divMap.has(div)) divMap.set(div, { division: div, late: 0, shortage: 0, notag: 0, total: 0 })
       const row = divMap.get(div)!
-      for (const cat of flagToCategories(r.flag)) row[cat]++
+      for (const cat of flagToAnomalyCategories(r.flag)) row[cat]++
       row.total++
     }
 
@@ -296,7 +284,7 @@ export function SummaryTab({ records, employees, dateFrom, dateTo, leaderIdSet }
       const name = emp?.name ?? r.employeeId
       if (!empMap2.has(r.employeeId)) empMap2.set(r.employeeId, { division: div, name, late: 0, shortage: 0, notag: 0, total: 0 })
       const row = empMap2.get(r.employeeId)!
-      for (const cat of flagToCategories(r.flag)) row[cat]++
+      for (const cat of flagToAnomalyCategories(r.flag)) row[cat]++
       row.total++
     }
 

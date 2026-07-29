@@ -5,7 +5,27 @@
  * Single source of truth for both the UI table and Excel export.
  * All hour values are decimal (e.g. 8h 30m = 8.5).
  */
-import type { DayType, ErpLeaveType, RawRecord } from '@/types/tag'
+import type { DayType, ErpLeaveType, RawRecord, SieveFlag } from '@/types/tag'
+
+export type AnomalyCategory = 'late' | 'shortage' | 'notag'
+
+/**
+ * SieveFlag → 3종 체계(지각/근무시간미달/미태깅) 분류. 혼합 플래그(LATE_AND_*)는 두 카테고리
+ * 모두에 집계된다. EARLY_DEPARTURE/LATE_AND_EARLY_DEPARTURE는 재계산 전 캐시된 레코드에서만
+ * 남아있을 수 있는 하위호환 값 — 근무시간미달로 통합.
+ *
+ * 예전엔 SummaryTab.tsx/deptReportExcel.ts/admin/page.tsx/AttendanceResultTable.tsx 4곳에
+ * 각자 따로 정의돼 있던 걸 여기 하나로 통합함 — 새 집계 코드는 반드시 이 함수를 재사용할 것.
+ */
+export function flagToAnomalyCategories(flag: SieveFlag): AnomalyCategory[] {
+  if (flag === 'LATE')                     return ['late']
+  if (flag === 'EARLY_DEPARTURE')          return ['shortage']
+  if (flag === 'LATE_AND_EARLY_DEPARTURE') return ['late', 'shortage']
+  if (flag === 'ATTENDANCE_ANOMALY')       return ['shortage']
+  if (flag === 'LATE_AND_ANOMALY')         return ['late', 'shortage']
+  if (flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT') return ['notag']
+  return []
+}
 
 /** Parse "HH:MM" or "+HH:MM" (next-day punch) → total minutes from midnight. */
 export function parseTimeToMins(t: string): number {

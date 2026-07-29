@@ -1,7 +1,6 @@
 'use client'
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { useAttendanceLogic } from '@/hooks/useAttendanceLogic'
-import { processRecord } from '@/lib/processRecord'
+import { useProcessedAttendance } from '@/hooks/useProcessedAttendance'
 import { useManagementMetrics } from '@/hooks/useManagementMetrics'
 import { usePolicy } from '@/context/PolicyContext'
 import { EmployeeCalendarGrid } from '@/components/admin/EmployeeCalendarGrid'
@@ -24,13 +23,12 @@ import { AllowanceTab }          from '@/components/admin/AllowanceTab'
 import {
   computeWorkA, computeStatusN,
   computeDisplayBreakMins, parseTimeToMins,
-  leaveTypeOverrideFields, synthesizeOverrideRecord,
 } from '@/utils/attendanceCalc'
 import { getDayInfo } from '@/utils/dataParser'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useSlack } from '@/context/SlackContext'
-import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
+import type { Employee, ProcessedRecord } from '@/types/tag'
 import { HR_THRESHOLDS, EXEC_THRESHOLDS } from '@/types/tag'
 import type { RiskView, ProcessedRecord as PR } from '@/types/tag'
 import { sortByDivisionOrder } from '@/data/orgChart'
@@ -102,7 +100,7 @@ type View = 'grid' | 'table' | 'summary' | 'allowance'
 
 export default function AdminDashboard() {
   const { policy } = usePolicy()
-  const { openDrawer, exceptions, excludeFromOtIds, employeeAttrMap, exceptionRules } = useEmployeeExceptions()
+  const { openDrawer, exceptions } = useEmployeeExceptions()
   const { dateRange, setDateRange } = useDateRange()
   const { recordOverrides, setRecordOverrides, resolutions, setResolutions, saveOverride, deletedKeys, deleteRecord } = useAttendanceData()
   const {
@@ -110,7 +108,7 @@ export default function AdminDashboard() {
     processedRecords: serverProcessed, isProcessing: isServerProcessing,
     recomputeProcessed,
   } = useAttendanceSource()
-  const { slackNoteMap, config: slackConfig } = useSlack()
+  const { config: slackConfig } = useSlack()
   const [showSlackReminder, setShowSlackReminder] = useState(false)
 
   const [isMounted,             setIsMounted]             = useState(false)
@@ -236,176 +234,21 @@ export default function AdminDashboard() {
   }, [dateRange.from, dateRange.to])
 
   // ── Data pipeline ─────────────────────────────────────────────────────────
+  // 그리드/테이블/현황/수당집계와 Overview 페이지가 공유하는 파이프라인(override 병합,
+  // 수기입력 합성, 예외규칙/하드코딩 기본값 병합, hire-date/삭제 필터)은
+  // useProcessedAttendance 훅으로 추출됨 — 로직은 그 훅 하나에만 존재.
+  const { records: scopedRecords, finalAttrMap, otExemptIds, globalExclusionIds } =
+    useProcessedAttendance(dateRange.from, dateRange.to)
+
   // 회사 지정 공휴일 맵 — 수기입력 synthetic record의 dayType/dayLabel 산정에 재사용
   const companyHolsMap = useMemo(
     () => new Map((policy.companyHolidays ?? []).map(h => [h.date, h.label])),
     [policy.companyHolidays],
   )
 
-  const overriddenRawRecords = useMemo(() => {
-    const mapped = baseRecords.map(r => {
-      const ov = recordOverrides[`${r.employeeId}_${r.date}`]
-      if (!ov) return r
-      return {
-        ...r,
-        clockIn:      ov.clockIn,
-        clockOut:     ov.clockOut,
-        erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
-        ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
-      }
-    })
-
-    // Add synthetic records for manual entries (overrides with no base CAPS record)
-    const baseKeys = new Set(baseRecords.map(r => `${r.employeeId}_${r.date}`))
-    for (const [key, ov] of Object.entries(recordOverrides)) {
-      // 연차 전용 override(clockIn/clockOut 없이 erpLeaveType만 설정)도 합성 대상에 포함
-      if (baseKeys.has(key) || (!ov.clockIn && !ov.clockOut && !ov.erpLeaveType)) continue
-      // key = "${employeeId}_${date}", date is always 10 chars (YYYY-MM-DD)
-      const date  = key.slice(-10)
-      const empId = key.slice(0, -(10 + 1))
-      const { dayType, dayLabel } = getDayInfo(date, companyHolsMap)
-      mapped.push(synthesizeOverrideRecord(empId, date, dayType, dayLabel, ov))
-    }
-    return mapped
-  }, [recordOverrides, baseRecords, companyHolsMap])
-
-  // ── Hardcoded defaults — applied by raw masked employee ID ──────────────
-  // These are always active regardless of what's configured in Settings > 예외 규칙.
-  // User-configured rules take precedence (merged OVER these defaults).
-  const DEFAULT_GLOBAL_EXCLUSIONS = new Set([
-    'E22100401','E22082202','E24010202','E23080702','E24031802',
-    'E22061503','E24031806','E24010203','E18090302','E24111802','E24100705',
-  ])
-  const DEFAULT_FIXED_A  = new Set(['E25122301'])
-  const DEFAULT_FIXED_B  = new Set(['E26030501','E24011001'])
-  const DEFAULT_PREGNANT = new Set(['E25060901','E22080101','E25060902'])
-
-  // Remap exception-rule keys from stale/mock IDs to current live composite keys.
-  // Rules added before a CSV upload store mock IDs (e.g. "E1111111"); this bridges
-  // them to the actual composite keys used by rawRecords (e.g. "E250**1501_김희").
-  const { finalAttrMap, remappedExcludeIds } = useMemo(() => {
-    const normName = (s: string) => s.trim().replace(/\s+/g, '')
-    const nameToId = new Map(baseEmployees.map(e => [normName(e.name), e.id]))
-    const liveIds  = new Set(baseEmployees.map(e => e.id))
-
-    // Build staleId → liveId mapping via name fallback
-    const toLive = new Map<string, string>()
-    for (const rule of exceptionRules) {
-      if (liveIds.has(rule.employeeId)) {
-        toLive.set(rule.employeeId, rule.employeeId)
-      } else {
-        const liveId = nameToId.get(normName(rule.employeeName))
-        if (liveId) toLive.set(rule.employeeId, liveId)
-      }
-    }
-
-    const remappedAttr = new Map<string, EmployeeAttributeOverrides>()
-
-    // 1. Apply hardcoded defaults first (lowest priority)
-    for (const emp of baseEmployees) {
-      const rawId = emp.rawId ?? emp.id.split('_')[0]
-      let def: EmployeeAttributeOverrides | null = null
-      if (DEFAULT_GLOBAL_EXCLUSIONS.has(rawId))   def = { isGlobalExclusion: true }
-      else if (DEFAULT_FIXED_A.has(rawId))         def = { isFixedScheduleA: true }
-      else if (DEFAULT_FIXED_B.has(rawId))         def = { isFixedScheduleB: true }
-      else if (DEFAULT_PREGNANT.has(rawId))        def = { isPregnantReduced: true }
-      if (def) remappedAttr.set(emp.id, def)
-    }
-
-    // 2. Merge user-configured rules on top (higher priority — overrides defaults)
-    for (const [staleId, attrs] of employeeAttrMap) {
-      const liveId = toLive.get(staleId) ?? staleId
-      remappedAttr.set(liveId, { ...(remappedAttr.get(liveId) ?? {}), ...attrs })
-    }
-
-    const remappedExclude = new Set<string>()
-    for (const staleId of excludeFromOtIds) {
-      remappedExclude.add(toLive.get(staleId) ?? staleId)
-    }
-
-    return { finalAttrMap: remappedAttr, remappedExcludeIds: remappedExclude }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [employeeAttrMap, excludeFromOtIds, exceptionRules, baseEmployees])
-
-  // 전체제외 직원 ID 집합 — 그리드·테이블에서 숨김
-  const globalExclusionIds = useMemo(
-    () => new Set(
-      [...finalAttrMap.entries()]
-        .filter(([, attrs]) => attrs.isGlobalExclusion)
-        .map(([id]) => id)
-    ),
-    [finalAttrMap],
-  )
-
-  // Merge user-defined OT exemptions + auto-detected leaders from CSV
-  const otExemptIds = useMemo(() => new Set([
-    ...remappedExcludeIds,
-    ...baseEmployees.filter(e => e.isLeader).map(e => e.id),
-  ]), [remappedExcludeIds, baseEmployees])
-
-  // ── Fallback: full client-side computation (used when server result not yet available) ──
-  const { processed: clientProcessed } = useAttendanceLogic(
-    serverProcessed ? [] : overriddenRawRecords,
-    policy, dateRange.from, dateRange.to, otExemptIds, slackNoteMap, finalAttrMap,
-  )
-
-  // ── Main processed records: server-computed when available, client fallback otherwise ──
-  const allProcessed = useMemo<ProcessedRecord[]>(() => {
-    if (!serverProcessed) return clientProcessed
-
-    // Fast path: date-range filter only (O(n) scan, no heavy computation)
-    const dateFiltered = serverProcessed.filter(
-      r => r.date >= dateRange.from && r.date <= dateRange.to,
-    )
-
-    // company holiday dates added AFTER the server-side compute need local re-processing
-    const compHolDates = new Set((policy.companyHolidays ?? []).map(h => h.date))
-
-    // Apply admin overrides + company-holiday fixup locally
-    const needsAnyReprocess = Object.keys(recordOverrides).length > 0 || compHolDates.size > 0
-    const reprocessedExisting = !needsAnyReprocess ? dateFiltered : dateFiltered.map(r => {
-      const ov = recordOverrides[`${r.employeeId}_${r.date}`]
-      // Re-process if there's an override, OR if this date is now a company holiday
-      // but the cached record was processed as WEEKDAY (stale flag)
-      const needsHolReprocess = compHolDates.has(r.date) && r.dayType === 'WEEKDAY'
-      if (!ov && !needsHolReprocess) return r
-      return processRecord(
-        {
-          ...r,
-          ...(ov ? {
-            clockIn:      ov.clockIn      ?? r.clockIn,
-            clockOut:     ov.clockOut     ?? r.clockOut,
-            erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
-            // erpLeaveType이 명시적으로 설정된 경우에만 연차 정보를 덮어씀
-            // null = 미수정(원본 유지), '없음' = 명시적 삭제, 그 외 = 해당 연차 유형으로 교체
-            ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
-          } : {}),
-        },
-        policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId),
-      )
-    })
-
-    // 원본 CAPS/ERP 행이 아예 없는 override(예: 결근일/주말 수기입력) — dateFiltered에 대응 행이
-    // 없어서 위 map에서 재계산될 기회조차 없었다. 이런 override만 골라 새 레코드로 합성해서 추가.
-    // 캐시된 대량 레코드는 그대로 두고, 합성된 소수의 신규 행만 processRecord()로 계산 — 성능 영향 없음.
-    if (Object.keys(recordOverrides).length === 0) return reprocessedExisting
-    const existingKeys = new Set(dateFiltered.map(r => `${r.employeeId}_${r.date}`))
-    const synthesized: ProcessedRecord[] = []
-    for (const [key, ov] of Object.entries(recordOverrides)) {
-      if (existingKeys.has(key)) continue
-      const date = key.slice(-10)
-      if (date < dateRange.from || date > dateRange.to) continue
-      if (!ov.clockIn && !ov.clockOut && !ov.erpLeaveType) continue
-      const empId = key.slice(0, -(10 + 1))
-      const { dayType, dayLabel } = getDayInfo(date, companyHolsMap)
-      const raw = synthesizeOverrideRecord(empId, date, dayType, dayLabel, ov)
-      synthesized.push(processRecord(raw, policy, otExemptIds, slackNoteMap, finalAttrMap.get(empId)))
-    }
-    return synthesized.length ? [...reprocessedExisting, ...synthesized] : reprocessedExisting
-  }, [serverProcessed, clientProcessed, dateRange.from, dateRange.to, recordOverrides, policy, otExemptIds, slackNoteMap, finalAttrMap, companyHolsMap])
-
   // Build hire-date map from employee rawId (format E{YY}{MM}{DD}{SEQ} → 20YY-MM-DD).
-  // Used to exclude records before an employee's hire date even when cached data predates this fix.
+  // metricsEmployees(재직기간 필터)에서만 별도로 필요 — useProcessedAttendance 내부에도
+  // 동일 계산이 있지만 hireDateMap 자체는 baseEmployees만의 순수 함수라 여기 따로 둬도 저렴함.
   const hireDateMap = useMemo(() => {
     const map = new Map<string, string>()
     for (const e of baseEmployees) {
@@ -415,23 +258,6 @@ export default function AdminDashboard() {
     }
     return map
   }, [baseEmployees])
-
-  // NOTE: overrides (clockIn/clockOut/erpOtApplied/erpLeaveType) are already fully applied
-  // above in `allProcessed` via processRecord() — including next-day '+' prefix detection.
-  // Do NOT re-merge the raw override here: spreading it a second time clobbers the
-  // already-corrected clockOut (e.g. reverts '+02:12' back to '02:12'), which silently
-  // breaks every locally-recomputed table/grid column (근로A, 최종근무, 초과근로, 야간, 휴일근로)
-  // for any overnight shift that crosses midnight.
-  const scopedRecords = useMemo(
-    () => allProcessed.filter(r => {
-      if (!scopedEmployeeIds.has(r.employeeId)) return false
-      if (deletedKeys.has(`${r.employeeId}_${r.date}`)) return false
-      const hd = hireDateMap.get(r.employeeId)
-      if (hd && r.date < hd) return false
-      return true
-    }),
-    [allProcessed, scopedEmployeeIds, deletedKeys, hireDateMap],
-  )
 
   const approvedKeys = useMemo(
     () => new Set(Object.keys(resolutions)),
@@ -777,7 +603,7 @@ export default function AdminDashboard() {
   // ── Grid: parent-level sort (applied before pagination so order is correct across pages) ──
   const gridEmpStats = useMemo(() => {
     const s: Record<string, { ot: number; night: number; holiday: number; anomalies: number }> = {}
-    for (const r of allProcessed) {
+    for (const r of scopedRecords) {
       if (!s[r.employeeId]) s[r.employeeId] = { ot: 0, night: 0, holiday: 0, anomalies: 0 }
       s[r.employeeId].ot       += r.overtimeHours
       s[r.employeeId].night    += r.nightHours
@@ -785,7 +611,7 @@ export default function AdminDashboard() {
       if (r.flag !== null && !approvedKeys.has(`${r.employeeId}_${r.date}`)) s[r.employeeId].anomalies++
     }
     return s
-  }, [allProcessed, approvedKeys])
+  }, [scopedRecords, approvedKeys])
 
   const sortedFilteredEmployees = useMemo(() => {
     if (gridSortDir === 'none') return searchFilteredEmployees
