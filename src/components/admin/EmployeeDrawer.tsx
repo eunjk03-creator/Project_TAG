@@ -168,6 +168,12 @@ export function EmployeeDrawer() {
     if (existing) await patchRule(existing.id, { validFrom: from, validTo: to })
   }
 
+  async function updateResignedDate(from: string) {
+    if (!selectedId) return
+    const existing = exceptionRules.find(r => r.employeeId === selectedId && r.ruleType === 'resigned')
+    if (existing) await patchRule(existing.id, { validFrom: from })
+  }
+
   async function updateShortenedHours(hours: number) {
     if (!selectedId) return
     const existing = exceptionRules.find(r => r.employeeId === selectedId && r.ruleType === 'shortened_hours')
@@ -398,10 +404,27 @@ export function EmployeeDrawer() {
                   label="퇴사자"
                   badge="isResigned"
                   badgeCls="bg-red-100 text-red-600"
-                  desc="퇴사 처리된 직원. 모든 근태 집계 및 이상치 감지에서 완전히 제외됩니다."
+                  desc="퇴사일부터 근태 집계·이상치 감지에서 제외됩니다. 퇴사일을 비워두면 전체 기간이 제외됩니다."
                   value={!!attrs.isResigned}
                   onChange={v => { void toggleAttr('isResigned', v) }}
-                />
+                >
+                  {attrs.isResigned && (() => {
+                    const rule = exceptionRules.find(r => r.employeeId === selectedId && r.ruleType === 'resigned')
+                    return (
+                      <div className="bg-red-50 rounded-lg px-3 py-2 space-y-1.5">
+                        <p className="text-[10px] font-semibold text-red-500 uppercase tracking-wide">퇴사일</p>
+                        <input
+                          type="date"
+                          value={rule?.validFrom ?? ''}
+                          onChange={e => void updateResignedDate(e.target.value)}
+                          className="w-full px-2 py-1 text-xs border border-red-200 rounded-lg
+                            focus:outline-none focus:ring-1 focus:ring-red-400 bg-white"
+                        />
+                        <p className="text-[10px] text-red-400">퇴사일 이전 기록은 정상 집계됩니다. 비워두면 전체 기간이 제외됩니다.</p>
+                      </div>
+                    )
+                  })()}
+                </AttrToggleRow>
               </div>
             </>
           ) : (

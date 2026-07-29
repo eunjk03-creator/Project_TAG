@@ -85,7 +85,10 @@ function buildProductivitySheet(
       const emp = empMap.get(r.employeeId)
       if (!emp) return
       const attrs = finalAttrMap.get(r.employeeId)
-      if (attrs?.isGlobalExclusion || attrs?.isResigned) return
+      if (attrs?.isGlobalExclusion) return
+      // 퇴사자: 퇴사일 이후 레코드만 제외(processRecord.ts와 동일 규칙) — 퇴사일 미설정 시
+      // 기존처럼 전체 제외. 재직 중이던 퇴사 이전 기간의 실적은 그대로 집계에 남아야 함.
+      if (attrs?.isResigned && (!attrs.resignedFrom || r.date >= attrs.resignedFrom)) return
 
       const isLeaderToday = isLeaderOnDate(emp, attrs, r.date)
       const { total, ot, night } = computeDaily(r, isLeaderToday)
