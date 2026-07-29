@@ -508,14 +508,16 @@ export function AttendanceResultTable({
       if (r.overtimeHours > 0) normalTags.push('연장근로')
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
       // Zone 2 — 급여 지표 v2 (Virtual In + 10h 기준선, 버튼 간 완전 격리)
-      // 초과근로 = 급여용연장의 절삭 전(1분단위) 값 — 둘 다 동일한 ERP가드를 거친 뒤
-      // 절삭 유무만 다름. Button3(실제값)은 가드·절삭 모두 해제.
-      // 직책자는 ERP 신청 여부와 무관하게 항상 인정 (기존 방침 유지).
+      // 초과근로 = 실제 근무시간 기준 raw OT(1분단위, 절삭 전) — ERP 연장신청 여부와 무관하게
+      // 항상 표시. "정상정보"의 연장근로 태그(r.overtimeHours 기준, 역시 ERP 무관)와 동일한
+      // 성격의 값이라 태그는 뜨는데 시간 컬럼은 비는 불일치를 없애고, ERP 미신청인데 실제로는
+      // 늦게 퇴근한 케이스를 감사(audit) 목적으로 바로 식별할 수 있게 한다.
+      // 급여용연장(payrollOtH)만 ERP 승인 게이트 + 30분 절삭을 유지 (실제 급여 인정 목적).
       const systemOtMins   = isExactMode
         ? computeLeaderPayOtMins(r.clockIn, r.clockOut, null, true)   // leaveType=null → 08:00 floor, no backtrack, no truncation, no guard
         : (r.isLeader
           ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved)
-          : (r.erpOtApplied ? computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0))
+          : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved))
       const systemOtH      = systemOtMins / 60
       // 급여용 연장: Button1/2=ERP가드+30분절삭(직책자 노절삭), Button3=가드·절삭 모두 해제(초과근로와 동일)
       const gasPayOtMins   = isExactMode
@@ -720,7 +722,7 @@ export function AttendanceResultTable({
     }),
     // ── Zone 2: columns 13–16 (Payroll reference) ───────────────────────────
     col.accessor('systemOtH', {
-      id: 'systemOtH', header: () => <ColTip label="초과근로" tip="MAX(0, 퇴근 − (Virtual In+10h)), 1분 단위 (급여용연장의 절삭 전 값, 직책자 ERP무관)" />, size: 80, minSize: 65,
+      id: 'systemOtH', header: () => <ColTip label="초과근로" tip="MAX(0, 퇴근 − (Virtual In+10h)), 1분 단위 (급여용연장의 절삭 전 값, ERP 신청 여부 무관 — 실제 근무시간 기준 상시 표시)" />, size: 80, minSize: 65,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-medium text-amber-600">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
