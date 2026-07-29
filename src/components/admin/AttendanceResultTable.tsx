@@ -9,7 +9,7 @@ import {
   type ColumnDef, type VisibilityState, type ColumnFiltersState,
   type SortingState, type PaginationState, type FilterFn, type Column,
 } from '@tanstack/react-table'
-import type { ProcessedRecord, Employee } from '@/types/tag'
+import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
 import { EMPLOYEES } from '@/data/orgChart'
 import {
   parseTimeToMins,
@@ -54,6 +54,8 @@ export interface GridRow {
 export interface Props {
   records:                  ProcessedRecord[]
   employees?:               Employee[]
+  /** 직책자 발령/해임일(leaderFrom/leaderTo) 등 예외규칙 — 날짜 기준 직책자 판별에 사용 */
+  employeeAttrMap?:         Map<string, EmployeeAttributeOverrides>
   columnVisibility:         VisibilityState
   onColumnVisibilityChange: (updater: VisibilityState | ((prev: VisibilityState) => VisibilityState)) => void
   onRowClick?:              (employeeId: string, date: string) => void
@@ -105,6 +107,20 @@ function ColTip({ label, tip }: { label: string; tip: string }) {
       )}
     </span>
   )
+}
+
+// 직책자 여부를 발령일(leaderFrom)/해임일(leaderTo) 기준으로 판별 — 날짜 범위가 설정돼
+// 있으면 CSV 자동감지(emp.isLeader)나 예외규칙 boolean보다 우선 적용된다(AllowanceTab.tsx와
+// 동일 규칙). 범위 미설정 시에는 예외규칙 boolean → CSV 자동감지 순으로 폴백.
+function isLeaderOnDate(
+  attrs: EmployeeAttributeOverrides | undefined,
+  emp:   Employee | undefined,
+  date:  string,
+): boolean {
+  const from = attrs?.leaderFrom
+  const to   = attrs?.leaderTo
+  if (from || to) return (!from || date >= from) && (!to || date <= to)
+  return attrs?.isLeader === true || emp?.isLeader === true
 }
 
 function fmtH(hours: number): string {
@@ -399,6 +415,7 @@ function MemoCell({
 
 export function AttendanceResultTable({
   records, employees,
+  employeeAttrMap,
   columnVisibility, onColumnVisibilityChange,
   onRowClick, onNameClick,
   noteMap, onNoteChange,
@@ -459,6 +476,9 @@ export function AttendanceResultTable({
     return src.map(r => {
       const emp        = empMap.get(r.employeeId)
       const empId      = emp?.rawId ?? r.employeeId.split('_')[0]
+      // r.isLeader(CAPS 자동감지, 날짜 무관 고정값)를 그대로 쓰면 발령일 이전 기록까지
+      // 전부 직책자로 취급돼 ERP 게이트가 통째로 안 걸림 — leaderFrom/leaderTo 있으면 그걸 우선한다.
+      const isLeaderToday = isLeaderOnDate(employeeAttrMap?.get(r.employeeId), emp, r.date)
       const leaveAmt   = r.erpLeaveAmount ?? 0
       // 실제값: raw clockIn, 인정시간: 근무유형별 보정 출근시각 (오전반차 13:00, 오전반반차 10:00, 그 외 08:00 floor)
       const isExactMode        = timeView === '실제값'
@@ -515,25 +535,25 @@ export function AttendanceResultTable({
       // 급여용연장(payrollOtH)만 ERP 승인 게이트 + 30분 절삭을 유지 (실제 급여 인정 목적).
       const systemOtMins   = isExactMode
         ? computeLeaderPayOtMins(r.clockIn, r.clockOut, null, true)   // leaveType=null → 08:00 floor, no backtrack, no truncation, no guard
-        : (r.isLeader
+        : (isLeaderToday
           ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved)
           : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved))
       const systemOtH      = systemOtMins / 60
       // 급여용 연장: Button1/2=ERP가드+30분절삭(직책자 노절삭), Button3=가드·절삭 모두 해제(초과근로와 동일)
       const gasPayOtMins   = isExactMode
         ? systemOtMins
-        : (r.isLeader
+        : (isLeaderToday
           ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved)
           : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0))
       // Slack 주입 시 이론적 OT (ERP 승인으로 가정) — 표시 전용, 총계 미반영
       const isSlackLeave   = !!(r.leaveType && isSlackInjected)
       const slackOtH       = isSlackLeave
-        ? (r.isLeader
+        ? (isLeaderToday
           ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true) / 60
           : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, true) / 60 : 0))
         : 0
       // 급여용 야간: Button1/2=직책자 절삭없음·일반 30분절삭, Button3=전사 노절삭
-      const gasNightMins   = computeGasNightMins(r.clockOut, isExactMode ? true : (r.isLeader ?? false))
+      const gasNightMins   = computeGasNightMins(r.clockOut, isExactMode ? true : isLeaderToday)
       const payrollOtH     = gasPayOtMins / 60
       const payrollNightH  = gasNightMins / 60
       // 급여용 휴일근로: "최종근무"(r.holidayHours, processRecord.ts의 30분절삭+4단계 고정차감
@@ -541,7 +561,7 @@ export function AttendanceResultTable({
       // 무관하게 이 값 하나만 존재한다 (연장근로처럼 절삭 전 "실제값" 개념이 없음).
       const payrollHolidayH = r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0
       const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
-      const isOtExempt = r.isLeader === true || otExemptIds?.has(r.employeeId) === true
+      const isOtExempt = isLeaderToday || otExemptIds?.has(r.employeeId) === true
       // payrollOtH는 미신청 시 0으로 강제되어 '미신청'을 절대 나타낼 수 없었음 — 실제
       // 연장근로 여부(r.overtimeHours, ERP 게이트 적용 전 원시값) 기준으로 판정.
       const erpOtStatus: '신청' | '미신청' | '—' =
@@ -566,7 +586,7 @@ export function AttendanceResultTable({
     // row-based list. Non-working days with punches (휴일근무) are preserved.
     // The calendar/grid view is unaffected (uses records directly).
     }).filter(row => row.record.dayType === 'WEEKDAY' || row.record.clockIn != null || row.record.clockOut != null)
-  }, [records, showHolidayWork, showOver52h, holidayWorkerIds, over52hEmployeeIds, empMap, noteMap, timeView, creditsOn])
+  }, [records, showHolidayWork, showOver52h, holidayWorkerIds, over52hEmployeeIds, empMap, employeeAttrMap, noteMap, timeView, creditsOn])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const columns = useMemo<ColumnDef<GridRow, any>[]>(() => [

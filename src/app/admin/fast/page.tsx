@@ -607,6 +607,7 @@ export default function FastDashboard() {
           <AttendanceResultTable
             records={tabFilteredRecords}
             employees={baseEmployees}
+            employeeAttrMap={finalAttrMap}
             columnVisibility={tableColVisibility}
             onColumnVisibilityChange={() => {}}
             onRowClick={() => {}}

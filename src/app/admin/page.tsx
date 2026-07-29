@@ -1499,6 +1499,7 @@ export default function AdminDashboard() {
                 ? tabFilteredRecords.filter(r => tableSelectedKeys.has(`${r.employeeId}_${r.date}`))
                 : tabFilteredRecords}
               employees={baseEmployees}
+              employeeAttrMap={finalAttrMap}
               columnVisibility={tableColVisibility}
               onColumnVisibilityChange={setTableColVisibility}
               onRowClick={handleCellClick}
