@@ -225,7 +225,7 @@ export default function OverviewPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="md:col-span-2 bg-gray-50 rounded-xl px-5 py-4">
             <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">
-              부서별 사용일수 (합계 {totalLeaveDays.toFixed(1)}일)
+              부서별 사용일수 (합계 {fmtDays(totalLeaveDays)}일)
             </p>
             {divLeave.length === 0 ? <p className="text-xs text-gray-300">사용 내역 없음</p> : (
               <div className="h-40">
@@ -234,7 +234,7 @@ export default function OverviewPage() {
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
                     <XAxis type="number" tick={{ fontSize: 10 }} />
                     <YAxis type="category" dataKey="label" width={90} tick={{ fontSize: 10 }} />
-                    <Tooltip formatter={(v: unknown) => [`${Number(v ?? 0).toFixed(1)}일`, '사용일수']} />
+                    <Tooltip formatter={(v: unknown) => [`${fmtDays(Number(v ?? 0))}일`, '사용일수']} />
                     <Bar dataKey="days" fill="#10b981" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -273,7 +273,7 @@ export default function OverviewPage() {
                   <tr key={r.key} className="hover:bg-gray-50/70">
                     <td className="py-1.5 text-gray-500">{r.division}</td>
                     <td className="py-1.5 font-medium text-gray-800">{r.label}</td>
-                    <td className="py-1.5 text-right tabular-nums">{r.days.toFixed(1)}</td>
+                    <td className="py-1.5 text-right tabular-nums">{fmtDays(r.days)}</td>
                     <td className="py-1.5 text-right tabular-nums">{r.count}</td>
                   </tr>
                 ))}
@@ -343,6 +343,13 @@ export default function OverviewPage() {
       </CardShell>
     </div>
   )
+}
+
+// 연차/반차/반반차 = 1/0.5/0.25일 단위 — toFixed(1)을 쓰면 0.25→"0.3", 0.75→"0.8"로
+// 반올림돼 반반차가 반차처럼 보이는 표시 버그가 생긴다. 2자리까지 보여주되 불필요한
+// 후행 0은 잘라낸다 (0.25일/0.5일/0.75일/1일).
+function fmtDays(days: number): string {
+  return (Math.round(days * 100) / 100).toString()
 }
 
 function fmtH(hours: number): string {
