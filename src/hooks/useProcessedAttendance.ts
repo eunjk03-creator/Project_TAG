@@ -137,6 +137,12 @@ export function useProcessedAttendance(from: string, to: string): ProcessedAtten
     policy, from, to, otExemptIds, slackNoteMap, finalAttrMap,
   )
 
+  // finalAttrMap에 항목이 있는 직원(퇴사자/직책자/단축근로 등 예외규칙 적용 대상)은 캐시된
+  // serverProcessed가 그 규칙을 반영하기 전 상태일 수 있으므로 매번 재처리 대상에 포함한다.
+  // 그렇지 않으면 관리자가 퇴사일/직책자 발령일 등을 바꿔도 "전체 재계산"을 다시 돌리기
+  // 전까지 화면에 반영이 안 된다 — 예외규칙 적용 인원은 소수라 재처리 비용은 무시할 만함.
+  const attrOverrideEmployeeIds = useMemo(() => new Set(finalAttrMap.keys()), [finalAttrMap])
+
   const allProcessed = useMemo<ProcessedRecord[]>(() => {
     if (!serverProcessed) return clientProcessed
 
@@ -144,11 +150,13 @@ export function useProcessedAttendance(from: string, to: string): ProcessedAtten
 
     const compHolDates = new Set((policy.companyHolidays ?? []).map(h => h.date))
 
-    const needsAnyReprocess = Object.keys(recordOverrides).length > 0 || compHolDates.size > 0
+    const needsAnyReprocess =
+      Object.keys(recordOverrides).length > 0 || compHolDates.size > 0 || attrOverrideEmployeeIds.size > 0
     const reprocessedExisting = !needsAnyReprocess ? dateFiltered : dateFiltered.map(r => {
       const ov = recordOverrides[`${r.employeeId}_${r.date}`]
-      const needsHolReprocess = compHolDates.has(r.date) && r.dayType === 'WEEKDAY'
-      if (!ov && !needsHolReprocess) return r
+      const needsHolReprocess  = compHolDates.has(r.date) && r.dayType === 'WEEKDAY'
+      const needsAttrReprocess = attrOverrideEmployeeIds.has(r.employeeId)
+      if (!ov && !needsHolReprocess && !needsAttrReprocess) return r
       return processRecord(
         {
           ...r,
@@ -177,7 +185,7 @@ export function useProcessedAttendance(from: string, to: string): ProcessedAtten
       synthesized.push(processRecord(raw, policy, otExemptIds, slackNoteMap, finalAttrMap.get(empId)))
     }
     return synthesized.length ? [...reprocessedExisting, ...synthesized] : reprocessedExisting
-  }, [serverProcessed, clientProcessed, from, to, recordOverrides, policy, otExemptIds, slackNoteMap, finalAttrMap, companyHolsMap])
+  }, [serverProcessed, clientProcessed, from, to, recordOverrides, policy, otExemptIds, slackNoteMap, finalAttrMap, companyHolsMap, attrOverrideEmployeeIds])
 
   const hireDateMap = useMemo(() => {
     const map = new Map<string, string>()

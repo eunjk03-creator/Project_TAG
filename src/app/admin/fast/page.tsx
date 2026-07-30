@@ -160,22 +160,29 @@ export default function FastDashboard() {
     policy, dateRange.from, dateRange.to, otExemptIds, slackNoteMap, finalAttrMap,
   )
 
+  // finalAttrMap에 항목이 있는 직원(퇴사자/직책자/단축근로 등 예외규칙 적용 대상)은 캐시된
+  // serverProcessed가 그 규칙을 반영하기 전 상태일 수 있으므로 매번 재처리 대상에 포함한다 —
+  // 그렇지 않으면 퇴사일/직책자 발령일 등을 바꿔도 "전체 재계산" 전까지 반영이 안 됨.
+  const attrOverrideEmployeeIds = useMemo(() => new Set(finalAttrMap.keys()), [finalAttrMap])
+
   const allProcessed = useMemo<ProcessedRecord[]>(() => {
     if (!serverProcessed) return clientProcessed
     const dateFiltered = serverProcessed.filter(r => r.date >= dateRange.from && r.date <= dateRange.to)
-    if (!Object.keys(recordOverrides).length) return dateFiltered
+    if (!Object.keys(recordOverrides).length && attrOverrideEmployeeIds.size === 0) return dateFiltered
     return dateFiltered.map(r => {
       const ov = recordOverrides[`${r.employeeId}_${r.date}`]
-      if (!ov) return r
+      if (!ov && !attrOverrideEmployeeIds.has(r.employeeId)) return r
       return processRecord({
         ...r,
-        clockIn:      ov.clockIn      ?? r.clockIn,
-        clockOut:     ov.clockOut     ?? r.clockOut,
-        erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
-        ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+        ...(ov ? {
+          clockIn:      ov.clockIn      ?? r.clockIn,
+          clockOut:     ov.clockOut     ?? r.clockOut,
+          erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
+          ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+        } : {}),
       }, policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId))
     })
-  }, [serverProcessed, clientProcessed, dateRange.from, dateRange.to, recordOverrides, policy, otExemptIds, slackNoteMap, finalAttrMap])
+  }, [serverProcessed, clientProcessed, dateRange.from, dateRange.to, recordOverrides, policy, otExemptIds, slackNoteMap, finalAttrMap, attrOverrideEmployeeIds])
 
   // ── Employees & filters ─────────────────────────────────────────────────
   const leaderIdSet = useMemo(() => new Set(
