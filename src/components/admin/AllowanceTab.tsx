@@ -377,10 +377,10 @@ export function AllowanceTab() {
       const attrs = employeeAttrMap.get(emp.id)
       if (attrs?.isGlobalExclusion) continue
 
-      // 퇴사자: 퇴사일 이후 레코드만 제외(processRecord.ts와 동일 규칙) — 퇴사일 미설정 시
-      // 기존처럼 전체 제외. 재직 중이던 퇴사 이전 기간의 실적은 그대로 집계에 남아야 함.
+      // 퇴사자: 퇴사일(마지막 출근일, 포함) 다음날부터만 제외(processRecord.ts와 동일 규칙) —
+      // 퇴사일 미설정 시 기존처럼 전체 제외. 퇴사일까지의 실적은 그대로 집계에 남아야 함.
       const empRecords = (recsByEmp.get(emp.id) ?? []).filter(r =>
-        !attrs?.isResigned || (!!attrs.resignedFrom && r.date < attrs.resignedFrom)
+        !attrs?.isResigned || (!!attrs.resignedFrom && r.date <= attrs.resignedFrom)
       )
       // 뱃지·필터용 — 선택 기간 내 어느 날이든 직책자였으면 true
       const isLeader = attrs?.isLeader === true || emp.isLeader === true

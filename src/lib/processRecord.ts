@@ -96,8 +96,9 @@ export function processRecord(
     (!_pTo   || record.date <= _pTo)
   )
   const isGlobalExclusion  = attrOverrides?.isGlobalExclusion  ?? false
+  // resignedFrom = 마지막 출근일(포함) — 그 날짜까지는 정상 집계하고, 다음날부터 제외한다.
   const isResigned = (attrOverrides?.isResigned ?? false) && (
-    !attrOverrides?.resignedFrom || record.date >= attrOverrides.resignedFrom
+    !attrOverrides?.resignedFrom || record.date > attrOverrides.resignedFrom
   )
 
   const bypassAllAnomalies = isParentalLeave

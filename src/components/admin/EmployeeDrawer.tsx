@@ -404,7 +404,7 @@ export function EmployeeDrawer() {
                   label="퇴사자"
                   badge="isResigned"
                   badgeCls="bg-red-100 text-red-600"
-                  desc="퇴사일부터 근태 집계·이상치 감지에서 제외됩니다. 퇴사일을 비워두면 전체 기간이 제외됩니다."
+                  desc="퇴사일(마지막 출근일) 다음날부터 근태 집계·이상치 감지에서 제외됩니다. 비워두면 전체 기간이 제외됩니다."
                   value={!!attrs.isResigned}
                   onChange={v => { void toggleAttr('isResigned', v) }}
                 >
@@ -412,7 +412,7 @@ export function EmployeeDrawer() {
                     const rule = exceptionRules.find(r => r.employeeId === selectedId && r.ruleType === 'resigned')
                     return (
                       <div className="bg-red-50 rounded-lg px-3 py-2 space-y-1.5">
-                        <p className="text-[10px] font-semibold text-red-500 uppercase tracking-wide">퇴사일</p>
+                        <p className="text-[10px] font-semibold text-red-500 uppercase tracking-wide">퇴사일 (마지막 출근일)</p>
                         <input
                           type="date"
                           value={rule?.validFrom ?? ''}
@@ -420,7 +420,7 @@ export function EmployeeDrawer() {
                           className="w-full px-2 py-1 text-xs border border-red-200 rounded-lg
                             focus:outline-none focus:ring-1 focus:ring-red-400 bg-white"
                         />
-                        <p className="text-[10px] text-red-400">퇴사일 이전 기록은 정상 집계됩니다. 비워두면 전체 기간이 제외됩니다.</p>
+                        <p className="text-[10px] text-red-400">입력한 날짜까지는 정상 집계되고, 다음날부터 제외됩니다. 비워두면 전체 기간이 제외됩니다.</p>
                       </div>
                     )
                   })()}

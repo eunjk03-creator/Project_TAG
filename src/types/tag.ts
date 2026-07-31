@@ -268,9 +268,9 @@ export interface EmployeeAttributeOverrides {
   pregnantReducedTo?: string
   /** 전체 제외: record is silently skipped from all aggregation and flagging */
   isGlobalExclusion?: boolean
-  /** 퇴사자: same as global exclusion — completely filtered from all output */
+  /** 퇴사자 — resignedFrom(마지막 출근일) 다음날부터 모든 집계/이상치 감지에서 제외 */
   isResigned?: boolean
-  resignedFrom?: string  // 퇴사일 (YYYY-MM-DD) — 이 날 이후로 적용
+  resignedFrom?: string  // 퇴사일=마지막 출근일 (YYYY-MM-DD, 포함) — 미설정 시 전체 기간 제외
 }
 
 export type RecordOverride = {
