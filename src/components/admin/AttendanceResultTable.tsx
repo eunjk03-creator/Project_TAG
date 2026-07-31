@@ -16,6 +16,7 @@ import {
   computeGasNightMins,
   computePayOtMins, computeLeaderPayOtMins,
   compute4141BreakMins, computeEffClockIn,
+  isLeaderOnDate,
 } from '@/utils/attendanceCalc'
 
 // ── Row shape ─────────────────────────────────────────────────────────────
@@ -107,20 +108,6 @@ function ColTip({ label, tip }: { label: string; tip: string }) {
       )}
     </span>
   )
-}
-
-// 직책자 여부를 발령일(leaderFrom)/해임일(leaderTo) 기준으로 판별 — 날짜 범위가 설정돼
-// 있으면 CSV 자동감지(emp.isLeader)나 예외규칙 boolean보다 우선 적용된다(AllowanceTab.tsx와
-// 동일 규칙). 범위 미설정 시에는 예외규칙 boolean → CSV 자동감지 순으로 폴백.
-function isLeaderOnDate(
-  attrs: EmployeeAttributeOverrides | undefined,
-  emp:   Employee | undefined,
-  date:  string,
-): boolean {
-  const from = attrs?.leaderFrom
-  const to   = attrs?.leaderTo
-  if (from || to) return (!from || date >= from) && (!to || date <= to)
-  return attrs?.isLeader === true || emp?.isLeader === true
 }
 
 function fmtH(hours: number): string {
@@ -561,7 +548,10 @@ export function AttendanceResultTable({
       // 무관하게 이 값 하나만 존재한다 (연장근로처럼 절삭 전 "실제값" 개념이 없음).
       const payrollHolidayH = r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0
       const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
-      const isOtExempt = isLeaderToday || otExemptIds?.has(r.employeeId) === true
+      // otExemptIds(발령일 범위를 모르는 고정 Set)를 여기 같이 걸면 예외규칙이 한 번이라도
+      // 있는 직원은 발령일 이전 기록까지 전부 '—'로 가려짐 — isLeaderToday(날짜 인지) 하나로 충분.
+      // otExemptIds는 이 파일 밖 어디에서도 실제로 조회되지 않는 값이라 여기서 빼도 안전함.
+      const isOtExempt = isLeaderToday
       // payrollOtH는 미신청 시 0으로 강제되어 '미신청'을 절대 나타낼 수 없었음 — 실제
       // 연장근로 여부(r.overtimeHours, ERP 게이트 적용 전 원시값) 기준으로 판정.
       const erpOtStatus: '신청' | '미신청' | '—' =

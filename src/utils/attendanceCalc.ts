@@ -5,7 +5,7 @@
  * Single source of truth for both the UI table and Excel export.
  * All hour values are decimal (e.g. 8h 30m = 8.5).
  */
-import type { DayType, ErpLeaveType, RawRecord, SieveFlag } from '@/types/tag'
+import type { DayType, ErpLeaveType, RawRecord, SieveFlag, Employee, EmployeeAttributeOverrides } from '@/types/tag'
 
 export type AnomalyCategory = 'late' | 'shortage' | 'notag'
 
@@ -17,6 +17,26 @@ export type AnomalyCategory = 'late' | 'shortage' | 'notag'
  * 예전엔 SummaryTab.tsx/deptReportExcel.ts/admin/page.tsx/AttendanceResultTable.tsx 4곳에
  * 각자 따로 정의돼 있던 걸 여기 하나로 통합함 — 새 집계 코드는 반드시 이 함수를 재사용할 것.
  */
+/**
+ * 직책자 여부를 발령일(leaderFrom)/해임일(leaderTo) 기준으로 판별. 날짜 범위가 하나라도
+ * 설정돼 있으면 CSV 자동감지(emp.isLeader)나 예외규칙 boolean보다 우선 적용된다 — 발령일
+ * 이전/해임일 이후 기록은 비직책자로, 그 사이는 직책자로 정확히 갈린다. 범위 미설정 시에는
+ * 예외규칙 boolean → CSV 자동감지 순으로 폴백(전 기간 직책자/비직책자 고정).
+ *
+ * 예전엔 AttendanceResultTable.tsx/AllowanceTab.tsx/EmployeeCalendarGrid.tsx/
+ * productivityReportExcel.ts 4곳에 각자 따로 정의돼 있던 걸 여기 하나로 통합함.
+ */
+export function isLeaderOnDate(
+  attrs: EmployeeAttributeOverrides | undefined,
+  emp:   Employee | undefined,
+  date:  string,
+): boolean {
+  const from = attrs?.leaderFrom
+  const to   = attrs?.leaderTo
+  if (from || to) return (!from || date >= from) && (!to || date <= to)
+  return attrs?.isLeader === true || emp?.isLeader === true
+}
+
 export function flagToAnomalyCategories(flag: SieveFlag): AnomalyCategory[] {
   if (flag === 'LATE')                     return ['late']
   if (flag === 'EARLY_DEPARTURE')          return ['shortage']

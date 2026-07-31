@@ -1,10 +1,11 @@
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx-js-style'
-import type { ProcessedRecord, Employee } from '@/types/tag'
+import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
 import type { GridRow } from '@/components/admin/AttendanceResultTable'
 import {
   computeWorkA, parseTimeToMins, computeDisplayBreakMins,
   computePayOtMins, computeLeaderPayOtMins, computeGasNightMins,
+  isLeaderOnDate,
 } from '@/utils/attendanceCalc'
 
 // 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE/LATE_AND_EARLY_DEPARTURE는
@@ -192,8 +193,9 @@ const DETAIL_COL_DEFS: DetailColDef[] = [
 ]
 
 function buildDetailRowData(
-  r:   ProcessedRecord,
-  emp: Employee | undefined,
+  r:     ProcessedRecord,
+  emp:   Employee | undefined,
+  attrs: EmployeeAttributeOverrides | undefined,
 ): Record<string, unknown> {
   const leaveAmt     = r.erpLeaveAmount ?? 0
   const leaveCode    = r.leaveType ?? null
@@ -232,7 +234,9 @@ function buildDetailRowData(
   const isLeaveDay = !!(r.leaveType && ['연차','오전반차','오후반차','오전반반차','오후반반차','출장','재택근무'].includes(r.leaveType))
   if (normalTags.length === 0 && !isLeaveDay && r.dayType === 'WEEKDAY') normalTags.push('일반')
 
-  const isLeader           = r.isLeader ?? false
+  // r.isLeader(CAPS 자동감지, 날짜 무관 고정값)를 그대로 쓰면 발령일 이전 기록까지 전부
+  // 직책자로 취급됨 — leaderFrom/leaderTo가 설정돼 있으면 그걸 우선하는 공유 판별함수를 씀.
+  const isLeader           = isLeaderOnDate(attrs, emp, r.date)
   const effectiveIn        = r.effectiveClockIn ?? r.clockIn
   const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
   // 시스템 초과근로: 절삭없음 기준 (직책자=raw clockIn, 일반=effectiveIn — 반차 ERP승인 게이트는 공통 적용)
@@ -288,6 +292,7 @@ export function exportXlsx(
   employees:     Employee[],
   filename =     '근태결과_export.xlsx',
   visibleColIds?: Set<string>,
+  finalAttrMap?: Map<string, EmployeeAttributeOverrides>,
 ) {
   const empMap = new Map(employees.map(e => [e.id, e]))
 
@@ -313,7 +318,8 @@ export function exportXlsx(
 
   const detailRows = sorted.map(r => {
     const emp     = empMap.get(r.employeeId)
-    const rowData = buildDetailRowData(r, emp)
+    const attrs   = finalAttrMap?.get(r.employeeId)
+    const rowData = buildDetailRowData(r, emp, attrs)
     return activeCols.map(c => rowData[c.id] ?? null)
   })
 

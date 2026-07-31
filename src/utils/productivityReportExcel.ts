@@ -8,17 +8,11 @@
  */
 import * as XLSX from 'xlsx-js-style'
 import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
-import { parseTimeToMins, compute4141BreakMins, computeEffInMins, computeLeaderPayOtMins } from '@/utils/attendanceCalc'
+import {
+  parseTimeToMins, compute4141BreakMins, computeEffInMins, computeLeaderPayOtMins,
+  isLeaderOnDate,
+} from '@/utils/attendanceCalc'
 import { bd, S, hdr, titleS, sc, cellKey, periodLabel, ANOM_LABEL } from '@/utils/deptReportExcel'
-
-// ── 직책자 판별 (발령일/해임일 적용, AllowanceTab과 동일 로직) ──────────────────
-
-function isLeaderOnDate(emp: Employee, attrs: EmployeeAttributeOverrides | undefined, date: string): boolean {
-  const from = attrs?.leaderFrom
-  const to   = attrs?.leaderTo
-  if (from || to) return (!from || date >= from) && (!to || date <= to)
-  return attrs?.isLeader === true || emp.isLeader === true
-}
 
 // ── 일자별 근로시간/연장/크레딧 (그리드·SummaryTab §4 공식과 동일) ──────────────
 
@@ -90,7 +84,7 @@ function buildProductivitySheet(
       // 퇴사일 미설정 시 기존처럼 전체 제외. 퇴사일까지의 실적은 그대로 집계에 남아야 함.
       if (attrs?.isResigned && (!attrs.resignedFrom || r.date > attrs.resignedFrom)) return
 
-      const isLeaderToday = isLeaderOnDate(emp, attrs, r.date)
+      const isLeaderToday = isLeaderOnDate(attrs, emp, r.date)
       const { total, ot, night } = computeDaily(r, isLeaderToday)
       const isHoliday = r.isHolidayWork || r.finalStatus === '휴일근무'
 

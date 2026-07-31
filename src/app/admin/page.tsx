@@ -764,7 +764,7 @@ export default function AdminDashboard() {
     ]
     const visibleColIds = new Set(ALL_DETAIL_IDS.filter(id => tableColVisibility[id] !== false))
 
-    exportXlsx(tabFilteredRecords, baseEmployees, filename, visibleColIds)
+    exportXlsx(tabFilteredRecords, baseEmployees, filename, visibleColIds, finalAttrMap)
   }
 
   function toggleSection(s: Section) {

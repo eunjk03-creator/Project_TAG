@@ -28,7 +28,15 @@ export function buildAttrMapFromRules(
     const ex = merged.get(rule.employeeId) ?? {}
     switch (rule.ruleType) {
       case 'manager_exemption':
-        merged.set(rule.employeeId, { ...ex, isLeader: rule.excludeFromOt ? true : ex.isLeader })
+        // EmployeeExceptionsContext.tsx(클라이언트)와 동일 규칙: manager_exemption 규칙이 있으면
+        // 항상 직책자(날짜 범위 체크는 isLeaderOnDate에서) — 예전엔 leaderFrom/leaderTo를 아예
+        // 안 옮겨서 발령일/해임일을 지정해도 서버 재계산(생산성 리포트 엑셀 등)에 반영 안 됐음.
+        merged.set(rule.employeeId, {
+          ...ex,
+          isLeader:   true,
+          leaderFrom: rule.validFrom || undefined,
+          leaderTo:   rule.validTo   || undefined,
+        })
         break
       case 'shortened_hours':
         merged.set(rule.employeeId, {

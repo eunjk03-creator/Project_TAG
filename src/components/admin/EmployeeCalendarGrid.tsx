@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds, EmployeeAttributeOverrides } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
-import { parseTimeToMins, compute4141BreakMins, computeVirtualInMins } from '@/utils/attendanceCalc'
+import { parseTimeToMins, compute4141BreakMins, computeVirtualInMins, isLeaderOnDate as isLeaderOnDateCore } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
@@ -206,17 +206,11 @@ export function EmployeeCalendarGrid({
   const companyHolSet   = useMemo(() => new Set(companyHolidays.map(h => h.date)), [companyHolidays])
   const companyHolLabel = useMemo(() => new Map(companyHolidays.map(h => [h.date, h.label])), [companyHolidays])
 
-  // 직원별 날짜 기준 직책자 판별 헬퍼
+  // 직원별 날짜 기준 직책자 판별 헬퍼 — attendanceCalc.ts의 공유 함수 재사용
   const makeIsLeaderOnDate = (empId: string): ((date: string) => boolean) => {
     const attrs = attrMap?.get(empId)
-    const from  = attrs?.leaderFrom
-    const to    = attrs?.leaderTo
-    if (from || to) {
-      return (date: string) => (!from || date >= from) && (!to || date <= to)
-    }
-    const base = leaderIdSet ? leaderIdSet.has(empId) : false
-    const csvLeader = employees.find(e => e.id === empId)?.isLeader ?? false
-    return () => base || csvLeader
+    const emp   = employees.find(e => e.id === empId)
+    return (date: string) => isLeaderOnDateCore(attrs, emp, date)
   }
 
   // ── Inline sort / filter state ─────────────────────────────────────────
