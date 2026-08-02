@@ -199,6 +199,12 @@ export default function OverviewPage() {
   )
 
   const today = todayStr()
+  // 일 단위로 볼 땐 prev/next로 실제 "오늘"이 아닌 다른 날짜를 탐색할 수 있는데, records 자체가
+  // 이미 period.from~to로만 좁혀져 있어서 today(실제 달력상 오늘)로 필터링하면 그 날짜의
+  // 레코드가 아예 없어 "오늘 X" 위젯이 전부 0으로 비어버렸다 — KPI 타일/명단이 실제로는 있는
+  // 데이터인데도 안 뜨는 것처럼 보였던 원인. 일 단위에선 "보고 있는 날"을 기준으로 삼는다.
+  // 주/월 단위의 "오늘 X" 위젯은 원래 의도대로 실제 오늘 기준을 유지한다.
+  const todayForView = period.granularity === 'day' ? period.from : today
 
   // ── 이상치 ──────────────────────────────────────────────────────────────
   const empAnomaly = useMemo(() => buildEmployeeAnomalyRollup(scopedRecords, empMap), [scopedRecords, empMap])
@@ -213,18 +219,18 @@ export default function OverviewPage() {
   // ── 휴일근무 ────────────────────────────────────────────────────────────
   const empHoliday = useMemo(() => buildHolidayWorkRollup(scopedRecords, empMap, 'employee'), [scopedRecords, empMap])
   const divHoliday = useMemo(() => buildHolidayWorkRollup(scopedRecords, empMap, 'division'), [scopedRecords, empMap])
-  const todayHoliday = useMemo(() => buildTodayHolidayList(scopedRecords, empMap, today), [scopedRecords, empMap, today])
+  const todayHoliday = useMemo(() => buildTodayHolidayList(scopedRecords, empMap, todayForView), [scopedRecords, empMap, todayForView])
   const totalHolidayH = useMemo(() => divHoliday.reduce((s, r) => s + r.hours, 0), [divHoliday])
 
   // ── 휴가 사용 ────────────────────────────────────────────────────────────
   const divLeave  = useMemo(() => buildLeaveUsageRollup(scopedRecords, empMap, 'division'), [scopedRecords, empMap])
   const empLeave  = useMemo(() => buildLeaveUsageRollup(scopedRecords, empMap, 'employee'),  [scopedRecords, empMap])
-  const todayLeave = useMemo(() => buildTodayLeaveList(scopedRecords, empMap, today), [scopedRecords, empMap, today])
+  const todayLeave = useMemo(() => buildTodayLeaveList(scopedRecords, empMap, todayForView), [scopedRecords, empMap, todayForView])
   const totalLeaveDays = useMemo(() => divLeave.reduce((s, r) => s + r.days, 0), [divLeave])
 
   // ── 초과근무 — 일=오늘 진행/발생 인원, 주=52h 초과자, 월=209h 초과자 ──────────
   const dailyOt = useMemo(() => buildDailyOvertimeSeries(scopedRecords, period.from, period.to), [scopedRecords, period.from, period.to])
-  const todayOt = useMemo(() => buildTodayOvertimeList(scopedRecords, empMap, today), [scopedRecords, empMap, today])
+  const todayOt = useMemo(() => buildTodayOvertimeList(scopedRecords, empMap, todayForView), [scopedRecords, empMap, todayForView])
   const totalOtH = total.otHours
   const overLimitHours = period.granularity === 'month' ? 209 : 52
   const overLimitRows = useMemo(
