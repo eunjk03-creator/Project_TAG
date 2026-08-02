@@ -479,6 +479,7 @@ function buildOtMap(
     const injeongKey  = Object.keys(r).find(k => k.replace(/\s+/g, '') === '인정시간')  ?? '인정시간'
     const startKey    = Object.keys(r).find(k => k.replace(/\s+/g, '') === '시작일')    ?? '시작일'
     const endKey      = Object.keys(r).find(k => k.replace(/\s+/g, '') === '종료일')    ?? '종료일'
+    const endTimeKey  = Object.keys(r).find(k => k.replace(/\s+/g, '') === '종료시간')  ?? '종료시간'
     const applyKey    = Object.keys(r).find(k => k.replace(/\s+/g, '') === '신청일')    ?? '신청일'
 
     const code  = String(r[codeKey]  ?? '').normalize('NFKC').trim()
@@ -496,10 +497,15 @@ function buildOtMap(
     if (code === '연장근로') {
       const applyDate = normalizeDate(r[applyKey])
       if (applyDate) {
-        const endDate           = normalizeDate(r[endKey]) || startDate
-        const nextDay           = addOneDayUTC(startDate)
-        const crossesMidnight   = endDate === nextDay
-        const validApplyDate    = applyDate === startDate || (crossesMidnight && applyDate === nextDay)
+        const endDate      = normalizeDate(r[endKey]) || startDate
+        const nextDay      = addOneDayUTC(startDate)
+        const endTimeStr   = String(r[endTimeKey] ?? '').trim()
+        const endTimeMins  = /^\d{1,2}:\d{2}$/.test(endTimeStr) ? toMinutes(endTimeStr) : null
+        // 자정 넘김 예외: 종료일이 시작일+1 "이고" 종료시각이 06:00 이내(익일 새벽)인 경우만
+        // 인정 — 그 이후(예: 익일 09시)까지 찍혀있으면 사실상 다음날 근무를 끼워넣은 것으로
+        // 보고 제외한다(정책상 야간 종료시각 06:00 기준, 2026-08-02 사용자 확인).
+        const crossesMidnight = endDate === nextDay && endTimeMins !== null && endTimeMins <= 6 * 60
+        const validApplyDate  = applyDate === startDate || (crossesMidnight && applyDate === nextDay)
         if (!validApplyDate) continue
       }
     }
