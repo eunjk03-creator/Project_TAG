@@ -1,9 +1,11 @@
 /**
- * /admin/overview 전용 집계 헬퍼 — 이상치/휴가사용/초과근무를 부서·개인·일자 단위로 묶는다.
- * 이상치 분류는 attendanceCalc.ts의 flagToAnomalyCategories()를 그대로 재사용(중복 정의 금지).
+ * /admin/overview 전용 집계 헬퍼 — 이상치/휴가사용/초과근무/휴일근무를 부서·개인·일자 단위로 묶는다.
+ * 이상치 분류는 attendanceCalc.ts의 flagToAnomalyCategories()를, 52h/209h 초과자 판정은
+ * computeDailyRecognizedHours()를 그대로 재사용(중복 정의 금지 — EmployeeCalendarGrid.tsx의
+ * 52h 초과 필터와 동일 공식·기준으로 계산됨을 보장).
  */
-import type { ProcessedRecord, Employee } from '@/types/tag'
-import { flagToAnomalyCategories } from './attendanceCalc'
+import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
+import { flagToAnomalyCategories, computeDailyRecognizedHours, isLeaderOnDate } from './attendanceCalc'
 
 const DOW_KR = ['일', '월', '화', '수', '목', '금', '토']
 
@@ -172,4 +174,98 @@ export function buildTodayOvertimeList(
       return { employeeId: r.employeeId, name: emp?.name ?? r.employeeId, division: emp?.division ?? '—', hours: r.overtimeHours }
     })
     .sort((a, b) => b.hours - a.hours)
+}
+
+// ── 휴일근무 — 이상치/연장근로와 별개 카테고리 ────────────────────────────────
+
+export interface HolidayWorkRow {
+  key:      string
+  label:    string
+  division?: string
+  hours:    number
+  count:    number  // 휴일근무한 일수(레코드 수)
+}
+
+export function buildHolidayWorkRollup(
+  records: ProcessedRecord[],
+  empMap:  Map<string, Employee>,
+  groupBy: 'division' | 'employee',
+): HolidayWorkRow[] {
+  const map = new Map<string, HolidayWorkRow>()
+  for (const r of records) {
+    if (r.finalStatus !== '휴일근무') continue
+    const emp = empMap.get(r.employeeId)
+    const div = emp?.division ?? '—'
+    const key   = groupBy === 'division' ? div : r.employeeId
+    const label = groupBy === 'division' ? div : (emp?.name ?? r.employeeId)
+    if (!map.has(key)) map.set(key, { key, label, division: div, hours: 0, count: 0 })
+    const row = map.get(key)!
+    row.hours += r.holidayHours ?? 0
+    row.count += 1
+  }
+  return [...map.values()].sort((a, b) => b.hours - a.hours)
+}
+
+export interface TodayHolidayEntry {
+  employeeId: string
+  name:       string
+  division:   string
+  hours:      number
+}
+
+export function buildTodayHolidayList(
+  records: ProcessedRecord[],
+  empMap:  Map<string, Employee>,
+  today:   string,
+): TodayHolidayEntry[] {
+  return records
+    .filter(r => r.date === today && r.finalStatus === '휴일근무')
+    .map(r => {
+      const emp = empMap.get(r.employeeId)
+      return { employeeId: r.employeeId, name: emp?.name ?? r.employeeId, division: emp?.division ?? '—', hours: r.holidayHours ?? 0 }
+    })
+    .sort((a, b) => b.hours - a.hours)
+}
+
+// ── 법정 한도 초과자 (주 52h / 월 209h) ───────────────────────────────────────
+// EmployeeCalendarGrid.tsx의 52h 초과 필터와 동일한 computeDailyRecognizedHours() 공식으로
+// 기간 내 인정시간을 합산한다. Overview의 주/월 granularity는 usePeriodRange()가 정확히
+// 월~일 한 주 / 1일~말일 한 달로 범위를 잡아주므로, 별도 주차 분할 없이 "선택된 기간 합계"가
+// 곧 그 주/그 달의 총 인정시간이 된다.
+
+export interface OverLimitRow {
+  employeeId: string
+  name:       string
+  division:   string
+  hours:      number
+  overBy:     number  // hours - limit
+}
+
+export function computeOverLimitEmployees(
+  records:      ProcessedRecord[],
+  employees:    Employee[],
+  finalAttrMap: Map<string, EmployeeAttributeOverrides>,
+  limitHours:   number,
+): OverLimitRow[] {
+  const empMap = new Map(employees.map(e => [e.id, e]))
+  const byEmp  = new Map<string, ProcessedRecord[]>()
+  for (const r of records) {
+    const bucket = byEmp.get(r.employeeId)
+    if (bucket) bucket.push(r)
+    else byEmp.set(r.employeeId, [r])
+  }
+
+  const rows: OverLimitRow[] = []
+  for (const [employeeId, recs] of byEmp) {
+    const emp   = empMap.get(employeeId)
+    const attrs = finalAttrMap.get(employeeId)
+    let hours = 0
+    for (const r of recs) {
+      hours += computeDailyRecognizedHours(r, isLeaderOnDate(attrs, emp, r.date))
+    }
+    if (hours >= limitHours) {
+      rows.push({ employeeId, name: emp?.name ?? employeeId, division: emp?.division ?? '—', hours, overBy: hours - limitHours })
+    }
+  }
+  return rows.sort((a, b) => b.hours - a.hours)
 }

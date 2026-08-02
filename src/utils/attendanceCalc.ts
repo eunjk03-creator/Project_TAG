@@ -5,7 +5,7 @@
  * Single source of truth for both the UI table and Excel export.
  * All hour values are decimal (e.g. 8h 30m = 8.5).
  */
-import type { DayType, ErpLeaveType, RawRecord, SieveFlag, Employee, EmployeeAttributeOverrides } from '@/types/tag'
+import type { DayType, ErpLeaveType, RawRecord, ProcessedRecord, SieveFlag, Employee, EmployeeAttributeOverrides } from '@/types/tag'
 
 export type AnomalyCategory = 'late' | 'shortage' | 'notag'
 
@@ -368,6 +368,42 @@ export function compute4141BreakMins(elapsedMins: number): number {
   const lunch  = Math.min(Math.max(0, elapsedMins - 240), 60)
   const dinner = Math.min(Math.max(0, elapsedMins - 540), 60)
   return lunch + dinner
+}
+
+/** 30분 단위 절삭 (시간 단위 입력) — EmployeeCalendarGrid.tsx/AllowanceTab.tsx/SummaryTab.tsx에
+ *  각자 따로 있던 동일 구현을 여기로 통합. 새 집계 코드는 이걸 재사용할 것. */
+export function floorTo30(h: number): number {
+  return Math.floor(h * 2) / 2
+}
+
+/**
+ * "총 근로시간" 확정 공식(§4) — 레코드 1건의 인정시간을 하루치로 환산한다.
+ *   직책자: netRecH(uncapped) + credit
+ *   비직책자: 연장근로 발생일(approvedOt>0) → 8h + approvedOt (credit 이중계상 방지)
+ *            없는 날 → min(netRecH,8) + credit
+ *   휴일근무: floorTo30(holidayHours), 그 외 비근무일: 0
+ * EmployeeCalendarGrid.tsx의 52h/209h 초과자 필터와 동일 공식 — 원래 그 필터 안에 인라인으로만
+ * 있던 걸 여기로 추출해서 Overview 등 다른 화면도 정확히 같은 기준으로 재사용할 수 있게 함.
+ */
+export function computeDailyRecognizedHours(r: ProcessedRecord, isLeaderToday: boolean): number {
+  const isSlackInj    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+  const isErpApproved = r.leaveType ? !isSlackInj : true
+  const credit        = (isErpApproved && !r.isUnpaidLeave && r.erpLeaveAmount) ? r.erpLeaveAmount * 8 : 0
+
+  if (r.dayType !== 'WEEKDAY') {
+    return r.finalStatus === '휴일근무' ? floorTo30(r.holidayHours ?? 0) : 0
+  }
+  const effClockInStr = r.effectiveClockIn ?? r.clockIn
+  const ciEff = effClockInStr ? parseTimeToMins(effClockInStr) : null
+  const co    = r.clockOut ? parseTimeToMins(r.clockOut) : null
+  if (ciEff === null || co === null) return credit
+
+  const elapsed = Math.max(0, co - ciEff)
+  const netRecH = Math.max(0, elapsed - compute4141BreakMins(elapsed)) / 60
+  if (isLeaderToday) return netRecH + credit
+
+  const approvedOt = r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
+  return approvedOt > 0 ? (8 + approvedOt) : (Math.min(netRecH, 8) + credit)
 }
 
 // ── GAS pipeline utilities (leave-last model) ────────────────────────────

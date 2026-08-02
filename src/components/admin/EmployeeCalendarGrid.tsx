@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds, EmployeeAttributeOverrides } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
-import { parseTimeToMins, compute4141BreakMins, computeVirtualInMins, isLeaderOnDate as isLeaderOnDateCore } from '@/utils/attendanceCalc'
+import { parseTimeToMins, compute4141BreakMins, computeVirtualInMins, isLeaderOnDate as isLeaderOnDateCore, computeDailyRecognizedHours } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
@@ -418,35 +418,10 @@ const empStats = useMemo(() => {
       const weekTotals: Record<string, number> = {}
       const isLeaderOnDate = makeIsLeaderOnDate(e.id)
       for (const r of empRecs) {
-        // empStats.roundedTotal 과 동일 기준 (크레딧 ON, 직책자/비직책자 구분)
-        const isSlackInj    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
-        const isErpApproved = r.leaveType ? !isSlackInj : true
-        const credit        = (isErpApproved && !r.isUnpaidLeave && r.erpLeaveAmount)
-          ? r.erpLeaveAmount * 8 : 0
-        let addH: number
-        if (r.dayType !== 'WEEKDAY') {
-          // 휴일근무: 직책자/비직책자 모두 30분 절삭
-          addH = r.finalStatus === '휴일근무' ? floorTo30(r.holidayHours ?? 0) : 0
-        } else {
-          const effClockInStr = r.effectiveClockIn ?? r.clockIn
-          const ciEff = effClockInStr ? parseTimeToMins(effClockInStr) : null
-          const co    = r.clockOut ? parseTimeToMins(r.clockOut) : null
-          if (ciEff === null || co === null) {
-            addH = credit
-          } else {
-            const elapsed = Math.max(0, co - ciEff)
-            const netRecH = Math.max(0, elapsed - compute4141BreakMins(elapsed)) / 60
-            if (isLeaderOnDate(r.date)) {
-              addH = netRecH + credit
-            } else {
-              const approvedOt = r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
-              // empStats.roundedTotal과 동일 기준: 연장근로 발생일은 credit 별도가산 없이 8h+approvedOt
-              addH = approvedOt > 0 ? (8 + approvedOt) : (Math.min(netRecH, 8) + credit)
-            }
-          }
-        }
+        // computeDailyRecognizedHours = empStats.roundedTotal과 동일한 §4 확정 공식
+        // (attendanceCalc.ts로 추출 — Overview 등 다른 화면도 이 함수로 동일 기준 재사용)
         const wk = weekKey(r.date)
-        weekTotals[wk] = (weekTotals[wk] ?? 0) + addH
+        weekTotals[wk] = (weekTotals[wk] ?? 0) + computeDailyRecognizedHours(r, isLeaderOnDate(r.date))
       }
       return Object.values(weekTotals).some(h => h >= 52)
     })
