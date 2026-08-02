@@ -444,6 +444,10 @@ function buildLeaveMap(
  *
  * A row is counted as applied/approved OT when:
  *   승인상태 is '승인' or '신청'  AND  (근태코드 is OT-type  OR  인정시간 > 0)
+ *   AND (근태코드 === '연장근로'인 경우) 신청일이 시작일과 일치 — 단, 자정을 넘겨 근무한
+ *   경우(종료일 = 시작일+1)에 한해 신청일 = 시작일+1도 인정. 그 외 신청일 불일치는 스킵.
+ *   (실데이터 검증: 841건 중 818건은 이 규칙을 통과, 10건은 신청일이 시작일과 무관하게
+ *   어긋나 있어 인정 제외 — 2026-08-02 사용자 확인 후 반영)
  *
  * Map.has() is checked (not value > 0) for erpOtApplied so that an approved
  * application with 인정시간=0 still suppresses the '연장 미신청' flag.
@@ -474,6 +478,8 @@ function buildOtMap(
     const codeKey     = Object.keys(r).find(k => k.replace(/\s+/g, '') === '근태코드')  ?? '근태코드'
     const injeongKey  = Object.keys(r).find(k => k.replace(/\s+/g, '') === '인정시간')  ?? '인정시간'
     const startKey    = Object.keys(r).find(k => k.replace(/\s+/g, '') === '시작일')    ?? '시작일'
+    const endKey      = Object.keys(r).find(k => k.replace(/\s+/g, '') === '종료일')    ?? '종료일'
+    const applyKey    = Object.keys(r).find(k => k.replace(/\s+/g, '') === '신청일')    ?? '신청일'
 
     const code  = String(r[codeKey]  ?? '').normalize('NFKC').trim()
     const hours = parseInjeongTime(r[injeongKey])
@@ -484,6 +490,19 @@ function buildOtMap(
 
     const startDate = normalizeDate(r[startKey])
     if (!startDate) continue
+
+    // 연장근로 신청일 검증 — 다른 OT류 코드(휴일근로 등)는 대상 아님.
+    // 신청일 컬럼이 없거나 파싱 안 되면(구형 파일 등) 검증을 건너뛰고 그대로 인정한다(fail-open).
+    if (code === '연장근로') {
+      const applyDate = normalizeDate(r[applyKey])
+      if (applyDate) {
+        const endDate           = normalizeDate(r[endKey]) || startDate
+        const nextDay           = addOneDayUTC(startDate)
+        const crossesMidnight   = endDate === nextDay
+        const validApplyDate    = applyDate === startDate || (crossesMidnight && applyDate === nextDay)
+        if (!validApplyDate) continue
+      }
+    }
 
     const k    = key(compositeKey, startDate)
     const prev = map.get(k)
