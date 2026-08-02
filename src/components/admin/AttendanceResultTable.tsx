@@ -472,9 +472,14 @@ export function AttendanceResultTable({
       const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
       const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
       // Button3(실제값): leaveType=null → std=480 → MAX(actualIn, 08:00) floor only, 연차보정 없음
-      const effectiveIn        = isExactMode
-        ? computeEffClockIn(r.clockIn, null, true)
-        : computeEffClockIn(r.clockIn, r.leaveType, isErpLeaveApproved)
+      // 외근: processRecord.ts(applyOffsiteEntry)가 9~18시 기본/조기출근/지연퇴근 규칙대로 이미
+      // effectiveClockIn을 보정해둠 — 원본 태깅 시각(r.clockIn)으로 다시 계산하면, 외근으로 늦게
+      // 태깅된 출근시각이 virtualIn+10h 기산점을 밀어버려 연장근로가 0으로 계산되는 버그가 있었음.
+      const effectiveIn        = r.finalStatus === '외근'
+        ? (r.effectiveClockIn ?? r.clockIn)
+        : isExactMode
+          ? computeEffClockIn(r.clockIn, null, true)
+          : computeEffClockIn(r.clockIn, r.leaveType, isErpLeaveApproved)
       const clockInMins        = effectiveIn ? parseTimeToMins(effectiveIn) : null
       const clockOutMins    = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
       const isHoliday       = r.dayType !== 'WEEKDAY'
