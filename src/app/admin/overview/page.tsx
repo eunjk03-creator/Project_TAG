@@ -125,25 +125,29 @@ function AccordionSection({
   )
 }
 
-/** 본부별 비교 — 항목마다 단위가 달라(건/명/일) 한 차트에 섞지 않고 항목별로 따로 보여준다. */
+/**
+ * 본부별 비교 — 항목마다 단위가 달라(건/명/일) 한 차트에 섞지 않고 항목별로 따로 보여준다.
+ * 각 상세 아코디언 안에서 그래프→상세 순서로 함께 표시된다(별도 탭·섹션으로 안 뺌).
+ * compact: 이상치처럼 한 섹션에 3개를 나란히 놓을 때 쓰는 좁은 버전.
+ */
 function DivisionCompareChart({
-  title, color, data, unit,
-}: { title: string; color: string; data: { label: string; value: number }[]; unit: string }) {
+  title, color, data, unit, compact,
+}: { title: string; color: string; data: { label: string; value: number }[]; unit: string; compact?: boolean }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-      <p className="text-[11px] font-semibold text-gray-500 mb-3 flex items-center gap-1.5">
+    <div className={compact ? 'bg-gray-50 rounded-xl p-3' : 'bg-white rounded-2xl border border-gray-100 shadow-sm p-5'}>
+      <p className={`font-semibold text-gray-500 mb-2 flex items-center gap-1.5 ${compact ? 'text-[10.5px]' : 'text-[11px] mb-3'}`}>
         <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: color }} />
         {title}
       </p>
-      {data.length === 0 ? <EmptyNote text="데이터가 없습니다." /> : (
-        <div className="h-36">
+      {data.length === 0 ? <p className="text-[11px] text-gray-300 text-center py-6">데이터가 없습니다.</p> : (
+        <div className={compact ? 'h-28' : 'h-36'}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 16 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={0}
-                angle={data.length > 6 ? -35 : 0} textAnchor={data.length > 6 ? 'end' : 'middle'}
-                height={data.length > 6 ? 38 : 20} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={28} />
+              <XAxis dataKey="label" tick={{ fontSize: compact ? 8.5 : 9 }} interval={0}
+                angle={data.length > (compact ? 3 : 6) ? -35 : 0} textAnchor={data.length > (compact ? 3 : 6) ? 'end' : 'middle'}
+                height={data.length > (compact ? 3 : 6) ? 36 : 20} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={24} />
               <Tooltip formatter={(v: unknown) => [`${Number(v ?? 0)}${unit}`, title]} />
               <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} />
             </BarChart>
@@ -259,18 +263,24 @@ export default function OverviewPage() {
     setOpenSection(prev => (prev === key ? null : key))
   }
 
-  // ── 본부별 비교 데이터 (주/월 전용) ───────────────────────────────────────
-  const compareAnomaly = useMemo(
-    () => divAnomaly.map(r => ({ label: r.label, value: r.total })).sort((a, b) => b.value - a.value),
+  // ── 본부별 비교 데이터 — 각 상세 아코디언 안에 그래프→상세 순으로 함께 넣는다 ───────
+  // 이상치는 지각/근무시간미달/미태깅을 하나로 합친 총건수가 아니라, 카테고리별로 각각
+  // 본부 비교 그래프 3개를 보여준다(요약 타일이 이미 3종을 나눠 보여주는 것과 동일한 구조).
+  const compareLate = useMemo(
+    () => divAnomaly.map(r => ({ label: r.label, value: r.late })).filter(r => r.value > 0).sort((a, b) => b.value - a.value),
+    [divAnomaly],
+  )
+  const compareShortage = useMemo(
+    () => divAnomaly.map(r => ({ label: r.label, value: r.shortage })).filter(r => r.value > 0).sort((a, b) => b.value - a.value),
+    [divAnomaly],
+  )
+  const compareNotag = useMemo(
+    () => divAnomaly.map(r => ({ label: r.label, value: r.notag })).filter(r => r.value > 0).sort((a, b) => b.value - a.value),
     [divAnomaly],
   )
   const compareOt = useMemo(
     () => [...overLimitByDivision.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value),
     [overLimitByDivision],
-  )
-  const compareLeave = useMemo(
-    () => divLeave.map(r => ({ label: r.label, value: Math.round(r.days * 100) / 100 })).sort((a, b) => b.value - a.value),
-    [divLeave],
   )
 
   if (!isLiveData) {
@@ -420,16 +430,8 @@ export default function OverviewPage() {
         </div>
       )}
 
-      {/* ── 본부별 비교 — 항목별로 나눠서, 탭 전환 없이 한 번에 ── */}
-      {period.granularity !== 'day' && (
-        <div className="space-y-3">
-          <DivisionCompareChart title="근태 이상치 본부별 비교" color="#c4291f" unit="건" data={compareAnomaly} />
-          <DivisionCompareChart title={`${otTileLabel} 본부별 비교`} color="#2f6fed" unit="명" data={compareOt} />
-          <DivisionCompareChart title="휴가 사용 본부별 비교" color="#6d3fd1" unit="일" data={compareLeave} />
-        </div>
-      )}
-
       {/* ── 상세 아코디언 (기본 접힘 — 타일 클릭 시 해당 항목만 펼쳐짐) ── */}
+      {/* 본부별 비교 그래프는 각 섹션 안에 그래프→상세 순서로 함께 들어있다 (탭 분리 없음) */}
       <div className="space-y-3">
         <AccordionSection
           innerRef={el => { sectionRefs.current.anomaly = el }}
@@ -478,6 +480,17 @@ export default function OverviewPage() {
               )}
             </Box>
           </div>
+
+          {period.granularity !== 'day' && (
+            <div>
+              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">본부별 비교</p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <DivisionCompareChart title="지각" color="#b4650a" unit="건" data={compareLate} compact />
+                <DivisionCompareChart title="근무시간 미달" color="#c4291f" unit="건" data={compareShortage} compact />
+                <DivisionCompareChart title="미태깅" color="#c4291f" unit="건" data={compareNotag} compact />
+              </div>
+            </div>
+          )}
 
           {empAnomaly.length === 0 ? <EmptyNote text="이 기간엔 이상치가 없습니다." /> : (
             <div className="overflow-x-auto">
@@ -611,6 +624,10 @@ export default function OverviewPage() {
               )}
             </Box>
           </div>
+
+          {period.granularity !== 'day' && (
+            <DivisionCompareChart title={`본부별 ${otTileLabel}`} color="#2f6fed" unit="명" data={compareOt} />
+          )}
 
           {period.granularity !== 'day' && (
             <div>
