@@ -53,14 +53,14 @@ function KpiTile({
       className={`text-left bg-white border border-gray-100 rounded-xl px-4 py-3.5 shadow-sm hover:shadow
         hover:-translate-y-px transition-all ${wide ? 'col-span-2' : ''}`}
     >
-      <p className="text-[11px] font-semibold text-gray-400 flex items-center gap-1.5">
-        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+      <p className="text-xs font-semibold text-gray-400 flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
         {label}
       </p>
-      <p className="text-xl font-bold tabular-nums mt-1" style={{ color }}>
-        {value}{unit && <span className="text-xs font-semibold text-gray-300 ml-1">{unit}</span>}
+      <p className="text-3xl font-extrabold tabular-nums mt-1 leading-tight" style={{ color }}>
+        {value}{unit && <span className="text-sm font-semibold text-gray-300 ml-1">{unit}</span>}
       </p>
-      {sub && <p className="text-[10px] text-gray-400 mt-1 truncate">{sub}</p>}
+      {sub && <p className="text-[11px] text-gray-400 mt-1 truncate">{sub}</p>}
     </button>
   )
 }
@@ -75,7 +75,7 @@ function AnomalyGroupCard({
       className="col-span-3 text-left bg-white border border-gray-100 rounded-xl px-4 py-3.5 shadow-sm
         hover:shadow hover:-translate-y-px transition-all"
     >
-      <p className="text-[11px] font-semibold text-gray-400 mb-2">근태 이상치 <span className="font-normal text-gray-300">· 지각 · 미달 · 미태깅</span></p>
+      <p className="text-xs font-semibold text-gray-400 mb-2">근태 이상치 <span className="font-normal text-gray-300">· 지각 · 미달 · 미태깅</span></p>
       <div className="grid grid-cols-3 divide-x divide-gray-100">
         {[
           { label: '지각', value: late, color: '#b4650a' },
@@ -83,9 +83,9 @@ function AnomalyGroupCard({
           { label: '미태깅', value: notag, color: '#c4291f' },
         ].map(it => (
           <div key={it.label} className="px-3 first:pl-0">
-            <p className="text-[10.5px] text-gray-400 font-medium mb-0.5">{it.label}</p>
-            <p className="text-lg font-bold tabular-nums" style={{ color: it.color }}>
-              {it.value}<span className="text-[10px] font-semibold text-gray-300 ml-0.5">건</span>
+            <p className="text-xs text-gray-400 font-medium mb-0.5">{it.label}</p>
+            <p className="text-2xl font-extrabold tabular-nums leading-tight" style={{ color: it.color }}>
+              {it.value}<span className="text-xs font-semibold text-gray-300 ml-0.5">건</span>
             </p>
           </div>
         ))}
@@ -236,6 +236,16 @@ export default function OverviewPage() {
   const otTileLabel = period.granularity === 'day' ? '오늘 초과근무'
     : period.granularity === 'week' ? '주 52시간 초과자' : '월 209시간 초과자'
 
+  // 일 단위 볼 때는 그날이 실제 휴일/주말일 때만 휴일근무 타일을 보여준다 — 평일엔 항상
+  // 0명이라 자리만 차지하므로 숨김. records(division 필터 전)에서 판별해 필터와 무관하게 유지.
+  const isHolidayToday = useMemo(() => {
+    const rec = records.find(r => r.date === period.from)
+    const dayType = rec?.dayType ?? (
+      [0, 6].includes(new Date(period.from + 'T12:00').getDay()) ? 'WEEKEND' : 'WEEKDAY'
+    )
+    return dayType !== 'WEEKDAY'
+  }, [records, period.from])
+
   // ── 상세 아코디언 열림 상태 + 타일 클릭 시 스크롤 ─────────────────────────
   const [openSection, setOpenSection] = useState<SectionKey | null>(null)
   const sectionRefs = useRef<Partial<Record<SectionKey, HTMLDivElement | null>>>({})
@@ -354,9 +364,9 @@ export default function OverviewPage() {
                 </ResponsiveContainer>
               </div>
               <div>
-                <p className="text-[11px] text-gray-400">오늘 출근율</p>
-                <p className="text-xl font-bold tabular-nums text-gray-900">{normalRate.pct.toFixed(1)}%</p>
-                <p className="text-[11px] text-gray-400 tabular-nums">({normalRate.normal}/{normalRate.total})</p>
+                <p className="text-xs text-gray-400">오늘 출근율</p>
+                <p className="text-2xl font-extrabold tabular-nums text-gray-900">{normalRate.pct.toFixed(1)}%</p>
+                <p className="text-xs text-gray-400 tabular-nums">({normalRate.normal}/{normalRate.total})</p>
               </div>
             </div>
             <div className="hidden md:block bg-gray-100 w-px h-full" />
@@ -370,18 +380,20 @@ export default function OverviewPage() {
                 { label: '미태깅', value: anomalyTotals.notag, color: '#c4291f' },
               ].map(it => (
                 <div key={it.label} className="px-3 first:pl-0">
-                  <p className="text-[11px] text-gray-400 font-medium mb-0.5">{it.label}</p>
-                  <p className="text-lg font-bold tabular-nums" style={{ color: it.color }}>
-                    {it.value}<span className="text-[10px] font-semibold text-gray-300 ml-0.5">명</span>
+                  <p className="text-xs text-gray-400 font-medium mb-0.5">{it.label}</p>
+                  <p className="text-2xl font-extrabold tabular-nums leading-tight" style={{ color: it.color }}>
+                    {it.value}<span className="text-xs font-semibold text-gray-300 ml-0.5">명</span>
                   </p>
                 </div>
               ))}
             </button>
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <KpiTile label="휴일근무" value={todayHoliday.length} unit="명" color="#6d3fd1"
-              sub={todayHoliday.length === 0 ? '오늘 휴일근무 없음' : '눌러서 시간·명단 보기'}
-              onClick={() => openAndScroll('holiday')} />
+          <div className={`grid gap-3 ${isHolidayToday ? 'grid-cols-3' : 'grid-cols-2'}`}>
+            {isHolidayToday && (
+              <KpiTile label="휴일근무" value={todayHoliday.length} unit="명" color="#6d3fd1"
+                sub={todayHoliday.length === 0 ? '오늘 휴일근무 없음' : '눌러서 시간·명단 보기'}
+                onClick={() => openAndScroll('holiday')} />
+            )}
             <KpiTile label={otTileLabel} value={otTileCount} unit="명" color="#2f6fed"
               sub={`기간 합계 ${fmtH(totalOtH)}`}
               onClick={() => openAndScroll('ot')} />
