@@ -83,7 +83,20 @@ function getOrgPath(emp: Employee): string {
   return parts.join(' / ')
 }
 
-/** Returns the DateRange spanning the earliest to latest record date (data keeps accumulating, so this only ever grows). */
+function toDS(d: Date): string {
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0')
+}
+function addDays(s: string, n: number): string {
+  const d = new Date(s + 'T12:00:00')
+  d.setDate(d.getDate() + n)
+  return toDS(d)
+}
+
+/** Returns the latest-7-days window within the data (earliest record date if the data spans
+ *  less than a week). 업로드 직후 min~max(보통 1월~오늘) 전체를 자동으로 띄우면 그리드/집계 렌더링이
+ *  무거워져서 기본값을 최근 1주일로 좁힘 — 더 넓은 기간은 DateRangePicker로 수동 선택. */
 function detectMonthRange(records: { date: string }[]): { from: string; to: string } | null {
   let min: string | null = null
   let max: string | null = null
@@ -93,7 +106,8 @@ function detectMonthRange(records: { date: string }[]): { from: string; to: stri
     if (!max || r.date > max) max = r.date
   }
   if (!min || !max) return null
-  return { from: min, to: max }
+  const weekAgo = addDays(max, -6)
+  return { from: weekAgo > min ? weekAgo : min, to: max }
 }
 
 type View = 'grid' | 'table' | 'summary' | 'allowance'
