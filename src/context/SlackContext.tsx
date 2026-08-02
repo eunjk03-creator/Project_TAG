@@ -191,9 +191,13 @@ export function SlackProvider({ children }: { children: ReactNode }) {
       }
 
       // DB에 저장 후 재계산 — await 필수: compute-attendance가 DB에서 Slack 예외를 읽으므로
-      // fire-and-forget이면 DB 쓰기 전에 재계산이 실행되어 Slack 반영 안 됨
+      // fire-and-forget이면 DB 쓰기 전에 재계산이 실행되어 Slack 반영 안 됨.
+      // 예전엔 실패를 완전히 무시해서(catch{}) 서버 재계산이 통째로 빈 Slack 데이터로
+      // 조용히 진행돼 외근·Slack반차 보정이 전부 무시되는 걸 아무도 알 수 없었음
+      // (2026-08-03 발견) — 이제 실패 시 화면에 명시적으로 알림.
+      let dbSaveOk = true
       try {
-        await fetch('/api/slack/exceptions', {
+        const res = await fetch('/api/slack/exceptions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(parsed.map(e => ({
@@ -201,8 +205,20 @@ export function SlackProvider({ children }: { children: ReactNode }) {
             type: e.type, note: e.note, rawText: e.rawText,
           }))),
         })
-      } catch {
-        // DB 저장 실패해도 재계산 시도 (로컬 메모리 기준으로는 반영됨)
+        if (!res.ok) {
+          dbSaveOk = false
+          const errText = await res.text().catch(() => '응답 없음')
+          console.error(`[TAG Slack] DB 저장 실패 HTTP ${res.status}:`, errText.slice(0, 300))
+        }
+      } catch (e) {
+        dbSaveOk = false
+        console.error('[TAG Slack] DB 저장 요청 실패:', e)
+      }
+      if (!dbSaveOk) {
+        setError(
+          'Slack 파싱은 완료됐지만 DB 저장에 실패했습니다 — 외근·Slack 반차 보정이 서버 ' +
+          '재계산에 반영되지 않습니다. 다시 동기화해주세요.',
+        )
       }
 
       const ts    = new Date().toLocaleString('ko-KR')
