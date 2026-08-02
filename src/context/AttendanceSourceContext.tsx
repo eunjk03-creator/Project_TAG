@@ -155,23 +155,35 @@ async function dbPut(data: StoredAttendance | null): Promise<string | null> {
     }
     const metaJson = await metaRes.json() as { ok: boolean; updatedAt: string }
 
-    // Step 2: write record chunks in parallel — each ~1MB, under Vercel's 4.5MB limit
-    const chunkResults = await Promise.all(
-      Array.from({ length: chunkCount }, async (_, i) => {
-        const records = rawRecords.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
-        const payload = JSON.stringify({ data: { records } })
-        console.log(`[TAG] dbPut chunk ${i}: ${(payload.length / 1024).toFixed(0)}KB (${records.length}건)`)
-        const res = await fetch(`/api/shared-data/attendance_records_${i}`, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: payload,
-        })
-        if (!res.ok) {
-          const errText = await res.text().catch(() => '응답 없음')
-          console.error(`[TAG] dbPut chunk ${i} 실패 HTTP ${res.status}:`, errText.slice(0, 300))
-          return false
-        }
-        return true
-      }),
-    )
+    // Step 2: write record chunks in small batches (not all at once) — firing every chunk
+    // in parallel spiked concurrent connections through the Supabase pooler and caused
+    // intermittent 500s (even on the small meta write above, from overlapping upload
+    // attempts). Each ~1MB, under Vercel's 4.5MB limit either way.
+    const CHUNK_BATCH_SIZE = 4
+    const chunkResults: boolean[] = []
+    for (let start = 0; start < chunkCount; start += CHUNK_BATCH_SIZE) {
+      const batchIdx = Array.from(
+        { length: Math.min(CHUNK_BATCH_SIZE, chunkCount - start) },
+        (_, j) => start + j,
+      )
+      const batchResults = await Promise.all(
+        batchIdx.map(async (i) => {
+          const records = rawRecords.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+          const payload = JSON.stringify({ data: { records } })
+          console.log(`[TAG] dbPut chunk ${i}: ${(payload.length / 1024).toFixed(0)}KB (${records.length}건)`)
+          const res = await fetch(`/api/shared-data/attendance_records_${i}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: payload,
+          })
+          if (!res.ok) {
+            const errText = await res.text().catch(() => '응답 없음')
+            console.error(`[TAG] dbPut chunk ${i} 실패 HTTP ${res.status}:`, errText.slice(0, 300))
+            return false
+          }
+          return true
+        }),
+      )
+      chunkResults.push(...batchResults)
+    }
 
     if (chunkResults.some(ok => !ok)) {
       console.error('[TAG] dbPut: 일부 청크 저장 실패')
