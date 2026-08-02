@@ -2,7 +2,7 @@ import type { EmployeeAttributeOverrides } from '@/types/tag'
 
 export const DEFAULT_GLOBAL_EXCLUSIONS = new Set([
   'E22100401','E22082202','E24010202','E23080702','E24031802',
-  'E22061503','E24031806','E24010203','E18090302','E24111802','E24100705',
+  'E22061503','E24031806','E24010203','E18090302','E24100705',
 ])
 export const DEFAULT_FIXED_A  = new Set(['E25122301'])
 export const DEFAULT_FIXED_B  = new Set(['E26030501','E24011001'])
