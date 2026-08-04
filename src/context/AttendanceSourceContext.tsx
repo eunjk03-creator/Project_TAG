@@ -208,25 +208,78 @@ async function dbGetProcessed(): Promise<{ data: StoredProcessed | null; updated
   }
 }
 
-async function apiCompute(policy: PolicySettings): Promise<{ processedAt: string | null; error: string | null }> {
+// 한 페이지당 처리 건수 — compute-attendance/route.ts가 이 슬라이스만큼만 processRecord()를
+// 돌리고 새 DailyAttendance 테이블에 upsert한다. 여러 번 나눠 호출해서 요청 하나가 4~5만
+// 건을 전부 처리할 필요가 없게 만드는 게 타임아웃(B14)의 구조적 해결책 — 이 상수를 줄이면
+// 요청당 부담은 더 줄고 왕복 횟수는 늘어난다.
+const RECOMPUTE_PAGE_SIZE = 2000
+
+interface ComputePageResponse {
+  ok:          boolean
+  processed:   ProcessedRecord[]
+  totalCount:  number
+  offset:      number
+  done:        boolean
+  processedAt: string
+}
+
+async function fetchComputePage(
+  policy: PolicySettings, offset: number, limit: number,
+): Promise<{ page: ComputePageResponse | null; error: string | null }> {
   try {
     const res = await fetch('/api/compute-attendance', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ policy }),
+      body:    JSON.stringify({ policy, offset, limit }),
     })
     if (!res.ok) {
       // 504(Vercel 함수 타임아웃)는 본문이 HTML이거나 비어있을 수 있어 text()로 우선 확보
       const bodyText = await res.text().catch(() => '')
       let msg = bodyText
       try { msg = (JSON.parse(bodyText) as { error?: string }).error ?? bodyText } catch { /* not JSON */ }
-      return { processedAt: null, error: `전체 재계산 실패 (HTTP ${res.status})${msg ? `: ${msg.slice(0, 200)}` : ''}` }
+      return { page: null, error: `전체 재계산 실패 (HTTP ${res.status})${msg ? `: ${msg.slice(0, 200)}` : ''}` }
     }
-    const json = await res.json() as { ok: boolean; processedAt: string }
-    return { processedAt: json.processedAt ?? null, error: null }
+    return { page: await res.json() as ComputePageResponse, error: null }
   } catch (err) {
-    return { processedAt: null, error: `전체 재계산 요청 실패: ${err instanceof Error ? err.message : String(err)}` }
+    return { page: null, error: `전체 재계산 요청 실패: ${err instanceof Error ? err.message : String(err)}` }
   }
+}
+
+/**
+ * offset/limit 페이지네이션으로 compute-attendance를 반복 호출해 전체 레코드를 처리한다.
+ * 각 페이지 응답의 processed 슬라이스를 클라이언트에서 누적한 뒤, 전부 끝나면 그 완전한
+ * 배열로 processed_data blob을 한 번만 갱신한다(라우트 자체는 페이지네이션 호출 시 blob을
+ * 안 건드림 — route.ts 주석 참고). useProcessedAttendance.ts가 DailyAttendance를 직접
+ * 읽도록 전환되면(Phase C) 이 blob 갱신 단계는 제거될 예정.
+ */
+async function apiCompute(policy: PolicySettings): Promise<{ processedAt: string | null; error: string | null }> {
+  const accumulated: ProcessedRecord[] = []
+  let offset = 0
+  let processedAt = new Date().toISOString()
+
+  for (;;) {
+    const { page, error } = await fetchComputePage(policy, offset, RECOMPUTE_PAGE_SIZE)
+    if (error || !page) return { processedAt: null, error }
+    accumulated.push(...page.processed)
+    processedAt = page.processedAt
+    if (page.processed.length === 0 || page.done) break
+    offset += page.processed.length
+  }
+
+  if (accumulated.length === 0) return { processedAt, error: null }
+
+  try {
+    const putRes = await fetch('/api/shared-data/processed_data', {
+      method:  'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ data: { processed: accumulated, processedAt } }),
+    })
+    if (!putRes.ok) return { processedAt: null, error: `재계산 결과 저장 실패 (HTTP ${putRes.status})` }
+  } catch (err) {
+    return { processedAt: null, error: `재계산 결과 저장 실패: ${err instanceof Error ? err.message : String(err)}` }
+  }
+
+  return { processedAt, error: null }
 }
 
 // ── Provider ──────────────────────────────────────────────────────────────

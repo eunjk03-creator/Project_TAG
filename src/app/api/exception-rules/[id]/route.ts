@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { recomputeEmployeeAttendance } from '@/lib/recomputeEmployee'
 
 export async function PATCH(
   req: NextRequest,
@@ -20,7 +21,19 @@ export async function PATCH(
     if (body.validFrom      !== undefined) data.validFrom      = body.validFrom
     if (body.validTo        !== undefined) data.validTo        = body.validTo
 
+    // employeeId 자체가 바뀔 수도 있는 드문 케이스까지 대비해 수정 전 소유자도 기억해둔다.
+    const before = await prisma.exceptionRule.findUnique({ where: { id }, select: { employeeId: true } })
     const row = await prisma.exceptionRule.update({ where: { id }, data })
+
+    const affectedIds = [...new Set([before?.employeeId, row.employeeId].filter((v): v is string => !!v))]
+    for (const employeeId of affectedIds) {
+      try {
+        await recomputeEmployeeAttendance(employeeId)
+      } catch (err) {
+        console.error('[exception-rules] 증분 재계산 실패:', err)
+      }
+    }
+
     return NextResponse.json(row)
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
@@ -33,7 +46,17 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params
+    const existing = await prisma.exceptionRule.findUnique({ where: { id }, select: { employeeId: true } })
     await prisma.exceptionRule.delete({ where: { id } })
+
+    if (existing) {
+      try {
+        await recomputeEmployeeAttendance(existing.employeeId)
+      } catch (err) {
+        console.error('[exception-rules] 증분 재계산 실패:', err)
+      }
+    }
+
     return new NextResponse(null, { status: 204 })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
