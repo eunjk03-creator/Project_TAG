@@ -120,7 +120,7 @@ export default function AdminDashboard() {
   const {
     employees: baseEmployees, rawRecords: baseRecords, isLiveData,
     processedRecords: serverProcessed, isProcessing: isServerProcessing,
-    recomputeProcessed,
+    recomputeProcessed, dbSaveError: recomputeError,
   } = useAttendanceSource()
   const { config: slackConfig } = useSlack()
   const [showSlackReminder, setShowSlackReminder] = useState(false)
@@ -891,6 +891,11 @@ export default function AdminDashboard() {
               </svg>
               전체 재계산
             </button>
+          )}
+          {!isServerProcessing && recomputeError && (
+            <span className="text-xs text-red-600 font-medium" title={recomputeError}>
+              ⚠ {recomputeError}
+            </span>
           )}
         </div>
       )}

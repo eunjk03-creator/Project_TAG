@@ -67,7 +67,7 @@ export default function FastDashboard() {
   const {
     employees: baseEmployees, rawRecords: baseRecords, isLiveData, isLoading,
     processedRecords: serverProcessed, isProcessing: isServerProcessing,
-    recomputeProcessed,
+    recomputeProcessed, dbSaveError: recomputeError,
   } = useAttendanceSource()
   const { slackNoteMap } = useSlack()
 
@@ -336,6 +336,9 @@ export default function FastDashboard() {
             </span>
           ) : (
             <button onClick={recomputeProcessed} className="text-gray-400 hover:text-gray-700 transition-colors">↻ 재계산</button>
+          )}
+          {!isServerProcessing && recomputeError && (
+            <span className="text-xs text-red-600 font-medium" title={recomputeError}>⚠ {recomputeError}</span>
           )}
         </div>
       )}

@@ -208,18 +208,24 @@ async function dbGetProcessed(): Promise<{ data: StoredProcessed | null; updated
   }
 }
 
-async function apiCompute(policy: PolicySettings): Promise<string | null> {
+async function apiCompute(policy: PolicySettings): Promise<{ processedAt: string | null; error: string | null }> {
   try {
     const res = await fetch('/api/compute-attendance', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ policy }),
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      // 504(Vercel 함수 타임아웃)는 본문이 HTML이거나 비어있을 수 있어 text()로 우선 확보
+      const bodyText = await res.text().catch(() => '')
+      let msg = bodyText
+      try { msg = (JSON.parse(bodyText) as { error?: string }).error ?? bodyText } catch { /* not JSON */ }
+      return { processedAt: null, error: `전체 재계산 실패 (HTTP ${res.status})${msg ? `: ${msg.slice(0, 200)}` : ''}` }
+    }
     const json = await res.json() as { ok: boolean; processedAt: string }
-    return json.processedAt ?? null
-  } catch {
-    return null
+    return { processedAt: json.processedAt ?? null, error: null }
+  } catch (err) {
+    return { processedAt: null, error: `전체 재계산 요청 실패: ${err instanceof Error ? err.message : String(err)}` }
   }
 }
 
@@ -310,7 +316,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
             // Stale processed data detected on load: trigger background recompute silently
             setIsProcessing(true)
             apiCompute(policy)
-              .then(async pt => { if (pt) await loadProcessedFromDB() })
+              .then(async ({ processedAt: pt }) => { if (pt) await loadProcessedFromDB() })
               .catch(console.error)
               .finally(() => { if (!cancelled) setIsProcessing(false) })
           }
@@ -345,7 +351,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
           // Stale processed data detected on fresh load: trigger background recompute
           setIsProcessing(true)
           apiCompute(policy)
-            .then(async pt => { if (pt) await loadProcessedFromDB() })
+            .then(async ({ processedAt: pt }) => { if (pt) await loadProcessedFromDB() })
             .catch(console.error)
             .finally(() => { if (!cancelled) setIsProcessing(false) })
         }
@@ -379,22 +385,27 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     if (isLiveDataRef.current) {
       setIsProcessing(true)
       apiCompute(policy)
-        .then(async pt => { if (pt) await loadProcessedFromDB() })
+        .then(async ({ processedAt: pt }) => { if (pt) await loadProcessedFromDB() })
         .catch(console.error)
         .finally(() => setIsProcessing(false))
     }
   }, [policy]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── recomputeProcessed: trigger server-side computation ───────────────
+  // ── recomputeProcessed: trigger server-side computation (사용자가 직접 누르는 버튼) ──
+  // 조용히 실패하면 안 됨 — 실패 시 dbSaveError에 이유를 남겨서 CsvUploader 등에서
+  // 그대로 노출한다 (기존엔 버튼을 눌러도 실패가 콘솔에만 찍히고 화면엔 아무 표시가 없었음).
   const recomputeProcessed = useCallback(async () => {
     setIsProcessing(true)
     try {
-      const processedAt = await apiCompute(policy)
+      const { processedAt, error } = await apiCompute(policy)
       if (processedAt) {
+        setDbSaveError(null)
         await loadProcessedFromDB()
+      } else {
+        setDbSaveError(error ?? '전체 재계산에 실패했습니다. 다시 시도해 주세요.')
       }
     } catch (err) {
-      console.error('[AttendanceSourceContext] recompute failed:', err)
+      setDbSaveError(`전체 재계산 실패: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setIsProcessing(false)
     }
@@ -428,11 +439,11 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
 
     // Trigger server-side computation (non-blocking)
     setIsProcessing(true)
-    apiCompute(policy).then(async (processedAt) => {
+    apiCompute(policy).then(async ({ processedAt, error }) => {
       if (processedAt) {
         await loadProcessedFromDB()
       } else {
-        console.warn('[TAG] apiCompute 실패 — 처리 결과가 업데이트되지 않음. 재계산 버튼 클릭 필요.')
+        console.warn('[TAG] apiCompute 실패 — 처리 결과가 업데이트되지 않음. 재계산 버튼 클릭 필요.', error)
       }
     }).catch(console.error).finally(() => setIsProcessing(false))
 
@@ -470,7 +481,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
         setDbSaveError('DB 저장 실패 — 브라우저에만 저장됨. 새로고침 시 데이터가 사라질 수 있습니다.')
       }
       setIsProcessing(true)
-      apiCompute(policy).then(async pt => { if (pt) await loadProcessedFromDB() })
+      apiCompute(policy).then(async ({ processedAt: pt }) => { if (pt) await loadProcessedFromDB() })
         .catch(console.error).finally(() => setIsProcessing(false))
       return { ...newResult, employees: newNormalized, addedCount: newResult.rawRecords.length, updatedCount: 0 }
     }
@@ -507,7 +518,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     }
 
     setIsProcessing(true)
-    apiCompute(policy).then(async pt => { if (pt) await loadProcessedFromDB() })
+    apiCompute(policy).then(async ({ processedAt: pt }) => { if (pt) await loadProcessedFromDB() })
       .catch(console.error).finally(() => setIsProcessing(false))
 
     return { ...newResult, employees: mergedEmployees, rawRecords: mergedRecords, addedCount, updatedCount }
@@ -531,7 +542,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     }
 
     setIsProcessing(true)
-    apiCompute(policy).then(async pt => { if (pt) await loadProcessedFromDB() })
+    apiCompute(policy).then(async ({ processedAt: pt }) => { if (pt) await loadProcessedFromDB() })
       .catch(console.error).finally(() => setIsProcessing(false))
 
     return { deletedCount }

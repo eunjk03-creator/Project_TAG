@@ -7,6 +7,12 @@ import { getDayInfo } from '@/utils/dataParser'
 import { DEFAULT_POLICY } from '@/types/tag'
 import type { PolicySettings, RawRecord, Employee } from '@/types/tag'
 
+// 전체 재계산은 4~5만 건 전량을 한 요청에서 순회한다 — Vercel 기본 타임아웃(플랜별 상이,
+// 명시 안 하면 Hobby 10s/Pro 15s)로는 부족해서 조용히 504로 죽던 문제(B14)가 있었음.
+// Hobby 플랜이면 이 값이 60s로 클램프되니, 그래도 타임아웃되면 플랜 업그레이드나 배치
+// 분할(레코드를 나눠 여러 번 호출)이 필요하다 — 이 숫자를 더 올리는 걸로는 해결 안 됨.
+export const maxDuration = 300
+
 interface StoredAttendance {
   employees:   Employee[]
   rawRecords?: RawRecord[]  // legacy: all records in one row
