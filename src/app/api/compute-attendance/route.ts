@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { processRecord } from '@/lib/processRecord'
 import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
-import { leaveTypeOverrideFields, synthesizeOverrideRecord } from '@/utils/attendanceCalc'
-import { getDayInfo } from '@/utils/dataParser'
+import { buildRecordSet } from '@/lib/buildRecordSet'
 import { DEFAULT_POLICY } from '@/types/tag'
 import type { PolicySettings, RawRecord, Employee } from '@/types/tag'
 
@@ -63,56 +62,23 @@ export async function POST(req: NextRequest) {
     const dbRules = await prisma.exceptionRule.findMany()
     const { finalAttrMap, otExemptIds } = buildFinalAttrMap(employees, dbRules)
 
-    // 3. Load admin overrides and apply to raw records
+    // 3. Load admin overrides + Slack notes, merge (getProcessedRecords.ts와 공용 로직 —
+    // 퇴사자 제외 필터를 여기서도 적용하도록 통합됨. 예전엔 이 라우트에만 그 필터가 빠져 있어서
+    // 퇴사일 이후 수기입력이 대시보드엔 보이는데 엑셀 내보내기엔 안 보이는 불일치가 있었음.)
     const overrides = await prisma.attendanceOverride.findMany()
-    const overrideMap = new Map(
-      overrides.map(ov => [`${ov.employeeId}_${ov.workDate}`, ov]),
-    )
-    const overriddenRecords: RawRecord[] = rawRecords.map(r => {
-      const ov = overrideMap.get(`${r.employeeId}_${r.date}`)
-      if (!ov) return r
-      return {
-        ...r,
-        clockIn:      ov.clockIn      ?? r.clockIn,
-        clockOut:     ov.clockOut     ?? r.clockOut,
-        erpOtApplied: ov.erpOtApplied !== null ? ov.erpOtApplied : r.erpOtApplied,
-        // erpLeaveType 반영 누락 버그 수정 — null=미수정, '없음'=명시적 삭제, 그 외=해당 연차유형으로 교체
-        ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
-      }
+    const slackExcs  = await prisma.slackException.findMany()
+    const { records: mergedRecords, slackNoteMap } = buildRecordSet({
+      employees, rawRecords, finalAttrMap, overrides, slackExceptions: slackExcs, policy,
     })
 
-    // 원본 CAPS/ERP 행이 아예 없는 override(예: 결근일/주말 수기입력)는 위 map에서 재계산될 기회가
-    // 없었다 — 대응하는 새 레코드를 합성해서 추가.
-    const companyHolsMap = new Map((policy.companyHolidays ?? []).map(h => [h.date, h.label]))
-    const rawKeys = new Set(rawRecords.map(r => `${r.employeeId}_${r.date}`))
-    const synthesizedRecords: RawRecord[] = []
-    for (const ov of overrides) {
-      if (ov.reasonLabel === '__DELETED__') continue
-      const key = `${ov.employeeId}_${ov.workDate}`
-      if (rawKeys.has(key)) continue
-      if (!ov.clockIn && !ov.clockOut && !ov.erpLeaveType) continue
-      const { dayType, dayLabel } = getDayInfo(ov.workDate, companyHolsMap)
-      synthesizedRecords.push(synthesizeOverrideRecord(ov.employeeId, ov.workDate, dayType, dayLabel, ov))
-    }
-
-    // 4. Load Slack notes
-    const slackExcs = await prisma.slackException.findMany()
-    const slackNoteMap = new Map<string, { note: string; rawText: string }[]>()
-    for (const s of slackExcs) {
-      const key = `${s.empId}_${s.date}`
-      const arr = slackNoteMap.get(key) ?? []
-      arr.push({ note: s.note, rawText: s.rawText })
-      slackNoteMap.set(key, arr)
-    }
-
-    // 5. Process all records server-side (기존 레코드 + 원본 없는 수기입력 합성 레코드)
-    const processed = [...overriddenRecords, ...synthesizedRecords].map(r =>
+    // 4. Process all records server-side
+    const processed = mergedRecords.map(r =>
       processRecord(r, policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId)),
     )
 
     const processedAt = new Date().toISOString()
 
-    // 6. Persist computed results
+    // 5. Persist computed results
     await prisma.sharedDataStore.upsert({
       where:  { key: 'processed_data' },
       create: { key: 'processed_data', data: { processed, processedAt } as object },
