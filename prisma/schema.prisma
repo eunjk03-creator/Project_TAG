@@ -25,7 +25,6 @@ model Employee {
   capsLogs         RawCapsLog[]
   leaveRecords     ErpLeaveRecord[]
   slackLogs        SlackStatusLog[]
-  dailyAttendances DailyAttendance[]
 
   @@map("employees")
 }
@@ -99,38 +98,45 @@ enum SlackLabel {
   SICK
 }
 
-// ─── 일별 근태 (Sieve 최종 결과) ────────────────────
+// ─── 일별 근태 (Sieve 최종 결과) — src/types/tag.ts의 ProcessedRecord와 1:1 대응 ──────
+// employeeId/workDate는 관계형 FK가 아니라 평문 문자열(ExceptionRule/AttendanceOverride와
+// 동일 컨벤션) — 실제 employeeId가 uuid가 아니라 "${사원번호}_${정규화이름}" 합성 문자열이고,
+// 직원 목록 자체는 별도로 관리되는 소규모(약 400명) JSON이라 FK를 걸 대상이 없다.
+// finalStatus/flag는 Prisma enum이 아니라 평문 문자열(한글 값 그대로) — SieveFlag/FinalStatus
+// (TS 유니온, 14종 이상)와 enum을 동기화해야 하는 리스크를 없앤다. extra는 자주
+// 필터링/집계되지 않는 나머지 필드(verificationNote 등)를 위한 JSON 오버플로우 —
+// src/lib/buildRecordSet.ts, src/lib/processRecord.ts 참고.
 model DailyAttendance {
-  id            String      @id @default(uuid())
-  employeeId    String      @map("employee_id")
-  policyId      String?     @map("policy_id")
-  workDate      DateTime    @map("work_date") @db.Date
-  clockIn       DateTime?   @map("clock_in")
-  clockOut      DateTime?   @map("clock_out")
-  regularHours  Float       @default(0) @map("regular_hours")
-  overtimeHours Float       @default(0) @map("overtime_hours")
-  nightHours    Float       @default(0) @map("night_hours")
-  finalStatus   FinalStatus @map("final_status")
-  sieveStep     Int         @map("sieve_step")
-  calculatedAt  DateTime    @default(now()) @map("calculated_at")
+  id               String   @id @default(uuid())
+  employeeId       String   @map("employee_id")
+  workDate         String   @map("work_date")
+  dayType          String   @map("day_type")
+  clockIn          String?  @map("clock_in")
+  clockOut         String?  @map("clock_out")
+  effectiveClockIn String?  @map("effective_clock_in")
+  regularHours     Float    @default(0) @map("regular_hours")
+  overtimeHours    Float    @default(0) @map("overtime_hours")
+  nightHours       Float    @default(0) @map("night_hours")
+  holidayHours     Float    @default(0) @map("holiday_hours")
+  erpOtApplied     Boolean  @default(false) @map("erp_ot_applied")
+  leaveType        String?  @map("leave_type")
+  erpLeaveAmount   Float?   @map("erp_leave_amount")
+  isUnpaidLeave    Boolean  @default(false) @map("is_unpaid_leave")
+  isLeader         Boolean  @default(false) @map("is_leader")
+  finalStatus      String   @map("final_status")
+  flag             String?
+  /** 자주 안 쓰는 나머지 필드 JSON 오버플로우: verificationNote, leaveCodesDetail,
+   *  rawLeaveCode, breakMinutes, lunchDeducted, dinnerDeducted, rawOvertimeMinutes,
+   *  erpApprovedOtHours, isHolidayWork */
+  extra            Json     @default("{}")
+  calculatedAt     DateTime @default(now()) @map("calculated_at")
 
-  employee  Employee            @relation(fields: [employeeId], references: [id])
-  policy    PolicyConfig?       @relation(fields: [policyId], references: [id])
   anomalies AttendanceAnomaly[]
 
   @@unique([employeeId, workDate])
+  @@index([employeeId, workDate])
   @@index([workDate])
   @@map("daily_attendance")
-}
-
-enum FinalStatus {
-  NORMAL
-  ON_LEAVE
-  BUSINESS_TRIP
-  ANOMALY_PENDING
-  ANOMALY_RESOLVED
-  HOLIDAY
-  WEEKEND
 }
 
 // ─── 이상치 ──────────────────────────────────────────
@@ -188,8 +194,6 @@ model PolicyConfig {
   isLocked    Boolean  @default(false) @map("is_locked")
   updatedAt   DateTime @updatedAt @map("updated_at")
   updatedBy   String?  @map("updated_by")
-
-  dailyAttendances DailyAttendance[]
 
   @@map("policy_config")
 }

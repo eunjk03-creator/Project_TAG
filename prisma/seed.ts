@@ -1,4 +1,4 @@
-import { PrismaClient, UserRole, LeaveType, FinalStatus, AnomalyType } from '@prisma/client'
+import { PrismaClient, UserRole, LeaveType, AnomalyType } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
@@ -123,9 +123,9 @@ async function main() {
   const eunjung = await prisma.employee.findUnique({ where: { employeeNo: 'EMP004' } })
   if (eunjung) {
     const sampleAttendance = [
-      { workDate: new Date('2026-04-28'), clockIn: new Date('2026-04-28T08:47:00'), clockOut: new Date('2026-04-28T18:22:00'), regularHours: 8.0, overtimeHours: 0.5, finalStatus: FinalStatus.NORMAL, sieveStep: 0 },
-      { workDate: new Date('2026-04-29'), clockIn: new Date('2026-04-29T09:12:00'), clockOut: new Date('2026-04-29T20:05:00'), regularHours: 8.0, overtimeHours: 1.5, finalStatus: FinalStatus.ANOMALY_PENDING, sieveStep: 3 },
-      { workDate: new Date('2026-04-30'), clockIn: null, clockOut: null, regularHours: 0, overtimeHours: 0, finalStatus: FinalStatus.ON_LEAVE, sieveStep: 2 },
+      { workDate: '2026-04-28', dayType: 'WEEKDAY', clockIn: '08:47', clockOut: '18:22', regularHours: 8.0, overtimeHours: 0.5, finalStatus: '정상' },
+      { workDate: '2026-04-29', dayType: 'WEEKDAY', clockIn: '09:12', clockOut: '20:05', regularHours: 8.0, overtimeHours: 1.5, finalStatus: '근태이상', flag: 'LATE' },
+      { workDate: '2026-04-30', dayType: 'WEEKDAY', clockIn: null, clockOut: null, regularHours: 0, overtimeHours: 0, finalStatus: '연차' },
     ]
 
     for (const record of sampleAttendance) {
@@ -138,7 +138,7 @@ async function main() {
 
     // 이상치 생성 (4/29 지각)
     const lateRecord = await prisma.dailyAttendance.findUnique({
-      where: { employeeId_workDate: { employeeId: eunjung.id, workDate: new Date('2026-04-29') } },
+      where: { employeeId_workDate: { employeeId: eunjung.id, workDate: '2026-04-29' } },
     })
     if (lateRecord) {
       await prisma.attendanceAnomaly.upsert({
