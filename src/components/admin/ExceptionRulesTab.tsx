@@ -7,6 +7,9 @@ import {
   type RuleType,
 } from '@/context/EmployeeExceptionsContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
+import { PaginationBar } from './PaginationBar'
+
+const RULES_PAGE_SIZE = 20
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -581,8 +584,16 @@ export function ExceptionRulesTab() {
   const { employees, isLiveData } = useAttendanceSource()
   const [showModal, setShowModal] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [page, setPage] = useState(0)
 
   const existingIds = useMemo(() => new Set(rules.map(r => r.employeeId)), [rules])
+
+  const pageCount = Math.max(1, Math.ceil(rules.length / RULES_PAGE_SIZE))
+  const safePage  = Math.min(page, pageCount - 1)
+  const pageRules = useMemo(
+    () => rules.slice(safePage * RULES_PAGE_SIZE, safePage * RULES_PAGE_SIZE + RULES_PAGE_SIZE),
+    [rules, safePage],
+  )
 
   const liveEmployeeIds = useMemo(() => new Set(employees.map(e => e.id)), [employees])
   const orphanedRules = useMemo(
@@ -593,16 +604,17 @@ export function ExceptionRulesTab() {
   const managerCount = rules.filter(r => r.ruleType === 'manager_exemption').length
   const shortenCount = rules.filter(r => r.ruleType === 'shortened_hours').length
 
-  const allChecked = rules.length > 0 && selectedIds.size === rules.length
-  const someChecked = selectedIds.size > 0 && selectedIds.size < rules.length
+  const allChecked  = pageRules.length > 0 && pageRules.every(r => selectedIds.has(r.id))
+  const someChecked = pageRules.some(r => selectedIds.has(r.id)) && !allChecked
 
   const toggleAll = useCallback(() => {
-    if (allChecked) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(rules.map(r => r.id)))
-    }
-  }, [allChecked, rules])
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allChecked) pageRules.forEach(r => next.delete(r.id))
+      else            pageRules.forEach(r => next.add(r.id))
+      return next
+    })
+  }, [allChecked, pageRules])
 
   const toggleRow = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -721,7 +733,7 @@ export function ExceptionRulesTab() {
               </tr>
             </thead>
             <tbody>
-              {rules.map((r, i) => {
+              {pageRules.map((r, i) => {
                 const badge = RULE_BADGE[r.ruleType] ?? { label: r.ruleType || '예외', cls: 'bg-gray-100 text-gray-700', desc: '' }
                 const isChecked = selectedIds.has(r.id)
                 return (
@@ -869,6 +881,15 @@ export function ExceptionRulesTab() {
               })}
             </tbody>
           </table>
+          <PaginationBar
+            page={safePage}
+            pageCount={pageCount}
+            onPageChange={setPage}
+            startItem={safePage * RULES_PAGE_SIZE + 1}
+            endItem={Math.min((safePage + 1) * RULES_PAGE_SIZE, rules.length)}
+            totalCount={rules.length}
+            unit="명"
+          />
         </div>
       )}
 

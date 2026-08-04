@@ -4,6 +4,10 @@ import { useSlack, type SlackConfig } from '@/context/SlackContext'
 import { usePolicy } from '@/context/PolicyContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { matchEmployeesToSlackUsers, type SlackUserLite, type MatchResult } from '@/utils/slackUserMatch'
+import { PaginationBar } from './PaginationBar'
+
+const MAPPINGS_PAGE_SIZE   = 20
+const EXCEPTIONS_PAGE_SIZE = 25
 
 interface SavedMapping {
   employeeId: string; employeeName: string
@@ -36,6 +40,17 @@ export function SlackIntegrationTab() {
   const [manualPick,     setManualPick]     = useState<Record<string, string>>({}) // employeeId → slackUserId ('__manual__' = 직접입력)
   const [manualIdText,   setManualIdText]   = useState<Record<string, string>>({}) // employeeId → 직접 입력한 ID (U... 또는 D...)
   const [unmatchedIdText, setUnmatchedIdText] = useState<Record<string, string>>({}) // 미매칭 직원용 직접입력
+
+  const [mapPage, setMapPage] = useState(0)
+  const [excPage, setExcPage] = useState(0)
+
+  const mapPageCount = Math.max(1, Math.ceil(savedMappings.length / MAPPINGS_PAGE_SIZE))
+  const mapSafePage  = Math.min(mapPage, mapPageCount - 1)
+  const pageMappings = savedMappings.slice(mapSafePage * MAPPINGS_PAGE_SIZE, mapSafePage * MAPPINGS_PAGE_SIZE + MAPPINGS_PAGE_SIZE)
+
+  const excPageCount   = Math.max(1, Math.ceil(exceptions.length / EXCEPTIONS_PAGE_SIZE))
+  const excSafePage    = Math.min(excPage, excPageCount - 1)
+  const pageExceptions = exceptions.slice(excSafePage * EXCEPTIONS_PAGE_SIZE, excSafePage * EXCEPTIONS_PAGE_SIZE + EXCEPTIONS_PAGE_SIZE)
 
   useEffect(() => {
     fetch('/api/slack/user-mappings').then(r => r.json()).then(setSavedMappings).catch(() => {})
@@ -388,23 +403,34 @@ export function SlackIntegrationTab() {
         )}
 
         {savedMappings.length > 0 && (
-          <ul className="space-y-1 pt-1 border-t border-gray-100">
-            {savedMappings.map(m => (
-              <li key={m.employeeId} className="flex items-center justify-between px-3 py-1.5 hover:bg-gray-50 rounded-lg">
-                <span className="text-xs text-gray-700">
-                  {m.employeeName}
-                  <span className="text-gray-400 ml-2">→ {m.slackName || m.slackUserId}</span>
-                  <span className="text-[10px] text-gray-300 ml-2">({m.matchedBy === 'auto' ? '자동' : '수동'})</span>
-                </span>
-                <button
-                  onClick={() => deleteMapping(m.employeeId)}
-                  className="text-[11px] text-red-400 hover:text-red-600 transition-colors"
-                >
-                  삭제
-                </button>
-              </li>
-            ))}
-          </ul>
+          <div className="pt-1 border-t border-gray-100 -mx-4">
+            <ul className="space-y-1 px-4">
+              {pageMappings.map(m => (
+                <li key={m.employeeId} className="flex items-center justify-between px-3 py-1.5 hover:bg-gray-50 rounded-lg">
+                  <span className="text-xs text-gray-700">
+                    {m.employeeName}
+                    <span className="text-gray-400 ml-2">→ {m.slackName || m.slackUserId}</span>
+                    <span className="text-[10px] text-gray-300 ml-2">({m.matchedBy === 'auto' ? '자동' : '수동'})</span>
+                  </span>
+                  <button
+                    onClick={() => deleteMapping(m.employeeId)}
+                    className="text-[11px] text-red-400 hover:text-red-600 transition-colors"
+                  >
+                    삭제
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <PaginationBar
+              page={mapSafePage}
+              pageCount={mapPageCount}
+              onPageChange={setMapPage}
+              startItem={mapSafePage * MAPPINGS_PAGE_SIZE + 1}
+              endItem={Math.min((mapSafePage + 1) * MAPPINGS_PAGE_SIZE, savedMappings.length)}
+              totalCount={savedMappings.length}
+              unit="명"
+            />
+          </div>
         )}
       </div>
 
@@ -587,7 +613,7 @@ export function SlackIntegrationTab() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {exceptions.map((ex, i) => (
+                {pageExceptions.map((ex, i) => (
                   <tr key={i} className="hover:bg-gray-50/70 transition-colors">
                     <td className="px-4 py-2.5 font-medium text-gray-800">
                       {ex.empName}
@@ -607,6 +633,14 @@ export function SlackIntegrationTab() {
                 ))}
               </tbody>
             </table>
+            <PaginationBar
+              page={excSafePage}
+              pageCount={excPageCount}
+              onPageChange={setExcPage}
+              startItem={excSafePage * EXCEPTIONS_PAGE_SIZE + 1}
+              endItem={Math.min((excSafePage + 1) * EXCEPTIONS_PAGE_SIZE, exceptions.length)}
+              totalCount={exceptions.length}
+            />
           </div>
         </div>
       )}
