@@ -47,6 +47,19 @@ interface StoredProcessed {
   processedAt: string
 }
 
+// processed_data key stores only processedAt + chunk metadata (processed records split
+// across processed_records_N keys, same convention as attendance_records_N above).
+interface ProcessedDataMeta {
+  processedAt: string
+  chunkCount:  number
+  processed?:  ProcessedRecord[]  // legacy: old saves stored records here directly
+}
+
+// Smaller than CHUNK_SIZE (4000) — ProcessedRecord carries roughly double the fields of a
+// RawRecord (effectiveClockIn/regularHours/overtimeHours/nightHours/holidayHours/etc.), so
+// the same record count per chunk runs closer to Vercel's ~4.5MB body limit.
+const PROCESSED_CHUNK_SIZE = 2000
+
 interface CacheEntry extends StoredAttendance {
   updatedAt: string
 }
@@ -202,7 +215,26 @@ async function dbGetProcessed(): Promise<{ data: StoredProcessed | null; updated
   try {
     const res = await fetch('/api/shared-data/processed_data')
     if (!res.ok) return { data: null, updatedAt: null }
-    return res.json()
+    const { data: meta, updatedAt } = await res.json() as { data: ProcessedDataMeta | null; updatedAt: string | null }
+    if (!meta) return { data: null, updatedAt: null }
+
+    // Legacy: processed records stored directly (single-row save, pre-chunking)
+    if (meta.processed?.length) {
+      return { data: { processed: meta.processed, processedAt: meta.processedAt }, updatedAt }
+    }
+
+    const chunkCount = meta.chunkCount ?? 0
+    if (chunkCount === 0) return { data: { processed: [], processedAt: meta.processedAt }, updatedAt }
+
+    const chunkResponses = await Promise.all(
+      Array.from({ length: chunkCount }, (_, i) =>
+        fetch(`/api/shared-data/processed_records_${i}`)
+          .then(r => r.ok ? r.json() as Promise<{ data: { records: ProcessedRecord[] } | null }> : { data: null })
+          .catch(() => ({ data: null })),
+      ),
+    )
+    const processed = chunkResponses.flatMap(r => r.data?.records ?? [])
+    return { data: { processed, processedAt: meta.processedAt }, updatedAt }
   } catch {
     return { data: null, updatedAt: null }
   }
@@ -248,9 +280,13 @@ async function fetchComputePage(
 /**
  * offset/limit 페이지네이션으로 compute-attendance를 반복 호출해 전체 레코드를 처리한다.
  * 각 페이지 응답의 processed 슬라이스를 클라이언트에서 누적한 뒤, 전부 끝나면 그 완전한
- * 배열로 processed_data blob을 한 번만 갱신한다(라우트 자체는 페이지네이션 호출 시 blob을
- * 안 건드림 — route.ts 주석 참고). useProcessedAttendance.ts가 DailyAttendance를 직접
- * 읽도록 전환되면(Phase C) 이 blob 갱신 단계는 제거될 예정.
+ * 배열을 processed_data(메타) + processed_records_N(청크) 로 나눠 쓴다(라우트 자체는
+ * 페이지네이션 호출 시 blob을 안 건드림 — route.ts 주석 참고).
+ *
+ * 데이터가 5만 건을 넘으면(20MB+) 한 번의 PUT으로는 Vercel 요청 본문 크기 제한(~4.5MB)에
+ * 걸려 HTTP 413로 실패했다(2026-08-04 발견). attendance_records_N과 동일한 청크 컨벤션으로
+ * 나눠 쓰도록 수정(2026-08-05) — DailyAttendance(그리드/수당집계/내보내기 3종)는 페이지마다
+ * 이미 정상 갱신되고, 이 청크 저장은 대시보드 새로고침용 캐시(processedRecords)를 갱신한다.
  */
 async function apiCompute(policy: PolicySettings): Promise<{ processedAt: string | null; error: string | null }> {
   const accumulated: ProcessedRecord[] = []
@@ -269,12 +305,39 @@ async function apiCompute(policy: PolicySettings): Promise<{ processedAt: string
   if (accumulated.length === 0) return { processedAt, error: null }
 
   try {
-    const putRes = await fetch('/api/shared-data/processed_data', {
+    const chunkCount = Math.ceil(accumulated.length / PROCESSED_CHUNK_SIZE)
+
+    // Step 1: write metadata (processedAt + chunkCount) — always small
+    const metaRes = await fetch('/api/shared-data/processed_data', {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ data: { processed: accumulated, processedAt } }),
+      body:    JSON.stringify({ data: { processedAt, chunkCount } }),
     })
-    if (!putRes.ok) return { processedAt: null, error: `재계산 결과 저장 실패 (HTTP ${putRes.status})` }
+    if (!metaRes.ok) return { processedAt: null, error: `재계산 결과 저장 실패 (HTTP ${metaRes.status}) — DailyAttendance는 정상 갱신됨, 대시보드 새로고침용 캐시만 실패` }
+
+    // Step 2: write record chunks in small batches — same rationale as dbPut() above
+    // (firing every chunk in parallel spiked concurrent connections through the Supabase pooler).
+    const CHUNK_BATCH_SIZE = 4
+    for (let start = 0; start < chunkCount; start += CHUNK_BATCH_SIZE) {
+      const batchIdx = Array.from(
+        { length: Math.min(CHUNK_BATCH_SIZE, chunkCount - start) },
+        (_, j) => start + j,
+      )
+      const batchOk = await Promise.all(
+        batchIdx.map(async (i) => {
+          const records = accumulated.slice(i * PROCESSED_CHUNK_SIZE, (i + 1) * PROCESSED_CHUNK_SIZE)
+          const res = await fetch(`/api/shared-data/processed_records_${i}`, {
+            method:  'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ data: { records } }),
+          })
+          return res.ok
+        }),
+      )
+      if (batchOk.some(ok => !ok)) {
+        return { processedAt: null, error: '재계산 결과 저장 실패 (청크 업로드 실패) — DailyAttendance는 정상 갱신됨, 대시보드 새로고침용 캐시만 실패' }
+      }
+    }
   } catch (err) {
     return { processedAt: null, error: `재계산 결과 저장 실패: ${err instanceof Error ? err.message : String(err)}` }
   }
