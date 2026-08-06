@@ -15,12 +15,17 @@ function toDateStr(d: Date): string {
 
 interface HealthStat { total: number; anomalies: number }
 
-function healthColor(stat: HealthStat | undefined): { bg: string; label: string } {
-  if (!stat || stat.total === 0) return { bg: 'bg-gray-200', label: '데이터 없음' }
-  const rate = stat.anomalies / stat.total
-  if (rate < 0.05) return { bg: 'bg-emerald-500', label: '정상' }
-  if (rate < 0.15) return { bg: 'bg-amber-400', label: '주의' }
-  return { bg: 'bg-red-500', label: '이상' }
+/** 총원을 상태별로 쪼갠 값 — "이상치 N건"(이벤트 카운트)이 아니라 "총원 중 몇 명"(정원 기준)으로
+ *  보기 위한 구조. unknown은 계산하지 않고 total에서 나머지를 뺀 값으로 항상 맞춘다
+ *  (미매칭 인원 + 오늘 레코드 자체가 없는 사람이 자연스럽게 여기로 모인다). */
+interface StatusBreakdown { total: number; normal: number; leave: number; anomaly: number }
+
+function breakdownUnknown(b: StatusBreakdown): number {
+  return Math.max(0, b.total - b.normal - b.leave - b.anomaly)
+}
+
+function emptyBreakdown(total: number): StatusBreakdown {
+  return { total, normal: 0, leave: 0, anomaly: 0 }
 }
 
 interface RosterRow {
@@ -167,19 +172,55 @@ function DivisionCard({
   )
 }
 
+/** 총원=100% 스택바 — compact는 히트맵 타일 안에 들어가는 축소판, 그 외엔 종합요약용 전체 크기. */
+function StatusBar({ b, compact }: { b: StatusBreakdown; compact?: boolean }) {
+  const unknown = breakdownUnknown(b)
+  const pct = (n: number) => (b.total > 0 ? (n / b.total) * 100 : 0)
+  const segments = [
+    { n: b.normal, cls: 'bg-emerald-500' },
+    { n: b.leave, cls: 'bg-violet-400' },
+    { n: b.anomaly, cls: 'bg-red-500' },
+    { n: unknown, cls: 'bg-gray-300' },
+  ]
+  return (
+    <div>
+      <div className={`w-full rounded-full overflow-hidden flex bg-gray-100 ${compact ? 'h-1.5' : 'h-2.5'}`}>
+        {b.total === 0
+          ? <div className="w-full bg-gray-200" />
+          : segments.map((s, i) => s.n > 0 && <div key={i} className={s.cls} style={{ width: `${pct(s.n)}%` }} />)}
+      </div>
+      {!compact && (
+        <div className="flex gap-3 text-[11px] mt-1.5">
+          <span className="text-emerald-600 font-medium">출근 {b.normal}</span>
+          <span className="text-violet-500 font-medium">휴가 {b.leave}</span>
+          <span className="text-red-500 font-medium">이상 {b.anomaly}</span>
+          {unknown > 0 && <span className="text-gray-400">미확인 {unknown}</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function HeatmapTile({
-  name, headcount, stat, onClick,
-}: { name: string; headcount: number; stat: HealthStat | undefined; onClick: () => void }) {
-  const { bg, label } = healthColor(stat)
+  name, breakdown, onClick,
+}: { name: string; breakdown: StatusBreakdown; onClick: () => void }) {
+  const unknown = breakdownUnknown(breakdown)
   return (
     <button
       onClick={onClick}
-      title={`${name} — ${label}${stat ? ` (최근 ${HEALTH_WINDOW_DAYS}일 이상치 ${stat.anomalies}건 / ${stat.total}건)` : ''}`}
-      className={`${bg} rounded-xl px-3 py-2.5 text-left text-white shadow-sm hover:opacity-90 transition-opacity`}
+      title={`${name} — 출근 ${breakdown.normal} · 휴가 ${breakdown.leave} · 이상 ${breakdown.anomaly} · 미확인 ${unknown} / 총 ${breakdown.total}명`}
+      className="bg-white border border-gray-100 rounded-xl px-3 py-2.5 text-left shadow-sm hover:shadow transition-shadow"
     >
-      <p className="text-[11px] font-semibold truncate">{name}</p>
-      <p className="text-lg font-extrabold tabular-nums leading-tight">{headcount}<span className="text-[10px] font-medium ml-0.5">명</span></p>
-      <p className="text-[10px] opacity-90">{stat && stat.total > 0 ? `이상치 ${stat.anomalies}건` : '데이터 없음'}</p>
+      <p className="text-[11px] font-semibold text-gray-700 truncate">{name}</p>
+      <p className="text-base font-extrabold tabular-nums leading-tight text-gray-900">
+        {breakdown.total}<span className="text-[10px] font-medium text-gray-400 ml-0.5">명</span>
+      </p>
+      <div className="mt-1.5">
+        <StatusBar b={breakdown} compact />
+      </div>
+      <p className="text-[9px] text-gray-400 mt-1 truncate">
+        출근{breakdown.normal}·휴가{breakdown.leave}·이상{breakdown.anomaly}{unknown > 0 && `·미확인${unknown}`}
+      </p>
     </button>
   )
 }
@@ -256,6 +297,55 @@ export default function OrgChartPage() {
     return { divisionStats, teamStatsByDivision }
   }, [records, rawIdByCompositeId, locationByRawId, approvedKeys])
 
+  // ── 총원 기준 상태분해(오늘): 정상출근/휴가·휴일/이상치/미확인 — roster의 division.rows를
+  // 그대로 순회해서 헤드카운트가 카드 상단에 표시되는 총원 숫자와 항상 일치하게 한다. ──────
+  const recordByRawIdToday = useMemo(() => {
+    const map = new Map<string, typeof records[number]>()
+    for (const r of records) {
+      if (r.date !== to) continue
+      const rawId = rawIdByCompositeId.get(r.employeeId)
+      if (rawId) map.set(rawId, r)
+    }
+    return map
+  }, [records, rawIdByCompositeId, to])
+
+  function classify(row: RosterRow): 'normal' | 'leave' | 'anomaly' | null {
+    if (!row.rawId) return null
+    const r = recordByRawIdToday.get(row.rawId)
+    if (!r) return null
+    if (r.leaveType) return 'leave'
+    const isAnomaly = r.flag != null && !approvedKeys.has(`${r.employeeId}_${r.date}`)
+    return isAnomaly ? 'anomaly' : 'normal'
+  }
+
+  const divisionBreakdown = useMemo(() => {
+    const map = new Map<string, StatusBreakdown>()
+    for (const division of allDivisions) {
+      const b = emptyBreakdown(division.headcount)
+      for (const team of division.teams) for (const row of team.rows) {
+        const status = classify(row)
+        if (status === 'normal') b.normal++
+        else if (status === 'leave') b.leave++
+        else if (status === 'anomaly') b.anomaly++
+      }
+      map.set(division.name, b)
+    }
+    return map
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allDivisions, recordByRawIdToday, approvedKeys])
+
+  const overallBreakdown = useMemo(() => {
+    const b = emptyBreakdown(roster?.rows.length ?? 0)
+    for (const row of roster?.rows ?? []) {
+      const status = classify(row)
+      if (status === 'normal') b.normal++
+      else if (status === 'leave') b.leave++
+      else if (status === 'anomaly') b.anomaly++
+    }
+    return b
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roster, recordByRawIdToday, approvedKeys])
+
   function toggle(name: string) {
     setCollapsed(prev => {
       const next = new Set(prev)
@@ -317,10 +407,25 @@ export default function OrgChartPage() {
         </div>
       </div>
 
-      {/* ── 경영진용 한눈에 보기: 본부별 최근 7일 이상치 히트맵 ── */}
+      {/* ── 경영진용 한눈에 보기: 전체 기준 + 본부 기준을 같은 상태분해 막대로 ── */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
+        <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">전체 현황 (오늘 {to})</p>
+        <div className="flex items-center gap-6 flex-wrap">
+          <div>
+            <p className="text-2xl font-extrabold text-gray-900 tabular-nums">
+              {overallBreakdown.total > 0 ? ((overallBreakdown.normal / overallBreakdown.total) * 100).toFixed(1) : '0.0'}%
+            </p>
+            <p className="text-[11px] text-gray-400">정상출근율 ({overallBreakdown.normal}/{overallBreakdown.total}명)</p>
+          </div>
+          <div className="flex-1 min-w-[280px]">
+            <StatusBar b={overallBreakdown} />
+          </div>
+        </div>
+      </div>
+
       <div>
         <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
-          본부별 근태 현황 (최근 {HEALTH_WINDOW_DAYS}일)
+          본부별 현황 (오늘)
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-11 gap-2">
           {HEATMAP_ORDER.map(name => {
@@ -330,8 +435,7 @@ export default function OrgChartPage() {
               <HeatmapTile
                 key={name}
                 name={name}
-                headcount={division.headcount}
-                stat={divisionStats.get(name)}
+                breakdown={divisionBreakdown.get(name) ?? emptyBreakdown(division.headcount)}
                 onClick={() => focusDivision(name)}
               />
             )
