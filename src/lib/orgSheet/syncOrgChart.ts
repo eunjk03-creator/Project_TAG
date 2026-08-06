@@ -14,6 +14,10 @@ export interface SyncResult {
   possiblyResignedCount: number
 }
 
+/** 시트에 나온 사람 그대로 + 매칭된 CAPS 사원번호(없으면 null) — 조직도 페이지가 이걸로
+ *  "시트엔 있지만 아직 CAPS/마스터에 없는 사람"까지 전부 보여주고, 미매칭자만 흐리게 구분한다. */
+export type EnrichedSheetPersonRow = SheetPersonRow & { rawId: string | null }
+
 const deptCache = new Map<string, string>() // `${parentId ?? 'root'}::${name}` → Department.id
 
 async function upsertDepartment(name: string, parentId: string | null, level: number, order: number): Promise<string> {
@@ -105,6 +109,12 @@ export async function syncOrgChart(tab: OrgChartTab): Promise<SyncResult> {
   const teamDeptId = await syncDepartments(parsed.rows)
   await upsertEmployeeMaster(matchResult.matched, teamDeptId, now)
 
+  // 시트 원본 각 행에 매칭 결과(rawId, 없으면 null)를 붙여서 보관 — 조직도 페이지가
+  // EmployeeMaster(매칭된 사람만 존재)가 아니라 이 enriched 로스터를 그대로 렌더링해서
+  // CAPS에 없는 사람도 화면에서 안 빠지고 연하게 표시되게 한다.
+  const rawIdByRow = new Map(matchResult.matched.map(m => [m.sheetRow, m.rawId]))
+  const enrichedRows: EnrichedSheetPersonRow[] = parsed.rows.map(row => ({ ...row, rawId: rawIdByRow.get(row) ?? null }))
+
   // Sanity: 시트의 겸임(*) 표기 때문에 정확히 0이 되진 않는다(설계상 허용 — B-3 참고).
   // 허용 오차를 넘으면 sanityPassed=false로만 기록하고 동기화는 계속 진행한다.
   const declaredTotal = parsed.sheetTotals['총 인원'] ?? null
@@ -117,7 +127,7 @@ export async function syncOrgChart(tab: OrgChartTab): Promise<SyncResult> {
       tabName: tab.tabName,
       tabDate: tab.tabName, // TODO: "M/D" → "YYYY-MM-DD" 변환은 pickLatestTab의 연도추정 로직과 통일해서 후속 PR에서 정리
       rawGrid: tab.values,
-      parsedRows: parsed.rows as unknown as Prisma.InputJsonValue,
+      parsedRows: enrichedRows as unknown as Prisma.InputJsonValue,
       sheetTotals: parsed.sheetTotals,
       parsedTotals: { rowCount: parsed.rows.length, byDivision: countByDivision(parsed.rows) },
       sanityPassed,
@@ -125,7 +135,7 @@ export async function syncOrgChart(tab: OrgChartTab): Promise<SyncResult> {
     },
     update: {
       rawGrid: tab.values,
-      parsedRows: parsed.rows as unknown as Prisma.InputJsonValue,
+      parsedRows: enrichedRows as unknown as Prisma.InputJsonValue,
       sheetTotals: parsed.sheetTotals,
       parsedTotals: { rowCount: parsed.rows.length, byDivision: countByDivision(parsed.rows) },
       sanityPassed,
