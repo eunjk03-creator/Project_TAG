@@ -596,9 +596,20 @@ export function ExceptionRulesTab() {
   )
 
   const liveEmployeeIds = useMemo(() => new Set(employees.map(e => e.id)), [employees])
+  // 실제 계산 경로(useProcessedAttendance.ts)와 동일한 판정 기준: ID가 직접 안 맞아도
+  // 이름으로 재매칭되면 정상 적용되므로 orphan이 아님 — 여기도 같은 이름 폴백을 거쳐야
+  // "미연결" 배너가 실제로 적용 안 되는 규칙만 정확히 잡아낸다.
+  const nameToLiveId = useMemo(() => {
+    const normName = (s: string) => s.trim().replace(/\s+/g, '')
+    return new Map(employees.map(e => [normName(e.name), e.id]))
+  }, [employees])
   const orphanedRules = useMemo(
-    () => rules.filter(r => !liveEmployeeIds.has(r.employeeId)),
-    [rules, liveEmployeeIds],
+    () => rules.filter(r => {
+      if (liveEmployeeIds.has(r.employeeId)) return false
+      const normName = (s: string) => s.trim().replace(/\s+/g, '')
+      return !nameToLiveId.has(normName(r.employeeName))
+    }),
+    [rules, liveEmployeeIds, nameToLiveId],
   )
 
   const managerCount = rules.filter(r => r.ruleType === 'manager_exemption').length
