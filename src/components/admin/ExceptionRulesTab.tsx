@@ -860,6 +860,24 @@ export function ExceptionRulesTab() {
                           </div>
                         </div>
                       )}
+
+                      {r.ruleType === 'resigned' && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] text-gray-400 whitespace-nowrap">퇴사일:</span>
+                          <input
+                            type="date"
+                            value={r.validFrom}
+                            onChange={e => patchRule(r.id, { validFrom: e.target.value })}
+                            className={`px-1.5 py-1 text-[10px] rounded-lg tabular-nums border
+                              focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                              r.validFrom === '' ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                            }`}
+                          />
+                          {r.validFrom === '' && (
+                            <span className="text-[10px] text-red-500 whitespace-nowrap">미입력 — 전체 기간 제외됨</span>
+                          )}
+                        </div>
+                      )}
                     </td>
 
                     {/* Per-row delete */}
