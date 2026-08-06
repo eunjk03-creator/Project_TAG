@@ -269,3 +269,52 @@ export function computeOverLimitEmployees(
   }
   return rows.sort((a, b) => b.hours - a.hours)
 }
+
+// ── 인력 마스터 정합성 ───────────────────────────────────────────────────────
+// 조직도 시트 기반 EmployeeMaster와 그때그때의 CAPS 업로드 결과(Employee[])를 대조한다.
+// 둘 다 "정답"이 아니라 서로 다른 시점/소스의 데이터라서, 어긋남 자체가 확인이 필요한
+// 신호다(마스터 갱신 지연, 퇴사처리 누락, 시트 매칭 실패 등) — 그래서 자동 정정하지 않고
+// 목록으로만 노출한다.
+
+export interface MasterDiscrepancy {
+  type: 'MASTER_ACTIVE_NOT_IN_CAPS' | 'CAPS_NOT_IN_MASTER'
+  rawId: string
+  name: string
+  division: string
+  detail: string
+}
+
+export function buildMasterDiscrepancyRollup(
+  masterActive: { rawId: string; name: string; division: string }[],
+  /** 최근 N일 CAPS 레코드에 등장한 사원번호 집합 — 비어있으면 "미태깅" 판정을 안 한다 */
+  recentActiveRawIds: Set<string>,
+  csvEmployees: { rawId?: string; name: string; division: string }[],
+): MasterDiscrepancy[] {
+  const out: MasterDiscrepancy[] = []
+
+  for (const m of masterActive) {
+    if (!recentActiveRawIds.has(m.rawId)) {
+      out.push({
+        type: 'MASTER_ACTIVE_NOT_IN_CAPS',
+        rawId: m.rawId, name: m.name, division: m.division,
+        detail: '마스터엔 재직중인데 최근 CAPS 태깅 기록 없음',
+      })
+    }
+  }
+
+  const masterRawIds = new Set(masterActive.map(m => m.rawId))
+  const seenCsvRawIds = new Set<string>()
+  for (const e of csvEmployees) {
+    if (!e.rawId || seenCsvRawIds.has(e.rawId)) continue
+    seenCsvRawIds.add(e.rawId)
+    if (!masterRawIds.has(e.rawId)) {
+      out.push({
+        type: 'CAPS_NOT_IN_MASTER',
+        rawId: e.rawId, name: e.name, division: e.division,
+        detail: 'CAPS엔 있는데 조직도 마스터엔 미등록',
+      })
+    }
+  }
+
+  return out
+}

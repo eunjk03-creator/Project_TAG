@@ -156,6 +156,9 @@ export function useManagementMetrics(
   fromDate: string,
   toDate: string,
   employeeAttrMap: Map<string, EmployeeAttributeOverrides> = new Map(),
+  /** 인력 마스터(EmployeeMaster) 기준 division별 정원 — 마스터에 아직 없는 division은
+   *  키가 없으므로 CSV 인원수로 fallback한다(마이그레이션 중간 상태 방어). */
+  masterHeadcountByDivision: Map<string, number> = new Map(),
 ): ManagementMetricsResult {
   return useMemo(() => {
     const bizDays = countBizDays(fromDate, toDate)
@@ -184,7 +187,8 @@ export function useManagementMetrics(
     const metrics: DivisionMetrics[] = divisions.map(div => {
       const divEmps = employees.filter(e => e.division === div)
       const empIds  = new Set(divEmps.map(e => e.id))
-      return buildMetrics(div, empIds, divEmps.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
+      const planned = masterHeadcountByDivision.get(div) ?? divEmps.length
+      return buildMetrics(div, empIds, planned, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)
     })
     const allIds           = new Set(employees.map(e => e.id))
     const gt               = buildMetrics('전체', allIds, employees.length, processedRecords, approvedKeys, bizDays, weeklyHoursMap, empRawIdMap)

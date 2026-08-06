@@ -11,24 +11,28 @@ import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useProcessedAttendance } from '@/hooks/useProcessedAttendance'
 import { useManagementMetrics } from '@/hooks/useManagementMetrics'
 import { usePeriodRange, type PeriodGranularity } from '@/hooks/usePeriodRange'
+import { useOrgMasterHeadcount } from '@/hooks/useOrgMasterHeadcount'
+import { useMasterActiveRoster } from '@/hooks/useMasterActiveRoster'
 import {
   buildDivisionAnomalyRollup, buildEmployeeAnomalyRollup, computeNormalRate,
   buildLeaveUsageRollup, buildTodayLeaveList,
   buildDailyOvertimeSeries, buildTodayOvertimeList,
   buildHolidayWorkRollup, buildTodayHolidayList,
-  computeOverLimitEmployees,
+  computeOverLimitEmployees, buildMasterDiscrepancyRollup,
 } from '@/utils/overviewAggregations'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee } from '@/types/tag'
 
-function todayStr(): string {
-  const d = new Date()
+function todayStrFrom(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function todayStr(): string {
+  return todayStrFrom(new Date())
 }
 
 const PIE_COLORS = ['#3b82f6', '#e5e7eb'] // 정상(blue) / 이상(gray)
 
-type SectionKey = 'anomaly' | 'holiday' | 'ot' | 'leave'
+type SectionKey = 'anomaly' | 'holiday' | 'ot' | 'leave' | 'orgIntegrity'
 
 // ── Small shared UI bits ────────────────────────────────────────────────────
 
@@ -194,8 +198,32 @@ export default function OverviewPage() {
   )
 
   const approvedKeys = useMemo(() => new Set(Object.keys(resolutions)), [resolutions])
+  const masterHeadcountByDivision = useOrgMasterHeadcount()
   const { metrics, total } = useManagementMetrics(
     scopedRecords, scopedEmployees, approvedKeys, period.from, period.to, finalAttrMap,
+    masterHeadcountByDivision,
+  )
+
+  // ── 조직 정합성: 인력 마스터(조직도 시트) vs 그때그때의 CAPS 업로드 대조 ────────────
+  // 본부 필터와 무관하게 항상 전체 기준으로 본다 — 마스터 데이터가 아직 비어있으면(연동
+  // 전) 두 목록 다 0건으로 자연히 비어서 화면에 아무 영향이 없다.
+  const masterActive = useMasterActiveRoster()
+  const recentActiveRawIds = useMemo(() => {
+    const empByCompositeId = new Map(employees.map(e => [e.id, e.rawId ?? e.id.split('_')[0]]))
+    const cutoff = new Date(today + 'T00:00')
+    cutoff.setDate(cutoff.getDate() - 7)
+    const cutoffStr = todayStrFrom(cutoff)
+    const set = new Set<string>()
+    for (const r of records) {
+      if (r.date < cutoffStr) continue
+      const rawId = empByCompositeId.get(r.employeeId)
+      if (rawId) set.add(rawId)
+    }
+    return set
+  }, [records, employees])
+  const masterDiscrepancies = useMemo(
+    () => buildMasterDiscrepancyRollup(masterActive, recentActiveRawIds, employees),
+    [masterActive, recentActiveRawIds, employees],
   )
 
   const today = todayStr()
@@ -433,6 +461,18 @@ export default function OverviewPage() {
           <KpiTile label="휴가 사용" value={empLeave.length} unit="명" color="#6d3fd1"
             sub={`사용일수 ${fmtDays(totalLeaveDays)}일`}
             onClick={() => openAndScroll('leave')} />
+        </div>
+      )}
+
+      {/* ── 조직 정합성: 인력 마스터가 아직 연동 전이면(재직자 0명) 자동으로 숨김 ── */}
+      {masterActive.length > 0 && (
+        <div className="grid grid-cols-2 gap-3">
+          <KpiTile label="마스터 정원" value={masterActive.length} unit="명" color="#0f766e"
+            sub="조직도 시트 기준 재직자 수"
+            onClick={() => openAndScroll('orgIntegrity')} />
+          <KpiTile label="조직 정합성 확인필요" value={masterDiscrepancies.length} unit="건" color="#c4291f"
+            sub={masterDiscrepancies.length === 0 ? '마스터-CAPS 불일치 없음' : '눌러서 명단 보기'}
+            onClick={() => openAndScroll('orgIntegrity')} />
         </div>
       )}
 
@@ -759,6 +799,49 @@ export default function OverviewPage() {
             </div>
           )}
         </AccordionSection>
+
+        {masterActive.length > 0 && (
+          <AccordionSection
+            innerRef={el => { sectionRefs.current.orgIntegrity = el }}
+            icon="🗂️" title="조직 정합성" subtitle="조직도 시트 인력 마스터 vs CAPS 업로드 대조"
+            isOpen={openSection === 'orgIntegrity'} onToggle={() => toggleSection('orgIntegrity')}
+          >
+            {masterDiscrepancies.length === 0 ? (
+              <EmptyNote text="마스터와 CAPS 데이터가 모두 일치합니다." />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-gray-400">
+                      <th className="text-left py-2 font-medium">구분</th>
+                      <th className="text-left py-2 font-medium">이름</th>
+                      <th className="text-left py-2 font-medium">부서</th>
+                      <th className="text-left py-2 font-medium">사원번호</th>
+                      <th className="text-left py-2 font-medium">내용</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {masterDiscrepancies.map(d => (
+                      <tr key={`${d.type}_${d.rawId}`} className="hover:bg-gray-50/70">
+                        <td className="py-1.5">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                            d.type === 'MASTER_ACTIVE_NOT_IN_CAPS' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'
+                          }`}>
+                            {d.type === 'MASTER_ACTIVE_NOT_IN_CAPS' ? '마스터→CAPS 미확인' : 'CAPS→마스터 미등록'}
+                          </span>
+                        </td>
+                        <td className="py-1.5 font-medium text-gray-800">{d.name}</td>
+                        <td className="py-1.5 text-gray-500">{d.division}</td>
+                        <td className="py-1.5 text-gray-400 tabular-nums">{d.rawId}</td>
+                        <td className="py-1.5 text-gray-500">{d.detail}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </AccordionSection>
+        )}
       </div>
     </div>
   )

@@ -5,6 +5,7 @@ import { usePolicy } from '@/context/PolicyContext'
 import { ExceptionRulesTab } from '@/components/admin/ExceptionRulesTab'
 import { LeaveAdjustmentsTab } from '@/components/admin/LeaveAdjustmentsTab'
 import { SlackIntegrationTab } from '@/components/admin/SlackIntegrationTab'
+import { OrgSyncTab } from '@/components/admin/OrgSyncTab'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -388,6 +389,7 @@ export default function SettingsPage() {
             { id: 'leave',      label: '연차 조정'   },
             { id: 'holidays',   label: '전사휴무'    },
             { id: 'slack',      label: '슬랙 연동'   },
+            { id: 'org-sync',   label: '조직도 동기화' },
           ].map(item => (
             <button
               key={item.id}
@@ -461,6 +463,9 @@ export default function SettingsPage() {
 
           {/* ─── Tab: Slack Integration ─── */}
           {activeId === 'slack' && <SlackIntegrationTab />}
+
+          {/* ─── Tab: Org Chart Sync ─── */}
+          {activeId === 'org-sync' && <OrgSyncTab />}
 
           {/* ─── Tab: Company Holidays (전사휴무) ─── */}
           {activeId === 'holidays' && (

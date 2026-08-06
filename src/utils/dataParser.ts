@@ -98,7 +98,7 @@ function normalizeId(raw: string | null | undefined): string {
  * Strips all internal whitespace and trims edges so that
  * "김 철 수" and "김철수" compare equal across systems.
  */
-function normalizeName(raw: string | null | undefined): string {
+export function normalizeName(raw: string | null | undefined): string {
   return String(raw ?? '').normalize('NFC').trim().replace(/\s+/g, '')
 }
 
