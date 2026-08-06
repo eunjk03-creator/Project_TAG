@@ -314,8 +314,15 @@ export default function AdminDashboard() {
       activeTab === 'all'      ? scopedEmployees :
       activeTab === 'employee' ? scopedEmployees.filter(e => !leaderIdSet.has(e.id)) :
                                  scopedEmployees.filter(e => leaderIdSet.has(e.id))
-    return base.filter(e => !globalExclusionIds.has(e.id))
-  }, [activeTab, scopedEmployees, leaderIdSet, globalExclusionIds])
+    // metricsEmployees와 동일한 퇴사자 규칙: resignedFrom(마지막 근무일) 미설정 시 무조건 제외,
+    // 설정돼 있으면 조회 기간 시작일 이전 퇴사일 때만 제외 (퇴사한 달까지는 그리드에 남음).
+    return base.filter(e => {
+      if (globalExclusionIds.has(e.id)) return false
+      const attrs = finalAttrMap.get(e.id)
+      if (attrs?.isResigned && (!attrs.resignedFrom || attrs.resignedFrom < dateRange.from)) return false
+      return true
+    })
+  }, [activeTab, scopedEmployees, leaderIdSet, globalExclusionIds, finalAttrMap, dateRange.from])
 
   const activeMetrics =
     activeTab === 'all'      ? metrics        :
