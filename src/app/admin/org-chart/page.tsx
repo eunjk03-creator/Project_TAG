@@ -4,31 +4,26 @@ import { DIVISION_ORDER } from '@/data/orgChart'
 import { useProcessedAttendance } from '@/hooks/useProcessedAttendance'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { usePeriodRange, type PeriodGranularity } from '@/hooks/usePeriodRange'
-import { computeNormalRate } from '@/utils/overviewAggregations'
 import { flagToAnomalyCategories } from '@/utils/attendanceCalc'
-import type { Employee, ProcessedRecord } from '@/types/tag'
+import type { Employee, EmployeeAttributeOverrides, ProcessedRecord } from '@/types/tag'
 
 const BUSINESS_DIVISIONS = DIVISION_ORDER.slice(0, 5)   // 사업조직 — HMR/음료/헬스케어/뷰티/신사업본부
 const SUPPORT_DIVISIONS = DIVISION_ORDER.slice(5)       // 지원조직 — 경영기획/피플/SCM/GTM/HQ
-const HEATMAP_ORDER = ['임원', ...SUPPORT_DIVISIONS, ...BUSINESS_DIVISIONS]
 
 /** "조직도" = 지금처럼 직책·성명·직무 트리, "이상치" = 같은 자리에 이상치 발생자 목록 —
  *  두 정보가 한 화면에 뭉쳐 있으면 못 알아본다는 피드백으로 토글로 분리. */
 type ViewMode = 'chart' | 'anomaly'
 
-/** 종합현황과 동일한 4개 지표 — "이상치 N건"으로 뭉뜽그리지 않고 지각/미달/미태깅/휴가를
- *  각각 다른 색으로 분리해서 보여준다(뭉쳐 있으면 뭐가 문제인지 안 보인다는 피드백 반영). */
+/** 종합현황과 동일한 3개 지표(건수) — 지각/미달/미태깅. 휴가는 이상치가 아니라 따로 뺀다. */
 interface DivisionMetrics {
   late: number
   shortage: number
   notag: number
   leave: number
-  normal: number
-  totalRecords: number
 }
 
 function emptyMetrics(): DivisionMetrics {
-  return { late: 0, shortage: 0, notag: 0, leave: 0, normal: 0, totalRecords: 0 }
+  return { late: 0, shortage: 0, notag: 0, leave: 0 }
 }
 
 function computeMetrics(records: ProcessedRecord[]): DivisionMetrics {
@@ -43,12 +38,48 @@ function computeMetrics(records: ProcessedRecord[]): DivisionMetrics {
       }
     }
   }
-  // 종합현황의 출근율과 동일 기준(평일 & 연차 제외) — 분모를 records.length가 아니라
-  // 이 필터링된 total로 맞춰야 "정상출근율" 숫자가 종합현황과 일치한다.
-  const rate = computeNormalRate(records)
-  m.normal = rate.normal
-  m.totalRecords = rate.total
   return m
+}
+
+/**
+ * "정상출근율"의 인원 기준 — 레코드(사람×근무일) 합산이 아니라 사람 단위로 센다.
+ * 그렇게 안 하면 주/월로 갈수록 분모가 인원×근무일수로 부풀어서 "785명"처럼 총원과
+ * 무관한 숫자가 나온다(2026-08-06 피드백). 대상은 조직도 로스터에 CAPS로 매칭된
+ * 사람 중 이 기간에 퇴사자로 제외되지 않은 유효 인원만 — admin/page.tsx가 쓰는 것과
+ * 동일한 퇴사자 규칙(resignedFrom 미설정 시 무조건 제외, 설정돼 있으면 기간 시작 이전
+ * 퇴사일 때만 제외)을 그대로 재사용해서 두 화면의 "유효 인원" 정의가 갈리지 않게 한다.
+ */
+function isValidForPeriod(
+  empId: string,
+  globalExclusionIds: Set<string>,
+  finalAttrMap: Map<string, EmployeeAttributeOverrides>,
+  periodFrom: string,
+): boolean {
+  if (globalExclusionIds.has(empId)) return false
+  const attrs = finalAttrMap.get(empId)
+  if (attrs?.isResigned && (!attrs.resignedFrom || attrs.resignedFrom < periodFrom)) return false
+  return true
+}
+
+function computePersonRate(
+  records: ProcessedRecord[],
+  validIds: Set<string>,
+): { normal: number; total: number } {
+  const byEmp = new Map<string, ProcessedRecord[]>()
+  for (const r of records) {
+    if (!validIds.has(r.employeeId)) continue
+    const list = byEmp.get(r.employeeId) ?? []
+    list.push(r)
+    byEmp.set(r.employeeId, list)
+  }
+  let normal = 0, total = 0
+  for (const recs of byEmp.values()) {
+    const qualifying = recs.filter(r => r.dayType === 'WEEKDAY' && r.finalStatus !== '연차')
+    if (qualifying.length === 0) continue // 이 기간 내내 연차/휴일뿐이면 평가 대상에서 제외
+    total++
+    if (qualifying.every(r => !r.flag)) normal++
+  }
+  return { normal, total }
 }
 
 interface PersonAnomalyRow {
@@ -286,23 +317,6 @@ function DivisionCard({
   )
 }
 
-function HeatmapTile({
-  name, headcount, metrics, onClick,
-}: { name: string; headcount: number; metrics: DivisionMetrics; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="bg-white border border-gray-100 rounded-xl px-3 py-2.5 text-left shadow-sm hover:shadow transition-shadow"
-    >
-      <p className="text-[11px] font-semibold text-gray-700 truncate">{name}</p>
-      <p className="text-base font-extrabold tabular-nums leading-tight text-gray-900 mb-1.5">
-        {headcount}<span className="text-[10px] font-medium text-gray-400 ml-0.5">명</span>
-      </p>
-      <MetricBadges m={metrics} />
-    </button>
-  )
-}
-
 export default function OrgChartPage() {
   const [roster, setRoster] = useState<RosterResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -336,7 +350,7 @@ export default function OrgChartPage() {
   // ── 종합현황과 동일한 기준으로 선택 기간(일/주/월)의 지각/미달/미태깅/휴가/정상출근율을
   // division별로 집계 — buildDivisionAnomalyRollup 대신 직접 묶는 이유는 division마다
   // "정상출근율"까지 따로 계산해야 해서(그 함수는 이상치 있는 레코드만 모음). ──────────────
-  const { records, employees } = useProcessedAttendance(period.from, period.to)
+  const { records, employees, finalAttrMap, globalExclusionIds } = useProcessedAttendance(period.from, period.to)
   const { resolutions } = useAttendanceData()
   const approvedKeys = useMemo(() => new Set(Object.keys(resolutions)), [resolutions])
 
@@ -346,6 +360,22 @@ export default function OrgChartPage() {
   const effectiveRecords = useMemo(
     () => records.map(r => (r.flag && approvedKeys.has(`${r.employeeId}_${r.date}`) ? { ...r, flag: null } : r)),
     [records, approvedKeys],
+  )
+
+  // 이 기간에 "유효한" 인원(전역제외 아니고, 기간 시작일 기준 퇴사자 아님) — 정상출근율의
+  // 인원 분모로만 쓰인다. admin/page.tsx의 퇴사자 규칙과 동일하게 맞춰서 화면 간 정의가
+  // 갈리지 않게 한다.
+  const validEmployeeIds = useMemo(() => {
+    const set = new Set<string>()
+    for (const e of employees) {
+      if (isValidForPeriod(e.id, globalExclusionIds, finalAttrMap, period.from)) set.add(e.id)
+    }
+    return set
+  }, [employees, globalExclusionIds, finalAttrMap, period.from])
+
+  const overallPersonRate = useMemo(
+    () => computePersonRate(effectiveRecords, validEmployeeIds),
+    [effectiveRecords, validEmployeeIds],
   )
 
   const recordsByDivision = useMemo(() => {
@@ -438,12 +468,6 @@ export default function OrgChartPage() {
     setViewMode(mode)
     setCollapsed(new Set()) // 모드 바꾸면 전부 펼쳐서 바로 보이게
   }
-  function focusDivision(name: string) {
-    setCollapsed(prev => { const next = new Set(prev); next.delete(name); return next })
-    requestAnimationFrame(() => {
-      document.getElementById(`div-${name}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    })
-  }
 
   if (isLoading) return <div className="p-8 text-sm text-gray-400">불러오는 중…</div>
   if (error) return <div className="p-8 text-sm text-red-600">{error}</div>
@@ -533,31 +557,14 @@ export default function OrgChartPage() {
         <div>
           <p className="text-xs text-gray-400">{period.label} 정상출근율</p>
           <p className="text-2xl font-extrabold tabular-nums text-gray-900">
-            {overallMetrics.totalRecords > 0 ? ((overallMetrics.normal / overallMetrics.totalRecords) * 100).toFixed(1) : '0.0'}%
+            {overallPersonRate.total > 0 ? ((overallPersonRate.normal / overallPersonRate.total) * 100).toFixed(1) : '0.0'}%
           </p>
-          <p className="text-xs text-gray-400 tabular-nums">({overallMetrics.normal}/{overallMetrics.totalRecords})</p>
+          <p className="text-xs text-gray-400 tabular-nums">
+            ({overallPersonRate.normal}/{overallPersonRate.total}명 · 조직도/CAPS 매칭·퇴사자 제외 유효인원)
+          </p>
         </div>
         <div className="hidden md:block bg-gray-100 w-px h-full" />
         <MetricBadges m={overallMetrics} size="lg" />
-      </div>
-
-      <div>
-        <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">본부별 현황 ({period.label})</p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-11 gap-2">
-          {HEATMAP_ORDER.map(name => {
-            const division = byName.get(name)
-            if (!division) return null
-            return (
-              <HeatmapTile
-                key={name}
-                name={name}
-                headcount={division.headcount}
-                metrics={metricsByDivision.get(name) ?? emptyMetrics()}
-                onClick={() => focusDivision(name)}
-              />
-            )
-          })}
-        </div>
       </div>
 
       {execDivision && (
