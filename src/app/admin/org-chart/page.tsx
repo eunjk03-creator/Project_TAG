@@ -12,6 +12,10 @@ const BUSINESS_DIVISIONS = DIVISION_ORDER.slice(0, 5)   // 사업조직 — HMR/
 const SUPPORT_DIVISIONS = DIVISION_ORDER.slice(5)       // 지원조직 — 경영기획/피플/SCM/GTM/HQ
 const HEATMAP_ORDER = ['임원', ...SUPPORT_DIVISIONS, ...BUSINESS_DIVISIONS]
 
+/** "조직도" = 지금처럼 직책·성명·직무 트리, "이상치" = 같은 자리에 이상치 발생자 목록 —
+ *  두 정보가 한 화면에 뭉쳐 있으면 못 알아본다는 피드백으로 토글로 분리. */
+type ViewMode = 'chart' | 'anomaly'
+
 /** 종합현황과 동일한 4개 지표 — "이상치 N건"으로 뭉뜽그리지 않고 지각/미달/미태깅/휴가를
  *  각각 다른 색으로 분리해서 보여준다(뭉쳐 있으면 뭐가 문제인지 안 보인다는 피드백 반영). */
 interface DivisionMetrics {
@@ -45,6 +49,16 @@ function computeMetrics(records: ProcessedRecord[]): DivisionMetrics {
   m.normal = rate.normal
   m.totalRecords = rate.total
   return m
+}
+
+interface PersonAnomalyRow {
+  rawId: string
+  name: string
+  team: string
+  late: number
+  shortage: number
+  notag: number
+  total: number
 }
 
 interface RosterRow {
@@ -143,23 +157,23 @@ function TeamHeaderRow({ name, count, anomalies }: { name: string; count: number
   )
 }
 
-/** 지각/근무미달/미태깅/휴가를 색으로 뚜렷이 분리해서 보여주는 뱃지 묶음 — 종합현황의
- *  KPI 타일과 같은 색 규칙(지각=amber, 미달/미태깅=red, 휴가=violet)을 그대로 재사용. */
+/** 지각/근무미달/미태깅 — "이상치" 3종만 색으로 뚜렷이 분리(종합현황 KPI 타일과 동일 색:
+ *  지각=amber, 미달·미태깅=red). 휴가는 이상치가 아니라서 여기 안 섞고 별도 뱃지로 뺐다
+ *  (종합현황도 "근태 이상치 상세"와 "휴가 사용 상세"를 서로 다른 카드로 분리해서 보여줌). */
 function MetricBadges({ m, size = 'sm' }: { m: DivisionMetrics; size?: 'sm' | 'lg' }) {
   const items = [
     { label: '지각', value: m.late, color: size === 'lg' ? '#b4650a' : 'text-amber-600' },
     { label: '미달', value: m.shortage, color: size === 'lg' ? '#c4291f' : 'text-red-600' },
     { label: '미태깅', value: m.notag, color: size === 'lg' ? '#c4291f' : 'text-red-600' },
-    { label: '휴가', value: m.leave, color: size === 'lg' ? '#6d3fd1' : 'text-violet-500' },
   ]
   if (size === 'lg') {
     return (
-      <div className="grid grid-cols-4 divide-x divide-gray-100">
+      <div className="grid grid-cols-3 divide-x divide-gray-100">
         {items.map(it => (
           <div key={it.label} className="px-3 first:pl-0">
             <p className="text-xs text-gray-400 font-medium mb-0.5">{it.label}</p>
             <p className="text-2xl font-extrabold tabular-nums leading-tight" style={{ color: it.color as string }}>
-              {it.value}<span className="text-xs font-semibold text-gray-300 ml-0.5">명</span>
+              {it.value}<span className="text-xs font-semibold text-gray-300 ml-0.5">건</span>
             </p>
           </div>
         ))}
@@ -167,7 +181,7 @@ function MetricBadges({ m, size = 'sm' }: { m: DivisionMetrics; size?: 'sm' | 'l
     )
   }
   return (
-    <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+    <div className="flex items-center gap-2.5">
       {items.map(it => (
         <span key={it.label} className={`text-[10px] font-semibold whitespace-nowrap ${it.color as string}`}>
           {it.label} {it.value}
@@ -177,11 +191,51 @@ function MetricBadges({ m, size = 'sm' }: { m: DivisionMetrics; size?: 'sm' | 'l
   )
 }
 
+function LeaveBadge({ count }: { count: number }) {
+  if (count === 0) return null
+  return <span className="text-[11px] font-medium text-violet-300">휴가 {count}</span>
+}
+
+/** "이상치" 모드에서 조직트리 대신 보여줄, 종합현황 person-table의 division 축소판.
+ *  부서 컬럼 없이(이미 이 카드=그 부서) 팀·이름·지각·미달·미태깅·총합계만. */
+function AnomalyTable({ rows }: { rows: PersonAnomalyRow[] }) {
+  if (rows.length === 0) {
+    return <p className="text-xs text-gray-300 text-center py-6">이 기간 이상치 없음</p>
+  }
+  return (
+    <table className="w-full">
+      <thead>
+        <tr className="text-[10px] text-gray-300 uppercase tracking-wide border-b border-gray-100">
+          <th className="text-left pb-1.5 font-medium">팀</th>
+          <th className="text-left pb-1.5 font-medium">이름</th>
+          <th className="text-right pb-1.5 font-medium">지각</th>
+          <th className="text-right pb-1.5 font-medium">미달</th>
+          <th className="text-right pb-1.5 font-medium">미태깅</th>
+          <th className="text-right pb-1.5 font-medium">합계</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-gray-50">
+        {rows.map(r => (
+          <tr key={r.rawId}>
+            <td className="py-1 text-xs text-gray-400 truncate max-w-[100px]">{r.team}</td>
+            <td className="py-1 text-xs font-medium text-gray-800 whitespace-nowrap">{r.name}</td>
+            <td className="py-1 text-xs text-right tabular-nums text-amber-600">{r.late || '—'}</td>
+            <td className="py-1 text-xs text-right tabular-nums text-red-600">{r.shortage || '—'}</td>
+            <td className="py-1 text-xs text-right tabular-nums text-red-600">{r.notag || '—'}</td>
+            <td className="py-1 text-xs text-right tabular-nums font-bold text-gray-800">{r.total}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 function DivisionCard({
-  division, isOpen, onToggle, metrics, teamAnomalies,
+  division, isOpen, onToggle, metrics, teamAnomalies, viewMode, personAnomalies,
 }: {
   division: DivisionGroup; isOpen: boolean; onToggle: () => void
   metrics: DivisionMetrics; teamAnomalies: Map<string, number>
+  viewMode: ViewMode; personAnomalies: PersonAnomalyRow[]
 }) {
   return (
     <section id={`div-${division.name}`} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -190,7 +244,10 @@ function DivisionCard({
         className="w-full flex items-center justify-between px-4 py-3 bg-gray-800 text-white hover:bg-gray-700 transition-colors"
       >
         <span className="text-sm font-semibold truncate">{division.name}</span>
-        <span className="text-xs font-medium text-gray-300 tabular-nums shrink-0">{division.headcount}명</span>
+        <span className="flex items-center gap-2 shrink-0">
+          <LeaveBadge count={metrics.leave} />
+          <span className="text-xs font-medium text-gray-300 tabular-nums">{division.headcount}명</span>
+        </span>
       </button>
       <div className="px-4 py-2.5 border-b border-gray-50 bg-gray-50/60">
         <MetricBadges m={metrics} />
@@ -200,25 +257,29 @@ function DivisionCard({
       </button>
       {isOpen && (
         <div className="p-3 max-h-[480px] overflow-y-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="text-[10px] text-gray-300 uppercase tracking-wide">
-                <th className="text-left pb-1 font-medium w-14">직책</th>
-                <th className="text-left pb-1 font-medium w-20">성명</th>
-                <th className="text-left pb-1 font-medium">직무</th>
-              </tr>
-            </thead>
-            <tbody>
-              {division.teams.map(team => (
-                <Fragment key={team.name}>
-                  {team.name !== division.name && (
-                    <TeamHeaderRow name={team.name} count={team.rows.length} anomalies={teamAnomalies.get(team.name) ?? 0} />
-                  )}
-                  {team.rows.map((p, i) => <PersonRow key={`${team.name}-${i}-${p.name}`} p={p} />)}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
+          {viewMode === 'anomaly' ? (
+            <AnomalyTable rows={personAnomalies} />
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr className="text-[10px] text-gray-300 uppercase tracking-wide">
+                  <th className="text-left pb-1 font-medium w-14">직책</th>
+                  <th className="text-left pb-1 font-medium w-20">성명</th>
+                  <th className="text-left pb-1 font-medium">직무</th>
+                </tr>
+              </thead>
+              <tbody>
+                {division.teams.map(team => (
+                  <Fragment key={team.name}>
+                    {team.name !== division.name && (
+                      <TeamHeaderRow name={team.name} count={team.rows.length} anomalies={teamAnomalies.get(team.name) ?? 0} />
+                    )}
+                    {team.rows.map((p, i) => <PersonRow key={`${team.name}-${i}-${p.name}`} p={p} />)}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </section>
@@ -247,6 +308,7 @@ export default function OrgChartPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [viewMode, setViewMode] = useState<ViewMode>('chart')
   const period = usePeriodRange()
 
   useEffect(() => {
@@ -334,6 +396,35 @@ export default function OrgChartPage() {
     return map
   }, [effectiveRecords, rawIdByCompositeId, locationByRawId])
 
+  // ── "이상치" 모드 본문: division별 사람 단위 지각/미달/미태깅 — 종합현황의 person-table을
+  // division 카드 안으로 옮겨온 것. 총합계 내림차순으로 "누가 제일 문제인지"가 위로 온다. ──
+  const personAnomaliesByDivision = useMemo(() => {
+    const map = new Map<string, Map<string, PersonAnomalyRow>>()
+    for (const r of effectiveRecords) {
+      if (!r.flag) continue
+      const rawId = rawIdByCompositeId.get(r.employeeId)
+      if (!rawId) continue
+      const loc = locationByRawId.get(rawId)
+      if (!loc) continue
+      const divMap = map.get(loc.division) ?? new Map<string, PersonAnomalyRow>()
+      const row = divMap.get(rawId) ?? {
+        rawId, name: empMap.get(r.employeeId)?.name ?? rawId, team: loc.team,
+        late: 0, shortage: 0, notag: 0, total: 0,
+      }
+      for (const cat of flagToAnomalyCategories(r.flag)) {
+        if (cat === 'late') row.late++
+        else if (cat === 'shortage') row.shortage++
+        else if (cat === 'notag') row.notag++
+      }
+      row.total = row.late + row.shortage + row.notag
+      divMap.set(rawId, row)
+      map.set(loc.division, divMap)
+    }
+    const sorted = new Map<string, PersonAnomalyRow[]>()
+    for (const [div, divMap] of map) sorted.set(div, [...divMap.values()].sort((a, b) => b.total - a.total))
+    return sorted
+  }, [effectiveRecords, rawIdByCompositeId, locationByRawId, empMap])
+
   function toggle(name: string) {
     setCollapsed(prev => {
       const next = new Set(prev)
@@ -343,6 +434,10 @@ export default function OrgChartPage() {
   }
   function collapseAll() { setCollapsed(new Set(allNames)) }
   function expandAll() { setCollapsed(new Set()) }
+  function changeViewMode(mode: ViewMode) {
+    setViewMode(mode)
+    setCollapsed(new Set()) // 모드 바꾸면 전부 펼쳐서 바로 보이게
+  }
   function focusDivision(name: string) {
     setCollapsed(prev => { const next = new Set(prev); next.delete(name); return next })
     requestAnimationFrame(() => {
@@ -409,6 +504,25 @@ export default function OrgChartPage() {
           ))}
         </div>
         <div className="flex gap-2">
+          {/* ── 조직도/이상치 토글: 본부 카드 본문을 통째로 바꾼다 ── */}
+          <div className="flex bg-gray-100 rounded-lg p-0.5">
+            <button
+              onClick={() => changeViewMode('chart')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                viewMode === 'chart' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              조직도
+            </button>
+            <button
+              onClick={() => changeViewMode('anomaly')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                viewMode === 'anomaly' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              이상치
+            </button>
+          </div>
           <button onClick={expandAll} className="px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50">전체 펼치기</button>
           <button onClick={collapseAll} className="px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50">전체 접기</button>
         </div>
@@ -454,6 +568,7 @@ export default function OrgChartPage() {
               division={execDivision} isOpen={!collapsed.has(execDivision.name)} onToggle={() => toggle(execDivision.name)}
               metrics={metricsByDivision.get(execDivision.name) ?? emptyMetrics()}
               teamAnomalies={teamStatsByDivision.get(execDivision.name) ?? new Map()}
+              viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(execDivision.name) ?? []}
             />
           </div>
         </div>
@@ -468,6 +583,7 @@ export default function OrgChartPage() {
                 key={division.name} division={division} isOpen={!collapsed.has(division.name)} onToggle={() => toggle(division.name)}
                 metrics={metricsByDivision.get(division.name) ?? emptyMetrics()}
                 teamAnomalies={teamStatsByDivision.get(division.name) ?? new Map()}
+                viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(division.name) ?? []}
               />
             ))}
           </div>
@@ -483,6 +599,7 @@ export default function OrgChartPage() {
                 key={division.name} division={division} isOpen={!collapsed.has(division.name)} onToggle={() => toggle(division.name)}
                 metrics={metricsByDivision.get(division.name) ?? emptyMetrics()}
                 teamAnomalies={teamStatsByDivision.get(division.name) ?? new Map()}
+                viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(division.name) ?? []}
               />
             ))}
           </div>
@@ -498,6 +615,7 @@ export default function OrgChartPage() {
                 key={division.name} division={division} isOpen={!collapsed.has(division.name)} onToggle={() => toggle(division.name)}
                 metrics={metricsByDivision.get(division.name) ?? emptyMetrics()}
                 teamAnomalies={teamStatsByDivision.get(division.name) ?? new Map()}
+                viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(division.name) ?? []}
               />
             ))}
           </div>
