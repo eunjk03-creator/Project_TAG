@@ -38,6 +38,10 @@ const TITLE_VOCAB = new Set([
   'CEO', 'CSO', 'CFO', 'CTO', 'CMO', '본부장', '부문대표', '팀장', '파트장', '팀원', '인턴',
 ])
 
+/** 상단 임원 박스("CEO 박찬호", "CSO 윤세영 CFO 조주영")는 "직책/성명/직무" 헤더가 없는
+ *  별도 영역이라 findHeaders()로는 못 잡는다 — 이 직책들만 따로 스캔한다. */
+const EXEC_TITLES = new Set(['CEO', 'CSO', 'CFO', 'COO', 'CTO', 'CMO'])
+
 function cell(grid: string[][], r: number, c: number): string {
   return (grid[r]?.[c] ?? '').toString().trim()
 }
@@ -88,6 +92,29 @@ function findDivisionAbove(
   return null
 }
 
+/** 헤더가 하나도 없는 행 구간(맨 위 임원 박스)에서 CEO/CSO/CFO 등 title+name 쌍을 찾는다. */
+function findExecRows(grid: string[][], beforeRow: number, tabName: string): SheetPersonRow[] {
+  const rows: SheetPersonRow[] = []
+  for (let r = 0; r < beforeRow; r++) {
+    for (let c = 0; c < (grid[r]?.length ?? 0); c++) {
+      const title = cell(grid, r, c)
+      const name = cell(grid, r, c + 1)
+      if (!EXEC_TITLES.has(title) || !name) continue
+      const isConcurrent = name.endsWith('*')
+      rows.push({
+        division: '임원',
+        team: '임원',
+        title,
+        name: isConcurrent ? name.slice(0, -1).trim() : name,
+        jobFunction: null,
+        isConcurrent,
+        tabName,
+      })
+    }
+  }
+  return rows
+}
+
 function parseSheetTotals(grid: string[][]): Record<string, number> {
   const totals: Record<string, number> = {}
   for (let r = 0; r < grid.length; r++) {
@@ -111,6 +138,8 @@ export function parseOrgChartSheet(grid: string[][], tabName: string): ParseResu
   const declaredCounts: DeclaredCount[] = []
 
   const headers = findHeaders(grid)
+  const earliestHeaderRow = headers.length ? Math.min(...headers.map(h => h.row)) : grid.length
+  rows.push(...findExecRows(grid, earliestHeaderRow, tabName))
 
   for (const { row: headerRow, col, width } of headers) {
     const divisionInfo = findDivisionAbove(grid, headerRow, col)
