@@ -1,10 +1,12 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import type { OrgChartTab } from '@/lib/orgSheet/readOrgChartExcel'
 import { syncOrgChart } from '@/lib/orgSheet/syncOrgChart'
 
-/** 관리자 수동 실행. Cron(/api/cron/org-sync)과 동일한 syncOrgChart()를 공유한다 — trigger만 다르다. */
-export async function POST() {
+/** body: { tabName, values } — /api/org-sync/preview와 동일하게 클라이언트가 미리 파싱한 grid. */
+export async function POST(req: NextRequest) {
   try {
-    const result = await syncOrgChart({ trigger: 'manual' })
+    const tab = await req.json() as OrgChartTab
+    const result = await syncOrgChart(tab)
     return NextResponse.json(result)
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

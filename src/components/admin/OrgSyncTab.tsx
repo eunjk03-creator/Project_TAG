@@ -1,5 +1,6 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { readOrgChartWorkbook, type OrgChartTab } from '@/lib/orgSheet/readOrgChartExcel'
 
 interface PreviewResult {
   tabName: string
@@ -45,6 +46,28 @@ export function OrgSyncTab() {
   const [error, setError] = useState('')
   const [picks, setPicks] = useState<Record<string, string>>({}) // matchKey → 선택한 rawId
 
+  // ── 엑셀 파일: 브라우저에서 직접 읽는다(CAPS/ERP 업로드와 동일 — 서버에 원본 파일 전송 안 함) ──
+  const [tabs, setTabs] = useState<OrgChartTab[]>([])
+  const [selectedTabName, setSelectedTabName] = useState('')
+  const [fileName, setFileName] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const selectedTab = tabs.find(t => t.tabName === selectedTabName) ?? null
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setError(''); setPreview(null); setCommitResult(null)
+    try {
+      const buf = await file.arrayBuffer()
+      const parsedTabs = readOrgChartWorkbook(buf)
+      setTabs(parsedTabs)
+      setSelectedTabName(parsedTabs[parsedTabs.length - 1]?.tabName ?? '') // 기본값: 마지막 시트
+      setFileName(file.name)
+    } catch (err) {
+      setError(`엑셀 파일을 읽지 못했습니다: ${String(err)}`)
+    }
+  }
+
   const loadSnapshots = useCallback(() => {
     fetch('/api/org-sync/snapshots').then(r => r.json()).then(setSnapshots).catch(() => {})
   }, [])
@@ -52,9 +75,14 @@ export function OrgSyncTab() {
   useEffect(() => { loadSnapshots() }, [loadSnapshots])
 
   async function runPreview() {
+    if (!selectedTab) return
     setIsPreviewing(true); setError(''); setPreview(null); setCommitResult(null)
     try {
-      const res = await fetch('/api/org-sync/preview', { method: 'POST' })
+      const res = await fetch('/api/org-sync/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(selectedTab),
+      })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? '미리보기 실패'); return }
       setPreview(data)
@@ -69,9 +97,14 @@ export function OrgSyncTab() {
   }
 
   async function runCommit() {
+    if (!selectedTab) return
     setIsCommitting(true); setError('')
     try {
-      const res = await fetch('/api/org-sync/commit', { method: 'POST' })
+      const res = await fetch('/api/org-sync/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(selectedTab),
+      })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? '반영 실패'); return }
       setCommitResult(data)
@@ -108,9 +141,9 @@ export function OrgSyncTab() {
       <div className="mb-5">
         <h2 className="text-base font-semibold text-gray-800">조직도 동기화</h2>
         <p className="text-xs text-gray-400 mt-1">
-          HR이 관리하는 조직도 Google Sheet의 최신 탭을 CAPS 직원 목록과 매칭해
-          인력 마스터(부서·직책)를 갱신합니다. 매일 자동으로도 실행되지만, 조직변경 직후엔
-          여기서 바로 실행할 수 있습니다.
+          HR이 넘겨준 조직도 엑셀 파일(기존 Google Sheet와 동일한 박스형 조직도)을 업로드해
+          CAPS 직원 목록과 매칭하고 인력 마스터(부서·직책)를 갱신합니다. 외부 API 연동 없이
+          파일을 그때그때 받아서 필요할 때만 반영하는 방식입니다.
         </p>
       </div>
 
@@ -120,17 +153,48 @@ export function OrgSyncTab() {
         </div>
       )}
 
+      <div className="flex flex-wrap items-end gap-2 mb-6">
+        <div>
+          <label className="block text-[11px] font-medium text-gray-500 mb-1">조직도 엑셀 파일</label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handleFileChange}
+            className="text-xs text-gray-600 file:mr-2 file:px-3 file:py-1.5 file:rounded-lg file:border-0
+              file:bg-gray-100 file:text-gray-700 file:text-xs file:font-medium hover:file:bg-gray-200"
+          />
+        </div>
+        {tabs.length > 1 && (
+          <div>
+            <label className="block text-[11px] font-medium text-gray-500 mb-1">시트(탭) 선택</label>
+            <select
+              value={selectedTabName}
+              onChange={e => setSelectedTabName(e.target.value)}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-[7px]"
+            >
+              {tabs.map(t => <option key={t.tabName} value={t.tabName}>{t.tabName}</option>)}
+            </select>
+          </div>
+        )}
+        {fileName && !error && (
+          <span className="text-[11px] text-gray-400 mb-1.5">
+            "{fileName}" 불러옴 · {selectedTab?.values.length ?? 0}행
+          </span>
+        )}
+      </div>
+
       <div className="flex gap-2 mb-6">
         <button
           onClick={runPreview}
-          disabled={isPreviewing}
+          disabled={isPreviewing || !selectedTab}
           className="px-4 py-1.5 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
         >
           {isPreviewing ? '확인 중…' : '미리보기'}
         </button>
         <button
           onClick={runCommit}
-          disabled={isCommitting}
+          disabled={isCommitting || !selectedTab}
           className="px-4 py-1.5 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
         >
           {isCommitting ? '반영 중…' : '지금 동기화'}

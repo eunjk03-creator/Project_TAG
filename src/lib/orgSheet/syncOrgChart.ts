@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { fetchLatestOrgChartTab } from './googleSheetsClient'
+import type { OrgChartTab } from './readOrgChartExcel'
 import { parseOrgChartSheet, type SheetPersonRow } from './parseOrgChartSheet'
 import { matchEmployees, findPossiblyResigned, type CapsEmployeeLite, type MatchedRow } from './matchEmployees'
 
@@ -82,9 +82,8 @@ async function upsertEmployeeMaster(matched: MatchedRow[], teamDeptId: Map<strin
   }
 }
 
-export async function syncOrgChart(opts: { trigger: 'cron' | 'manual' }): Promise<SyncResult> {
+export async function syncOrgChart(tab: OrgChartTab): Promise<SyncResult> {
   const now = new Date()
-  const tab = await fetchLatestOrgChartTab(now)
   const parsed = parseOrgChartSheet(tab.values, tab.tabName)
 
   const attendanceData = await prisma.sharedDataStore.findUnique({ where: { key: 'attendance_data' } })
@@ -122,7 +121,7 @@ export async function syncOrgChart(opts: { trigger: 'cron' | 'manual' }): Promis
       sheetTotals: parsed.sheetTotals,
       parsedTotals: { rowCount: parsed.rows.length, byDivision: countByDivision(parsed.rows) },
       sanityPassed,
-      syncTrigger: opts.trigger,
+      syncTrigger: 'manual',
     },
     update: {
       rawGrid: tab.values,
@@ -130,7 +129,7 @@ export async function syncOrgChart(opts: { trigger: 'cron' | 'manual' }): Promis
       sheetTotals: parsed.sheetTotals,
       parsedTotals: { rowCount: parsed.rows.length, byDivision: countByDivision(parsed.rows) },
       sanityPassed,
-      syncTrigger: opts.trigger,
+      syncTrigger: 'manual',
       syncedAt: now,
     },
   })
