@@ -308,3 +308,105 @@ model ExceptionRule {
   @@index([ruleType])
   @@map("exception_rules")
 }
+
+// ─── 조직도 마스터 (Google Sheet 동기화 대상) ─────────────
+// 시트의 "본부 > 팀/파트" 2단계 구조를 self-relation 트리로 표현.
+// aliases는 CAPS 부서텍스트 매칭 보조용 — orgChart.ts의 getOrganization()을
+// 대체하지 않고 별도 소스로 시작(블래스트 레이디어스 최소화).
+model Department {
+  id        String   @id @default(uuid())
+  name      String
+  level     Int      @default(0)
+  parentId  String?  @map("parent_id")
+  aliases   String[] @default([])
+  order     Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  parent    Department?      @relation("DeptTree", fields: [parentId], references: [id])
+  children  Department[]     @relation("DeptTree")
+  employees EmployeeMaster[]
+
+  @@index([parentId])
+  @@map("departments")
+}
+
+enum ContractType {
+  FULL_TIME   // 정규직
+  CONTRACT    // 계약직
+  DISPATCHED  // 파견
+  INTERN      // 인턴/수습
+  EXECUTIVE   // 임원
+  OTHER
+}
+
+enum MasterEmployeeStatus {
+  ACTIVE      // 재직
+  ON_LEAVE    // 휴직 (HR 재직상태 — exception_rules의 parental_leave와는 다른 레이어:
+              //  이건 "지금 재직 중인가", exception_rules는 "근태 계산에서 제외할 기간")
+  RESIGNED    // 퇴사
+}
+
+// ─── 직원 마스터 — 조직도 시트 기준 단일 진실 소스 ─────────────
+// PK가 rawId(사원번호)인 이유: 앱 전역이 이미 Employee.id = "${rawId}_${정규화이름}"
+// compositeKey를 기대하므로, 이 마스터를 rawId로 조인해서 "보강"하는 방식이 블래스트
+// 레이디어스가 가장 작다. compositeKey 자체는 저장하지 않음 — 이름 표기가 흔들려도
+// rawId는 안정적이므로 조인 시점에 그때그때 계산.
+model EmployeeMaster {
+  rawId           String   @id @map("raw_id")
+  name            String
+  departmentId    String?  @map("department_id")
+  jobTitle        String   @default("") @map("job_title")
+  contractType    ContractType @default(FULL_TIME) @map("contract_type")
+  status          MasterEmployeeStatus @default(ACTIVE)
+  hireDate        String?  @map("hire_date")
+  resignedDate    String?  @map("resigned_date")
+  /** 'sheet' | 'manual' — 시트 동기화로 생성/갱신됐는지, 관리자가 수기로 등록했는지 */
+  source          String   @default("sheet")
+  /** 마지막으로 조직도 시트에서 이 사람을 확인한 시각 — 퇴사 후보 감지에 사용 */
+  lastSeenSheetAt DateTime? @map("last_seen_sheet_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  department Department? @relation(fields: [departmentId], references: [id])
+
+  @@index([departmentId])
+  @@index([status])
+  @@map("employee_master")
+}
+
+// ─── 조직도 시트 이름/부서 ↔ CAPS 사원번호 수동 확정 (재동기화해도 유지) ───
+// SlackNameResolution과 동일 골격. matchKey는 탭명이 아니라 (이름,팀) 정규화
+// 조합으로 잡아야 시트가 새 탭을 추가해도 같은 사람에게 재적용된다.
+model SheetNameResolution {
+  id            String   @id @default(uuid())
+  matchKey      String   @unique @map("match_key")
+  sheetName     String   @map("sheet_name")
+  sheetDept     String   @map("sheet_dept")
+  resolvedRawId String   @map("resolved_raw_id")
+  resolvedAt    DateTime @default(now()) @map("resolved_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("sheet_name_resolutions")
+}
+
+// ─── 조직도 시트 탭(날짜 스냅샷) 원본 보관 — 발령이력 재구성/디버깅용 ───
+// 시트가 "변경 있을 때마다 새 탭 추가" 방식이라 과거 탭이 언제 사라질지 예측
+// 불가 — 원본을 못 붙잡으면 발령이력을 영구히 재구성할 수 없다.
+model OrgChartSnapshot {
+  id           String   @id @default(uuid())
+  tabName      String   @map("tab_name")
+  tabDate      String   @map("tab_date")
+  rawGrid      Json     @map("raw_grid")
+  parsedRows   Json     @map("parsed_rows")
+  sheetTotals  Json     @map("sheet_totals")
+  parsedTotals Json     @map("parsed_totals")
+  sanityPassed Boolean  @default(false) @map("sanity_passed")
+  syncedAt     DateTime @default(now()) @map("synced_at")
+  /** 'cron' | 'manual' */
+  syncTrigger  String   @default("manual") @map("sync_trigger")
+
+  @@unique([tabName])
+  @@index([tabDate])
+  @@map("org_chart_snapshots")
+}
