@@ -10,6 +10,16 @@ import {
   type EmployeeAttributeOverrides,
 } from '@/context/EmployeeExceptionsContext'
 import { FINAL_STATUS_CATEGORY } from '@/types/tag'
+import { useEmployeeRoster } from '@/hooks/useEmployeeRoster'
+
+const CONTRACT_TYPE_LABEL: Record<string, string> = {
+  FULL_TIME: '정규직', CONTRACT: '계약직', DISPATCHED: '파견', INTERN: '인턴/수습', EXECUTIVE: '임원', OTHER: '기타',
+}
+const MASTER_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  ACTIVE:   { label: '재직', cls: 'bg-emerald-50 text-emerald-700' },
+  ON_LEAVE: { label: '휴직', cls: 'bg-amber-50 text-amber-700' },
+  RESIGNED: { label: '퇴사', cls: 'bg-gray-100 text-gray-500' },
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -198,6 +208,14 @@ export function EmployeeDrawer() {
 
   const orgPath = emp ? [emp.division, emp.team, emp.part].filter(Boolean).join(' / ') : ''
 
+  // 조직도 마스터(EmployeeMaster) 보강 정보 — 재직상태/입사일/계약형태는 CAPS 파생값에
+  // 없어서 상시인력 명단(overview 페이지)에서 넘어온 사람도 여기서 확인 가능하도록 추가.
+  const roster = useEmployeeRoster()
+  const masterInfo = useMemo(
+    () => emp ? roster.find(r => r.rawId === (emp.rawId ?? emp.id.split('_')[0])) ?? null : null,
+    [roster, emp],
+  )
+
   const hasAttrOverrides = !!(attrs.isLeader || attrs.isParentalLeave || attrs.isShortenedHours || attrs.isEasyLogis || attrs.isResigned)
   const hasExceptions = hasAttrOverrides
 
@@ -260,6 +278,24 @@ export function EmployeeDrawer() {
                     <span className="text-gray-400 w-8 shrink-0">조직</span>
                     <span className="text-gray-600 leading-relaxed">{orgPath}</span>
                   </div>
+                  {masterInfo && (
+                    <>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-gray-400 w-8 shrink-0">재직</span>
+                        {(() => {
+                          const s = MASTER_STATUS_LABEL[masterInfo.status] ?? { label: masterInfo.status, cls: 'bg-gray-100 text-gray-500' }
+                          return <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${s.cls}`}>{s.label}</span>
+                        })()}
+                        <span className="text-gray-500">{CONTRACT_TYPE_LABEL[masterInfo.contractType] ?? masterInfo.contractType}</span>
+                      </div>
+                      {masterInfo.hireDate && (
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-gray-400 w-8 shrink-0">입사</span>
+                          <span className="text-gray-600 tabular-nums">{masterInfo.hireDate}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
 

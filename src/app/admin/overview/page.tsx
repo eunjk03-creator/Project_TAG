@@ -13,6 +13,9 @@ import { useManagementMetrics } from '@/hooks/useManagementMetrics'
 import { usePeriodRange, type PeriodGranularity } from '@/hooks/usePeriodRange'
 import { useOrgMasterHeadcount } from '@/hooks/useOrgMasterHeadcount'
 import { useMasterActiveRoster } from '@/hooks/useMasterActiveRoster'
+import { useEmployeeRoster, type RosterRow } from '@/hooks/useEmployeeRoster'
+import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
+import { PaginationBar } from '@/components/admin/PaginationBar'
 import {
   buildDivisionAnomalyRollup, buildEmployeeAnomalyRollup, computeNormalRate,
   buildLeaveUsageRollup, buildTodayLeaveList,
@@ -32,7 +35,17 @@ function todayStr(): string {
 
 const PIE_COLORS = ['#3b82f6', '#e5e7eb'] // 정상(blue) / 이상(gray)
 
-type SectionKey = 'anomaly' | 'holiday' | 'ot' | 'leave' | 'orgIntegrity'
+type SectionKey = 'anomaly' | 'holiday' | 'ot' | 'leave' | 'orgIntegrity' | 'roster'
+
+const CONTRACT_TYPE_LABEL: Record<string, string> = {
+  FULL_TIME: '정규직', CONTRACT: '계약직', DISPATCHED: '파견', INTERN: '인턴/수습', EXECUTIVE: '임원', OTHER: '기타',
+}
+const MASTER_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  ACTIVE:   { label: '재직', cls: 'bg-emerald-50 text-emerald-700' },
+  ON_LEAVE: { label: '휴직', cls: 'bg-amber-50 text-amber-700' },
+  RESIGNED: { label: '퇴사', cls: 'bg-gray-100 text-gray-500' },
+}
+const ROSTER_PAGE_SIZE = 20
 
 // ── Small shared UI bits ────────────────────────────────────────────────────
 
@@ -225,6 +238,39 @@ export default function OverviewPage() {
     () => buildMasterDiscrepancyRollup(masterActive, recentActiveRawIds, employees),
     [masterActive, recentActiveRawIds, employees],
   )
+
+  // ── 상시인력 명단: 조직도 마스터(EmployeeMaster) 기준 전체 인력 — CAPS 파생 목록이 아니라
+  // 조직도 시트가 신뢰 소스. rawId → CAPS 합성키(Employee.id) 매핑은 masterDiscrepancies와
+  // 동일한 컨벤션(overview 상단의 empByCompositeId 역방향)으로 만들어서, 행 클릭 시 기존
+  // EmployeeDrawer(그 사람의 조회기간 근태 통계)를 그대로 연다. CAPS에 아직 없는 신규
+  // 입사자는 매핑이 없으므로 드로어를 열지 않고 조직정보만 보여준다.
+  const { openDrawer } = useEmployeeExceptions()
+  const roster = useEmployeeRoster()
+  const rawIdToEmployeeId = useMemo(
+    () => new Map(employees.map(e => [e.rawId ?? e.id.split('_')[0], e.id])),
+    [employees],
+  )
+  const [rosterQuery, setRosterQuery] = useState('')
+  const [rosterPage, setRosterPage]   = useState(0)
+  const filteredRoster = useMemo(() => {
+    const q = rosterQuery.trim().toLowerCase()
+    if (!q) return roster
+    return roster.filter(r =>
+      r.name.toLowerCase().includes(q) ||
+      r.division.toLowerCase().includes(q) ||
+      r.team.toLowerCase().includes(q) ||
+      r.rawId.toLowerCase().includes(q),
+    )
+  }, [roster, rosterQuery])
+  const rosterPageCount = Math.max(1, Math.ceil(filteredRoster.length / ROSTER_PAGE_SIZE))
+  const rosterSafePage  = Math.min(rosterPage, rosterPageCount - 1)
+  const pageRoster = filteredRoster.slice(
+    rosterSafePage * ROSTER_PAGE_SIZE, rosterSafePage * ROSTER_PAGE_SIZE + ROSTER_PAGE_SIZE,
+  )
+  function handleRosterRowClick(row: RosterRow) {
+    const employeeId = rawIdToEmployeeId.get(row.rawId)
+    if (employeeId) openDrawer(employeeId)
+  }
 
   const today = todayStr()
   // 일 단위로 볼 땐 prev/next로 실제 "오늘"이 아닌 다른 날짜를 탐색할 수 있는데, records 자체가
@@ -466,13 +512,16 @@ export default function OverviewPage() {
 
       {/* ── 조직 정합성: 인력 마스터가 아직 연동 전이면(재직자 0명) 자동으로 숨김 ── */}
       {masterActive.length > 0 && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <KpiTile label="마스터 정원" value={masterActive.length} unit="명" color="#0f766e"
             sub="조직도 시트 기준 재직자 수"
             onClick={() => openAndScroll('orgIntegrity')} />
           <KpiTile label="조직 정합성 확인필요" value={masterDiscrepancies.length} unit="건" color="#c4291f"
             sub={masterDiscrepancies.length === 0 ? '마스터-CAPS 불일치 없음' : '눌러서 명단 보기'}
             onClick={() => openAndScroll('orgIntegrity')} />
+          <KpiTile label="상시인력 명단" value={roster.length} unit="명" color="#6d3fd1"
+            sub="눌러서 개인별 상세 보기"
+            onClick={() => openAndScroll('roster')} />
         </div>
       )}
 
@@ -838,6 +887,75 @@ export default function OverviewPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+          </AccordionSection>
+        )}
+
+        {masterActive.length > 0 && (
+          <AccordionSection
+            innerRef={el => { sectionRefs.current.roster = el }}
+            icon="👥" title="상시인력 명단" subtitle="조직도 시트 기준 전체 인력 — 클릭하면 개인별 상세정보"
+            isOpen={openSection === 'roster'} onToggle={() => toggleSection('roster')}
+          >
+            <input
+              type="text"
+              value={rosterQuery}
+              onChange={e => { setRosterQuery(e.target.value); setRosterPage(0) }}
+              placeholder="이름·부서·팀·사번으로 검색…"
+              className="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg
+                focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            {pageRoster.length === 0 ? (
+              <EmptyNote text="검색 결과가 없습니다." />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-gray-400">
+                      <th className="text-left py-2 font-medium">이름</th>
+                      <th className="text-left py-2 font-medium">부서</th>
+                      <th className="text-left py-2 font-medium">팀</th>
+                      <th className="text-left py-2 font-medium">직급</th>
+                      <th className="text-left py-2 font-medium">계약형태</th>
+                      <th className="text-left py-2 font-medium">재직상태</th>
+                      <th className="text-left py-2 font-medium">입사일</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {pageRoster.map(row => {
+                      const statusInfo = MASTER_STATUS_LABEL[row.status] ?? { label: row.status, cls: 'bg-gray-100 text-gray-500' }
+                      const hasDrawer = rawIdToEmployeeId.has(row.rawId)
+                      return (
+                        <tr
+                          key={row.rawId}
+                          onClick={() => handleRosterRowClick(row)}
+                          className={`hover:bg-gray-50/70 ${hasDrawer ? 'cursor-pointer' : 'cursor-default'}`}
+                          title={hasDrawer ? '클릭하면 개인별 근태 상세정보' : 'CAPS 출퇴근 데이터 없음(조직정보만)'}
+                        >
+                          <td className="py-1.5 font-medium text-gray-800">{row.name}</td>
+                          <td className="py-1.5 text-gray-500">{row.division}</td>
+                          <td className="py-1.5 text-gray-500">{row.team || '—'}</td>
+                          <td className="py-1.5 text-gray-500">{row.jobTitle || '—'}</td>
+                          <td className="py-1.5 text-gray-500">{CONTRACT_TYPE_LABEL[row.contractType] ?? row.contractType}</td>
+                          <td className="py-1.5">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusInfo.cls}`}>{statusInfo.label}</span>
+                          </td>
+                          <td className="py-1.5 text-gray-400 tabular-nums">{row.hireDate ?? '—'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+                <PaginationBar
+                  page={rosterSafePage}
+                  pageCount={rosterPageCount}
+                  onPageChange={setRosterPage}
+                  startItem={rosterSafePage * ROSTER_PAGE_SIZE + 1}
+                  endItem={Math.min((rosterSafePage + 1) * ROSTER_PAGE_SIZE, filteredRoster.length)}
+                  totalCount={filteredRoster.length}
+                  unit="명"
+                />
               </div>
             )}
           </AccordionSection>
