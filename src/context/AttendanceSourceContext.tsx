@@ -110,6 +110,33 @@ function normalizeDivisions(employees: Employee[]): Employee[] {
   return employees.map(e => e.division === '기타' ? { ...e, division: '신사업본부' } : e)
 }
 
+// 청크 GET도 전부 동시에 쏘면(구 Promise.all 방식) 초기 로드 시 attendance_records_N +
+// processed_records_N 합쳐 수십 개 요청이 한꺼번에 나가 Supabase 풀러 커넥션이 터지고,
+// 그 여파로 문서 자체 응답까지 503이 나서 페이지 전체가 로드 실패하는 사례가 실측됨
+// (2026-08-10, personnel-roster 브랜치 프리뷰 점검 중 발견). dbPut()/apiCompute() 쓰기
+// 경로에 이미 있는 CHUNK_BATCH_SIZE=4 배치 컨벤션을 읽기 경로에도 동일하게 적용한다.
+const CHUNK_READ_BATCH_SIZE = 4
+
+async function fetchChunksBatched<T>(keyOf: (i: number) => string, chunkCount: number): Promise<T[]> {
+  const out: T[] = []
+  for (let start = 0; start < chunkCount; start += CHUNK_READ_BATCH_SIZE) {
+    const batchIdx = Array.from(
+      { length: Math.min(CHUNK_READ_BATCH_SIZE, chunkCount - start) },
+      (_, j) => start + j,
+    )
+    const batch = await Promise.all(
+      batchIdx.map(i =>
+        fetch(`/api/shared-data/${keyOf(i)}`)
+          .then(r => r.ok ? r.json() as Promise<{ data: { records: T[] } | null }> : { data: null })
+          .then(r => r.data?.records ?? [])
+          .catch(() => [] as T[]),
+      ),
+    )
+    for (const recs of batch) out.push(...recs)
+  }
+  return out
+}
+
 async function dbGet(): Promise<{ data: StoredAttendance | null; updatedAt: string | null }> {
   try {
     const res = await fetch('/api/shared-data/attendance_data')
@@ -126,14 +153,7 @@ async function dbGet(): Promise<{ data: StoredAttendance | null; updatedAt: stri
     const chunkCount = meta.chunkCount ?? 0
     if (chunkCount === 0) return { data: { employees: meta.employees, rawRecords: [] }, updatedAt }
 
-    const chunkResponses = await Promise.all(
-      Array.from({ length: chunkCount }, (_, i) =>
-        fetch(`/api/shared-data/attendance_records_${i}`)
-          .then(r => r.ok ? r.json() as Promise<{ data: { records: RawRecord[] } | null }> : { data: null })
-          .catch(() => ({ data: null })),
-      ),
-    )
-    const rawRecords = chunkResponses.flatMap(r => r.data?.records ?? [])
+    const rawRecords = await fetchChunksBatched<RawRecord>(i => `attendance_records_${i}`, chunkCount)
     return { data: { employees: meta.employees, rawRecords }, updatedAt }
   } catch {
     return { data: null, updatedAt: null }
@@ -226,14 +246,7 @@ async function dbGetProcessed(): Promise<{ data: StoredProcessed | null; updated
     const chunkCount = meta.chunkCount ?? 0
     if (chunkCount === 0) return { data: { processed: [], processedAt: meta.processedAt }, updatedAt }
 
-    const chunkResponses = await Promise.all(
-      Array.from({ length: chunkCount }, (_, i) =>
-        fetch(`/api/shared-data/processed_records_${i}`)
-          .then(r => r.ok ? r.json() as Promise<{ data: { records: ProcessedRecord[] } | null }> : { data: null })
-          .catch(() => ({ data: null })),
-      ),
-    )
-    const processed = chunkResponses.flatMap(r => r.data?.records ?? [])
+    const processed = await fetchChunksBatched<ProcessedRecord>(i => `processed_records_${i}`, chunkCount)
     return { data: { processed, processedAt: meta.processedAt }, updatedAt }
   } catch {
     return { data: null, updatedAt: null }
