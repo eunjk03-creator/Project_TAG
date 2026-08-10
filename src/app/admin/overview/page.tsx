@@ -14,14 +14,15 @@ import { usePeriodRange, type PeriodGranularity } from '@/hooks/usePeriodRange'
 import { useOrgMasterHeadcount } from '@/hooks/useOrgMasterHeadcount'
 import { useMasterActiveRoster } from '@/hooks/useMasterActiveRoster'
 import { useEmployeeRoster, type RosterRow } from '@/hooks/useEmployeeRoster'
-import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { PaginationBar } from '@/components/admin/PaginationBar'
+import { EmployeeDetailModal } from '@/components/admin/EmployeeDetailModal'
 import {
   buildDivisionAnomalyRollup, buildEmployeeAnomalyRollup, computeNormalRate,
   buildLeaveUsageRollup, buildTodayLeaveList,
   buildDailyOvertimeSeries, buildTodayOvertimeList,
   buildHolidayWorkRollup, buildTodayHolidayList,
   computeOverLimitEmployees, buildMasterDiscrepancyRollup,
+  computeOrgChartAttendanceRate,
 } from '@/utils/overviewAggregations'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee } from '@/types/tag'
@@ -243,10 +244,9 @@ export default function OverviewPage() {
 
   // ── 상시인력 명단: 조직도 마스터(EmployeeMaster) 기준 전체 인력 — CAPS 파생 목록이 아니라
   // 조직도 시트가 신뢰 소스. rawId → CAPS 합성키(Employee.id) 매핑은 masterDiscrepancies와
-  // 동일한 컨벤션(overview 상단의 empByCompositeId 역방향)으로 만들어서, 행 클릭 시 기존
-  // EmployeeDrawer(그 사람의 조회기간 근태 통계)를 그대로 연다. CAPS에 아직 없는 신규
-  // 입사자는 매핑이 없으므로 드로어를 열지 않고 조직정보만 보여준다.
-  const { openDrawer } = useEmployeeExceptions()
+  // 동일한 컨벤션(overview 상단의 empByCompositeId 역방향)으로 만들어서, 행 클릭 시 그 사람의
+  // 근태 레코드를 찾아 상세 모달에 넘긴다. CAPS에 아직 없는 신규 입사자는 매핑이 없으므로
+  // 모달에 조직정보만 보이고 레코드는 빈 목록으로 표시된다.
   const roster = useEmployeeRoster()
   const rawIdToEmployeeId = useMemo(
     () => new Map(employees.map(e => [e.rawId ?? e.id.split('_')[0], e.id])),
@@ -254,6 +254,7 @@ export default function OverviewPage() {
   )
   const [rosterQuery, setRosterQuery] = useState('')
   const [rosterPage, setRosterPage]   = useState(0)
+  const [selectedRosterRow, setSelectedRosterRow] = useState<RosterRow | null>(null)
   const filteredRoster = useMemo(() => {
     const q = rosterQuery.trim().toLowerCase()
     if (!q) return roster
@@ -269,10 +270,11 @@ export default function OverviewPage() {
   const pageRoster = filteredRoster.slice(
     rosterSafePage * ROSTER_PAGE_SIZE, rosterSafePage * ROSTER_PAGE_SIZE + ROSTER_PAGE_SIZE,
   )
-  function handleRosterRowClick(row: RosterRow) {
-    const employeeId = rawIdToEmployeeId.get(row.rawId)
-    if (employeeId) openDrawer(employeeId)
-  }
+  const selectedRosterRecords = useMemo(() => {
+    if (!selectedRosterRow) return []
+    const employeeId = rawIdToEmployeeId.get(selectedRosterRow.rawId)
+    return employeeId ? records.filter(r => r.employeeId === employeeId) : []
+  }, [selectedRosterRow, rawIdToEmployeeId, records])
 
   // 일 단위로 볼 땐 prev/next로 실제 "오늘"이 아닌 다른 날짜를 탐색할 수 있는데, records 자체가
   // 이미 period.from~to로만 좁혀져 있어서 today(실제 달력상 오늘)로 필터링하면 그 날짜의
@@ -280,6 +282,13 @@ export default function OverviewPage() {
   // 데이터인데도 안 뜨는 것처럼 보였던 원인. 일 단위에선 "보고 있는 날"을 기준으로 삼는다.
   // 주/월 단위의 "오늘 X" 위젯은 원래 의도대로 실제 오늘 기준을 유지한다.
   const todayForView = period.granularity === 'day' ? period.from : today
+
+  // ── 조직도 기준 출근율 — 일 단위 화면에서만 의미가 있음(하루치 재직/출근 여부 판정) ──
+  const activeRoster = useMemo(() => roster.filter(r => r.status === 'ACTIVE'), [roster])
+  const orgChartRate = useMemo(
+    () => computeOrgChartAttendanceRate(activeRoster, rawIdToEmployeeId, records, todayForView),
+    [activeRoster, rawIdToEmployeeId, records, todayForView],
+  )
 
   // ── 이상치 ──────────────────────────────────────────────────────────────
   const empAnomaly = useMemo(() => buildEmployeeAnomalyRollup(scopedRecords, empMap), [scopedRecords, empMap])
@@ -479,7 +488,7 @@ export default function OverviewPage() {
               ))}
             </button>
           </div>
-          <div className={`grid gap-3 ${isHolidayToday ? 'grid-cols-3' : 'grid-cols-2'}`}>
+          <div className={`grid gap-3 ${isHolidayToday ? 'grid-cols-4' : 'grid-cols-3'}`}>
             {isHolidayToday && (
               <KpiTile label="휴일근무" value={todayHoliday.length} unit="명" color="#6d3fd1"
                 sub={todayHoliday.length === 0 ? '오늘 휴일근무 없음' : '눌러서 시간·명단 보기'}
@@ -491,6 +500,11 @@ export default function OverviewPage() {
             <KpiTile label="휴가" value={todayLeave.length} unit="명" color="#6d3fd1"
               sub={todayLeave.length === 0 ? '오늘 휴가 없음' : `사용일수 ${fmtDays(totalLeaveDays)}일`}
               onClick={() => openAndScroll('leave')} />
+            {activeRoster.length > 0 && (
+              <KpiTile label="조직도 기준 출근율" value={orgChartRate.rate.toFixed(1)} unit="%" color="#0f766e"
+                sub={`기대 ${orgChartRate.expected}명 중 ${orgChartRate.attended}명 출근 (연차 ${orgChartRate.onLeave}명 제외)`}
+                onClick={() => openAndScroll('roster')} />
+            )}
           </div>
         </>
       ) : (
@@ -926,13 +940,13 @@ export default function OverviewPage() {
                   <tbody className="divide-y divide-gray-50">
                     {pageRoster.map(row => {
                       const statusInfo = MASTER_STATUS_LABEL[row.status] ?? { label: row.status, cls: 'bg-gray-100 text-gray-500' }
-                      const hasDrawer = rawIdToEmployeeId.has(row.rawId)
+                      const hasCapsMatch = rawIdToEmployeeId.has(row.rawId)
                       return (
                         <tr
                           key={row.rawId}
-                          onClick={() => handleRosterRowClick(row)}
-                          className={`hover:bg-gray-50/70 ${hasDrawer ? 'cursor-pointer' : 'cursor-default'}`}
-                          title={hasDrawer ? '클릭하면 개인별 근태 상세정보' : 'CAPS 출퇴근 데이터 없음(조직정보만)'}
+                          onClick={() => setSelectedRosterRow(row)}
+                          className="hover:bg-gray-50/70 cursor-pointer"
+                          title={hasCapsMatch ? '클릭하면 개인별 근태 상세정보' : 'CAPS 출퇴근 데이터 없음(조직정보만 표시됨)'}
                         >
                           <td className="py-1.5 font-medium text-gray-800">{row.name}</td>
                           <td className="py-1.5 text-gray-500">{row.division}</td>
@@ -962,6 +976,15 @@ export default function OverviewPage() {
           </AccordionSection>
         )}
       </div>
+
+      {selectedRosterRow && (
+        <EmployeeDetailModal
+          row={selectedRosterRow}
+          records={selectedRosterRecords}
+          periodLabel={period.label}
+          onClose={() => setSelectedRosterRow(null)}
+        />
+      )}
     </div>
   )
 }

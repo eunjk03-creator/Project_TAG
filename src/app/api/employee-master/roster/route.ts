@@ -15,6 +15,19 @@ function resolveOrgPath(
   return { division: parent?.name ?? '—', team: dept.name }
 }
 
+// 사원번호(rawId) 형식 = "E" + 입사년도(YY) + 입사월(MM) + 입사일(DD) + 그날 순번(NN).
+// 조직도 시트의 hireDate가 비어있는 경우가 많아서(엑셀에 그 칼럼이 없거나 미기입), rawId에서
+// 역산한 값을 폴백으로 채운다 — 시트에 실제 입력된 hireDate가 있으면 그게 항상 우선.
+function deriveHireDateFromRawId(rawId: string): string | null {
+  const m = /^E(\d{2})(\d{2})(\d{2})\d{2}$/.exec(rawId)
+  if (!m) return null
+  const [, yy, mm, dd] = m
+  const month = Number(mm)
+  const day   = Number(dd)
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null
+  return `20${yy}-${mm}-${dd}`
+}
+
 export interface RosterRow {
   rawId:        string
   name:         string
@@ -47,7 +60,7 @@ export async function GET() {
       return {
         rawId: e.rawId, name: e.name, division, team,
         jobTitle: e.jobTitle, contractType: e.contractType, status: e.status,
-        hireDate: e.hireDate, resignedDate: e.resignedDate,
+        hireDate: e.hireDate ?? deriveHireDateFromRawId(e.rawId), resignedDate: e.resignedDate,
       }
     })
     return NextResponse.json(result)

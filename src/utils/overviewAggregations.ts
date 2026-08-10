@@ -318,3 +318,54 @@ export function buildMasterDiscrepancyRollup(
 
   return out
 }
+
+// ── 조직도 기준 출근율 ──────────────────────────────────────────────────────
+// CAPS 레코드 정상/이상 비율이 아니라 "조직도(EmployeeMaster) 재직자 중 오늘 실제로 출근한
+// 사람이 몇 명인가"를 보는 별도 지표. 기존 정상출근율(computeNormalRate)과는 계산 기준이
+// 달라서 나란히 둔다 — 하나를 없애거나 대체하지 않음.
+//
+// 판정 규칙(2026-08-10 확정):
+//  - 기준인원 = 조직도 마스터 재직자(status=ACTIVE) 전체. 계약직도 포함(퇴사자만 제외 대상 —
+//    ACTIVE 필터가 이미 처리). 아르바이트는 현재 조직도에 실질적으로 없어 별도 처리 불필요.
+//  - 연차(전일, erpLeaveAmount>=1)인 사람은 "원래 출근 안 하는 게 정상"이므로 기대출근에서 제외.
+//  - 출근 여부는 clockIn/clockOut 중 "둘 다 없을 때만" 미출근으로 본다(하나라도 있으면 출근) —
+//    이건 이 지표 전용 판단이고, 그리드/이상치 상세가 쓰는 기존 미태깅 판정 로직과는 별개.
+//  - record.clockIn/clockOut은 관리자 수기수정(override) 병합이 이미 끝난 값이라 그대로 사용.
+export interface OrgChartAttendanceRate {
+  headcount: number  // 조직도 재직자 전체
+  onLeave:   number  // 연차(1.0) 사용자 — 기대출근에서 제외됨
+  expected:  number  // headcount - onLeave
+  attended:  number  // 실제 출근(clockIn 또는 clockOut 존재)
+  unmatched: number  // CAPS 레코드 자체가 없는 사람(참고용 — attended에는 포함 안 됨)
+  rate:      number  // attended / expected, 0~100 (%, 소수 1자리)
+}
+
+export function computeOrgChartAttendanceRate(
+  rosterActive: { rawId: string }[],
+  rawIdToEmployeeId: Map<string, string>,
+  records: ProcessedRecord[],
+  date: string,
+): OrgChartAttendanceRate {
+  const recordByEmployeeId = new Map(
+    records.filter(r => r.date === date).map(r => [r.employeeId, r]),
+  )
+
+  let onLeave = 0
+  let attended = 0
+  let unmatched = 0
+
+  for (const person of rosterActive) {
+    const employeeId = rawIdToEmployeeId.get(person.rawId)
+    const record = employeeId ? recordByEmployeeId.get(employeeId) : undefined
+
+    if ((record?.erpLeaveAmount ?? 0) >= 1) { onLeave++; continue }
+    if (!record) { unmatched++; continue }
+    if (record.clockIn || record.clockOut) attended++
+  }
+
+  const headcount = rosterActive.length
+  const expected  = headcount - onLeave
+  const rate      = expected > 0 ? Math.round((attended / expected) * 1000) / 10 : 0
+
+  return { headcount, onLeave, expected, attended, unmatched, rate }
+}
