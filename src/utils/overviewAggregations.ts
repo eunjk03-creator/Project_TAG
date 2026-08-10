@@ -369,3 +369,37 @@ export function computeOrgChartAttendanceRate(
 
   return { headcount, onLeave, expected, attended, unmatched, rate }
 }
+
+// ── 퇴사 처리 후보 ──────────────────────────────────────────────────────────
+// 조직도 마스터(전체, 상태 무관)에도 없고 최근 CAPS 활동도 없지만, CAPS 업로드 이력에는
+// 존재하는 사람 — 예전에 퇴사했는데 어디에도 반영이 안 된 케이스. exception_rules에 이미
+// isResigned로 등록돼 있으면 그 날짜를 미리 채워서 보여주고(바로 "반영"만 하면 됨), 없으면
+// 사용자가 직접 날짜를 입력해서 확정해야 한다.
+export interface ResignationCandidate {
+  rawId:        string
+  name:         string
+  division:     string
+  inMaster:     boolean  // true=조직도엔 있는데 최근 CAPS만 없음 / false=조직도에도 없음
+  resignedFrom?: string  // exception_rules 기반 — 있으면 미리 채워줌
+}
+
+export function buildResignationCandidates(
+  historicalEmployees: { rawId?: string; name: string; division: string }[],
+  allMasterRawIds:  Set<string>,
+  recentActiveRawIds: Set<string>,
+  resignedFromByRawId: Map<string, string>,
+): ResignationCandidate[] {
+  const out: ResignationCandidate[] = []
+  const seen = new Set<string>()
+  for (const e of historicalEmployees) {
+    if (!e.rawId || seen.has(e.rawId)) continue
+    seen.add(e.rawId)
+    if (recentActiveRawIds.has(e.rawId)) continue  // 아직 활동 중
+    out.push({
+      rawId: e.rawId, name: e.name, division: e.division,
+      inMaster: allMasterRawIds.has(e.rawId),
+      resignedFrom: resignedFromByRawId.get(e.rawId),
+    })
+  }
+  return out.sort((a, b) => a.division.localeCompare(b.division, 'ko') || a.name.localeCompare(b.name, 'ko'))
+}

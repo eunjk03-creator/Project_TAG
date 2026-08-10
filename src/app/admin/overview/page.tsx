@@ -22,7 +22,7 @@ import {
   buildDailyOvertimeSeries, buildTodayOvertimeList,
   buildHolidayWorkRollup, buildTodayHolidayList,
   computeOverLimitEmployees, buildMasterDiscrepancyRollup,
-  computeOrgChartAttendanceRate,
+  computeOrgChartAttendanceRate, buildResignationCandidates,
 } from '@/utils/overviewAggregations'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee } from '@/types/tag'
@@ -224,30 +224,90 @@ export default function OverviewPage() {
   // 본부 필터와 무관하게 항상 전체 기준으로 본다 — 마스터 데이터가 아직 비어있으면(연동
   // 전) 두 목록 다 0건으로 자연히 비어서 화면에 아무 영향이 없다.
   const masterActive = useMasterActiveRoster()
+  const roster = useEmployeeRoster()
+  const employeeIdToRawId = useMemo(
+    () => new Map(employees.map(e => [e.id, e.rawId ?? e.id.split('_')[0]])),
+    [employees],
+  )
   const recentActiveRawIds = useMemo(() => {
-    const empByCompositeId = new Map(employees.map(e => [e.id, e.rawId ?? e.id.split('_')[0]]))
     const cutoff = new Date(today + 'T00:00')
     cutoff.setDate(cutoff.getDate() - 7)
     const cutoffStr = todayStrFrom(cutoff)
     const set = new Set<string>()
     for (const r of records) {
       if (r.date < cutoffStr) continue
-      const rawId = empByCompositeId.get(r.employeeId)
+      const rawId = employeeIdToRawId.get(r.employeeId)
       if (rawId) set.add(rawId)
     }
     return set
-  }, [records, employees])
+  }, [records, employeeIdToRawId])
   const masterDiscrepancies = useMemo(
     () => buildMasterDiscrepancyRollup(masterActive, recentActiveRawIds, employees),
     [masterActive, recentActiveRawIds, employees],
   )
+  // MASTER_ACTIVE_NOT_IN_CAPS는 아래 "퇴사 처리" 후보 목록으로 이동했으므로 여기서는
+  // CAPS_NOT_IN_MASTER(파트타이머 확인 필요)만 남긴다. buildMasterDiscrepancyRollup의
+  // CAPS_NOT_IN_MASTER는 최근 활동 여부를 안 따지기 때문에(전체 CAPS 이력 기준) 최근
+  // 활동이 없는 사람까지 섞여 들어온다 — 그런 사람은 "퇴사 추정" 쪽 판단이 맞으므로
+  // recentActiveRawIds로 한 번 더 걸러서 두 목록이 겹치지 않게 한다.
+  const partTimerCandidates = useMemo(
+    () => masterDiscrepancies.filter(d => d.type === 'CAPS_NOT_IN_MASTER' && recentActiveRawIds.has(d.rawId)),
+    [masterDiscrepancies, recentActiveRawIds],
+  )
+
+  // ── 퇴사 처리 후보: 조직도에도 없고 최근 CAPS 활동도 없지만 CAPS 이력엔 존재하는 사람 ──
+  // exception_rules에 이미 isResigned로 등록돼 있으면(finalAttrMap이 이미 계산해줌) 그
+  // 날짜를 미리 채워서 보여주고, 없으면 사용자가 직접 입력해서 확정한다.
+  const resignedFromByRawId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const [employeeId, attr] of finalAttrMap) {
+      if (attr.isResigned && attr.resignedFrom) {
+        const rawId = employeeIdToRawId.get(employeeId)
+        if (rawId) map.set(rawId, attr.resignedFrom)
+      }
+    }
+    return map
+  }, [finalAttrMap, employeeIdToRawId])
+  const allMasterRawIds = useMemo(() => new Set(roster.map(r => r.rawId)), [roster])
+  // 이미 마스터에 RESIGNED로 반영된 사람은 새로고침해도 다시 후보로 안 뜨게 제외.
+  const resignedMasterRawIds = useMemo(
+    () => new Set(roster.filter(r => r.status === 'RESIGNED').map(r => r.rawId)),
+    [roster],
+  )
+  const [resolvedResignationRawIds, setResolvedResignationRawIds] = useState<Set<string>>(new Set())
+  const [resignationDateDrafts, setResignationDateDrafts] = useState<Record<string, string>>({})
+  const resignationCandidates = useMemo(
+    () => buildResignationCandidates(employees, allMasterRawIds, recentActiveRawIds, resignedFromByRawId)
+      .filter(c => !resolvedResignationRawIds.has(c.rawId) && !resignedMasterRawIds.has(c.rawId)),
+    [employees, allMasterRawIds, recentActiveRawIds, resignedFromByRawId, resolvedResignationRawIds, resignedMasterRawIds],
+  )
+  async function confirmResignation(candidate: { rawId: string; name: string }, resignedDate: string) {
+    if (!resignedDate) return
+    await fetch(`/api/employee-master/${candidate.rawId}`, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ name: candidate.name, status: 'RESIGNED', resignedDate }),
+    })
+    setResolvedResignationRawIds(prev => new Set(prev).add(candidate.rawId))
+  }
+  const [isBulkApplying, setIsBulkApplying] = useState(false)
+  // 예외규칙에 이미 등록돼 날짜를 아는 사람들 — 하나씩 누르지 않고 한 번에 반영.
+  async function bulkApplyKnownResignations() {
+    const known = resignationCandidates.filter(c => c.resignedFrom)
+    if (known.length === 0) return
+    setIsBulkApplying(true)
+    try {
+      await Promise.all(known.map(c => confirmResignation(c, c.resignedFrom!)))
+    } finally {
+      setIsBulkApplying(false)
+    }
+  }
 
   // ── 상시인력 명단: 조직도 마스터(EmployeeMaster) 기준 전체 인력 — CAPS 파생 목록이 아니라
   // 조직도 시트가 신뢰 소스. rawId → CAPS 합성키(Employee.id) 매핑은 masterDiscrepancies와
   // 동일한 컨벤션(overview 상단의 empByCompositeId 역방향)으로 만들어서, 행 클릭 시 그 사람의
   // 근태 레코드를 찾아 상세 모달에 넘긴다. CAPS에 아직 없는 신규 입사자는 매핑이 없으므로
   // 모달에 조직정보만 보이고 레코드는 빈 목록으로 표시된다.
-  const roster = useEmployeeRoster()
   const rawIdToEmployeeId = useMemo(
     () => new Map(employees.map(e => [e.rawId ?? e.id.split('_')[0], e.id])),
     [employees],
@@ -527,12 +587,15 @@ export default function OverviewPage() {
 
       {/* ── 조직 정합성: 인력 마스터가 아직 연동 전이면(재직자 0명) 자동으로 숨김 ── */}
       {masterActive.length > 0 && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           <KpiTile label="마스터 정원" value={masterActive.length} unit="명" color="#0f766e"
             sub="조직도 시트 기준 재직자 수"
             onClick={() => openAndScroll('orgIntegrity')} />
-          <KpiTile label="조직 정합성 확인필요" value={masterDiscrepancies.length} unit="건" color="#c4291f"
-            sub={masterDiscrepancies.length === 0 ? '마스터-CAPS 불일치 없음' : '눌러서 명단 보기'}
+          <KpiTile label="퇴사 처리 필요" value={resignationCandidates.length} unit="명" color="#c4291f"
+            sub={resignationCandidates.length === 0 ? '퇴사 확인 대상 없음' : '눌러서 확정하기'}
+            onClick={() => openAndScroll('orgIntegrity')} />
+          <KpiTile label="파트타이머 확인 필요" value={partTimerCandidates.length} unit="명" color="#b4650a"
+            sub={partTimerCandidates.length === 0 ? '불일치 없음' : '눌러서 명단 보기'}
             onClick={() => openAndScroll('orgIntegrity')} />
           <KpiTile label="상시인력 명단" value={roster.length} unit="명" color="#6d3fd1"
             sub="눌러서 개인별 상세 보기"
@@ -867,43 +930,121 @@ export default function OverviewPage() {
         {masterActive.length > 0 && (
           <AccordionSection
             innerRef={el => { sectionRefs.current.orgIntegrity = el }}
-            icon="🗂️" title="조직 정합성" subtitle="조직도 시트 인력 마스터 vs CAPS 업로드 대조"
+            icon="🗂️" title="조직 정합성" subtitle="퇴사 처리 · 파트타이머 확인 — 조직도 시트 vs CAPS 대조"
             isOpen={openSection === 'orgIntegrity'} onToggle={() => toggleSection('orgIntegrity')}
           >
-            {masterDiscrepancies.length === 0 ? (
-              <EmptyNote text="마스터와 CAPS 데이터가 모두 일치합니다." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-gray-100 text-gray-400">
-                      <th className="text-left py-2 font-medium">구분</th>
-                      <th className="text-left py-2 font-medium">이름</th>
-                      <th className="text-left py-2 font-medium">부서</th>
-                      <th className="text-left py-2 font-medium">사원번호</th>
-                      <th className="text-left py-2 font-medium">내용</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {masterDiscrepancies.map(d => (
-                      <tr key={`${d.type}_${d.rawId}`} className="hover:bg-gray-50/70">
-                        <td className="py-1.5">
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                            d.type === 'MASTER_ACTIVE_NOT_IN_CAPS' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'
-                          }`}>
-                            {d.type === 'MASTER_ACTIVE_NOT_IN_CAPS' ? '마스터→CAPS 미확인' : 'CAPS→마스터 미등록'}
-                          </span>
-                        </td>
-                        <td className="py-1.5 font-medium text-gray-800">{d.name}</td>
-                        <td className="py-1.5 text-gray-500">{d.division}</td>
-                        <td className="py-1.5 text-gray-400 tabular-nums">{d.rawId}</td>
-                        <td className="py-1.5 text-gray-500">{d.detail}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {/* ── 퇴사 처리 후보 ── */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[11px] font-semibold text-gray-500">
+                  퇴사 처리 필요 — {resignationCandidates.length}명
+                  {resignationCandidates.some(c => c.resignedFrom) && (
+                    <span className="ml-1.5 text-gray-400 font-normal">
+                      (예외규칙에 날짜 등록된 {resignationCandidates.filter(c => c.resignedFrom).length}명 포함)
+                    </span>
+                  )}
+                </p>
+                {resignationCandidates.some(c => c.resignedFrom) && (
+                  <button
+                    onClick={bulkApplyKnownResignations}
+                    disabled={isBulkApplying}
+                    className="px-2.5 py-1 text-[11px] font-semibold text-red-600 bg-white border border-red-200 rounded-md hover:bg-red-50 disabled:opacity-40 transition-colors"
+                  >
+                    {isBulkApplying ? '반영 중…' : `예외규칙 등록된 ${resignationCandidates.filter(c => c.resignedFrom).length}명 일괄 반영`}
+                  </button>
+                )}
               </div>
-            )}
+              {resignationCandidates.length === 0 ? (
+                <EmptyNote text="퇴사 확인이 필요한 인원이 없습니다." />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-100 text-gray-400">
+                        <th className="text-left py-2 font-medium">이름</th>
+                        <th className="text-left py-2 font-medium">부서</th>
+                        <th className="text-left py-2 font-medium">사원번호</th>
+                        <th className="text-left py-2 font-medium">상태</th>
+                        <th className="text-left py-2 font-medium">퇴사일</th>
+                        <th className="text-left py-2 font-medium"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {resignationCandidates.map(c => {
+                        const draft = resignationDateDrafts[c.rawId] ?? c.resignedFrom ?? ''
+                        return (
+                          <tr key={c.rawId} className="hover:bg-gray-50/70">
+                            <td className="py-1.5 font-medium text-gray-800">{c.name}</td>
+                            <td className="py-1.5 text-gray-500">{c.division}</td>
+                            <td className="py-1.5 text-gray-400 tabular-nums">{c.rawId}</td>
+                            <td className="py-1.5">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                c.inMaster ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-500'
+                              }`}>
+                                {c.inMaster ? '조직도엔 있음' : '조직도에도 없음'}
+                              </span>
+                              {c.resignedFrom && (
+                                <span className="ml-1.5 text-[10px] text-emerald-600">예외규칙 등록됨</span>
+                              )}
+                            </td>
+                            <td className="py-1.5">
+                              <input
+                                type="date"
+                                value={draft}
+                                onChange={e => setResignationDateDrafts(prev => ({ ...prev, [c.rawId]: e.target.value }))}
+                                className="text-xs border border-gray-200 rounded px-1.5 py-0.5"
+                              />
+                            </td>
+                            <td className="py-1.5">
+                              <button
+                                disabled={!draft}
+                                onClick={() => confirmResignation(c, draft)}
+                                className="px-2 py-1 text-[11px] font-semibold text-red-600 bg-white border border-red-200 rounded-md hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >
+                                {c.resignedFrom ? '반영' : '퇴사 확정'}
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* ── 파트타이머 확인 후보 (CAPS 활동 있음, 조직도 마스터엔 없음) ── */}
+            <div className="pt-2 border-t border-gray-50">
+              <p className="text-[11px] font-semibold text-gray-500 mb-2">
+                파트타이머 확인 필요 — {partTimerCandidates.length}명
+              </p>
+              {partTimerCandidates.length === 0 ? (
+                <EmptyNote text="확인이 필요한 인원이 없습니다." />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-100 text-gray-400">
+                        <th className="text-left py-2 font-medium">이름</th>
+                        <th className="text-left py-2 font-medium">부서</th>
+                        <th className="text-left py-2 font-medium">사원번호</th>
+                        <th className="text-left py-2 font-medium">내용</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {partTimerCandidates.map(d => (
+                        <tr key={d.rawId} className="hover:bg-gray-50/70">
+                          <td className="py-1.5 font-medium text-gray-800">{d.name}</td>
+                          <td className="py-1.5 text-gray-500">{d.division}</td>
+                          <td className="py-1.5 text-gray-400 tabular-nums">{d.rawId}</td>
+                          <td className="py-1.5 text-gray-500">{d.detail}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </AccordionSection>
         )}
 
