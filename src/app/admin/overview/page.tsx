@@ -217,6 +217,8 @@ export default function OverviewPage() {
     masterHeadcountByDivision,
   )
 
+  const today = todayStr()
+
   // ── 조직 정합성: 인력 마스터(조직도 시트) vs 그때그때의 CAPS 업로드 대조 ────────────
   // 본부 필터와 무관하게 항상 전체 기준으로 본다 — 마스터 데이터가 아직 비어있으면(연동
   // 전) 두 목록 다 0건으로 자연히 비어서 화면에 아무 영향이 없다.
@@ -272,7 +274,6 @@ export default function OverviewPage() {
     if (employeeId) openDrawer(employeeId)
   }
 
-  const today = todayStr()
   // 일 단위로 볼 땐 prev/next로 실제 "오늘"이 아닌 다른 날짜를 탐색할 수 있는데, records 자체가
   // 이미 period.from~to로만 좁혀져 있어서 today(실제 달력상 오늘)로 필터링하면 그 날짜의
   // 레코드가 아예 없어 "오늘 X" 위젯이 전부 0으로 비어버렸다 — KPI 타일/명단이 실제로는 있는
