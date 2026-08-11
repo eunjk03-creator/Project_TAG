@@ -68,8 +68,8 @@ export default function EmployeesPage() {
   const windowFrom = todayStrFrom(new Date(Date.now() - WINDOW_DAYS * 86400000))
   const { records, employees, finalAttrMap } = useProcessedAttendance(windowFrom, today)
 
-  const masterActive = useMasterActiveRoster()
-  const roster = useEmployeeRoster()
+  const [masterActive, refetchMasterActive] = useMasterActiveRoster()
+  const [roster, refetchRoster] = useEmployeeRoster()
   const employeeIdToRawId = useMemo(
     () => new Map(employees.map(e => [e.id, e.rawId ?? e.id.split('_')[0]])),
     [employees],
@@ -95,9 +95,12 @@ export default function EmployeesPage() {
     () => buildMasterDiscrepancyRollup(masterActive, recentActiveRawIds, employees),
     [masterActive, recentActiveRawIds, employees],
   )
+  const [resolvedPartTimeRawIds, setResolvedPartTimeRawIds] = useState<Set<string>>(new Set())
   const partTimerCandidates = useMemo(
-    () => masterDiscrepancies.filter(d => d.type === 'CAPS_NOT_IN_MASTER' && recentActiveRawIds.has(d.rawId)),
-    [masterDiscrepancies, recentActiveRawIds],
+    () => masterDiscrepancies.filter(
+      d => d.type === 'CAPS_NOT_IN_MASTER' && recentActiveRawIds.has(d.rawId) && !resolvedPartTimeRawIds.has(d.rawId),
+    ),
+    [masterDiscrepancies, recentActiveRawIds, resolvedPartTimeRawIds],
   )
 
   const resignedFromByRawId = useMemo(() => {
@@ -117,6 +120,7 @@ export default function EmployeesPage() {
   )
   const [resolvedResignationRawIds, setResolvedResignationRawIds] = useState<Set<string>>(new Set())
   const [resignationDateDrafts, setResignationDateDrafts] = useState<Record<string, string>>({})
+  const [contractTypeDrafts, setContractTypeDrafts] = useState<Record<string, string>>({})
   const resignationCandidates = useMemo(
     () => buildResignationCandidates(employees, allMasterRawIds, recentActiveRawIds, resignedFromByRawId)
       .filter(c => !resolvedResignationRawIds.has(c.rawId) && !resignedMasterRawIds.has(c.rawId)),
@@ -124,12 +128,34 @@ export default function EmployeesPage() {
   )
   async function confirmResignation(candidate: { rawId: string; name: string }, resignedDate: string) {
     if (!resignedDate) return
-    await fetch(`/api/employee-master/${candidate.rawId}`, {
+    const res = await fetch(`/api/employee-master/${candidate.rawId}`, {
       method:  'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ name: candidate.name, status: 'RESIGNED', resignedDate }),
     })
+    if (!res.ok) {
+      alert('퇴사 처리 반영에 실패했습니다. 다시 시도해주세요.')
+      return
+    }
     setResolvedResignationRawIds(prev => new Set(prev).add(candidate.rawId))
+    // 마스터에 행이 없던 사람(신규 upsert)은 로컬 roster 캐시에 없어서 refetch 없이는
+    // unifiedRows에서 아예 사라져 보인다 — 서버에서 최신 상태를 다시 받아와야 함.
+    await refetchRoster()
+  }
+  async function registerAsActive(candidate: { rawId: string; name: string }, contractType: string) {
+    const res = await fetch(`/api/employee-master/${candidate.rawId}`, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ name: candidate.name, status: 'ACTIVE', contractType, resignedDate: null }),
+    })
+    if (!res.ok) {
+      alert('재직 등록에 실패했습니다. 다시 시도해주세요.')
+      return
+    }
+    setResolvedPartTimeRawIds(prev => new Set(prev).add(candidate.rawId))
+    // masterActive(=EmployeeMaster status ACTIVE)에 반영돼야 CAPS_NOT_IN_MASTER 판정에서도
+    // 빠지고, roster에도 반영돼야 정식 재직자 행으로 보인다 — 둘 다 다시 받아온다.
+    await Promise.all([refetchRoster(), refetchMasterActive()])
   }
   const [isBulkApplying, setIsBulkApplying] = useState(false)
   async function bulkApplyKnownResignations() {
@@ -293,7 +319,9 @@ export default function EmployeesPage() {
                 {pageRows.map(row => {
                   const statusInfo = STATUS_LABEL[row.status]
                   const isReviewResign = row.status === 'REVIEW_RESIGN'
+                  const isReviewPartTime = row.status === 'REVIEW_PARTTIME'
                   const draft = resignationDateDrafts[row.rawId] ?? row.resignedDate ?? ''
+                  const contractDraft = contractTypeDrafts[row.rawId] ?? 'CONTRACT'
                   return (
                     <tr key={row.rawId} className="hover:bg-gray-50/70">
                       <td className="px-4 py-2 text-gray-400 font-mono">{row.rawId}</td>
@@ -325,6 +353,24 @@ export default function EmployeesPage() {
                               className="px-1.5 py-0.5 text-[10px] font-semibold text-red-600 bg-white border border-red-200 rounded hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
                             >
                               {row.resignedDate ? '반영' : '확정'}
+                            </button>
+                          </div>
+                        ) : isReviewPartTime ? (
+                          <div className="flex items-center gap-1">
+                            <select
+                              value={contractDraft}
+                              onChange={e => setContractTypeDrafts(prev => ({ ...prev, [row.rawId]: e.target.value }))}
+                              className="text-xs border border-gray-200 rounded px-1 py-0.5 bg-white"
+                            >
+                              {Object.entries(CONTRACT_TYPE_LABEL).map(([value, label]) => (
+                                <option key={value} value={value}>{label}</option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => registerAsActive(row, contractDraft)}
+                              className="px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 bg-white border border-emerald-200 rounded hover:bg-emerald-50 transition-colors shrink-0"
+                            >
+                              재직 등록
                             </button>
                           </div>
                         ) : (

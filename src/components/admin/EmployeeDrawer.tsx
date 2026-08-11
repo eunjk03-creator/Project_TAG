@@ -210,7 +210,7 @@ export function EmployeeDrawer() {
 
   // 조직도 마스터(EmployeeMaster) 보강 정보 — 재직상태/입사일/계약형태는 CAPS 파생값에
   // 없어서 상시인력 명단(overview 페이지)에서 넘어온 사람도 여기서 확인 가능하도록 추가.
-  const roster = useEmployeeRoster()
+  const [roster] = useEmployeeRoster()
   const masterInfo = useMemo(
     () => emp ? roster.find(r => r.rawId === (emp.rawId ?? emp.id.split('_')[0])) ?? null : null,
     [roster, emp],

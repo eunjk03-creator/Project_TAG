@@ -210,7 +210,7 @@ export default function OverviewPage() {
 
   // ── 마스터 정원 / 조직도 기준 출근율 — 사원 명단 관리(퇴사 처리·파트타이머 확인)는
   // /admin/employees 페이지로 이동함. 여기 남기는 건 종합현황다운 단순 통계 2개뿐.
-  const masterActive = useMasterActiveRoster()
+  const [masterActive] = useMasterActiveRoster()
   const rawIdToEmployeeId = useMemo(
     () => new Map(employees.map(e => [e.rawId ?? e.id.split('_')[0], e.id])),
     [employees],
