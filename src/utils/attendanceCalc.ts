@@ -389,8 +389,10 @@ export interface RealHoursOtResult {
  * 반차/반반차의 조기출근 보정(13:00/10:00 스냅)은 없음 — 전사 공통 08:00 floor만 유지, 그 외엔
  * 실제 clockIn 그대로 사용. credit(휴가 유급인정)은 ERP 승인 + 무급 아님일 때만 반영되고,
  * 소정근로 = 8h−credit, 소정외는 그 이후부터 실근무 8h까지, 법정연장은 실근무 8h 초과분.
- * 급여용 3종은 ERP 연장신청 승인 게이트 + 30분 절삭 — 단, 직책자는 연장신청 절차 자체가
- * 면제되므로(재량근로) 게이트를 걸지 않고 항상 인정한다 (isLeader).
+ * 급여용 3종은 ERP 연장신청 승인 게이트 + 30분 절삭 — 단, 직책자는 OT를 급여 계산에 아예
+ * 반영하지 않으므로(재량근로, 별도 리포팅) 급여용 3종/승인근무(급여용)/유급인정시간은 항상
+ * 0으로 고정한다. 대신 승인근무(원본)은 "승인 여부와 무관하게 실근무 그대로"를 보여줘
+ * 순수 실근무 시간(연장 포함) 파악 용도로 쓴다.
  */
 export function computeRealHoursOt(params: {
   clockIn:             string | null | undefined
@@ -425,18 +427,19 @@ export function computeRealHoursOt(params: {
   const nightStart = 1320, nightEnd = 1800 // 22:00 ~ 익일 06:00(1440+360)
   const nightMins = Math.max(0, Math.min(outMins, nightEnd) - Math.max(inMins, nightStart))
 
-  const gate = isLeader === true || erpOtApplied === true
-  const payOtherH = gate ? floorTo30(otherMins / 60) : 0
-  const payOtH    = gate ? floorTo30(otMins    / 60) : 0
-  const payNightH = gate ? floorTo30(nightMins / 60) : 0
+  // 급여용 게이트 — 직책자는 OT를 급여 계산에 반영하지 않으므로 항상 잠김(0).
+  const payGate = isLeader !== true && erpOtApplied === true
+  const payOtherH = payGate ? floorTo30(otherMins / 60) : 0
+  const payOtH    = payGate ? floorTo30(otMins    / 60) : 0
+  const payNightH = payGate ? floorTo30(nightMins / 60) : 0
 
-  // 승인근무(원본) — 연장신청 승인 시 실근무 전체 인정(1분 단위), 미신청 시 소정외+법정연장을
-  // 제외한 당일 소정시간만 인정.
-  const approvedWorkRawH = gate ? realWorkMins / 60 : (realWorkMins - otherMins - otMins) / 60
-  // 승인근무(급여용) — 당일 소정시간 + 급여용 소정외 + 급여용 법정연장 (30분 절삭 반영).
-  const approvedWorkPayH = stdWorkMins / 60 + payOtherH + payOtH
-  // 유급인정시간 — 승인근무(급여용) + 휴가 Credit.
-  const paidRecognizedH = approvedWorkPayH + creditMins / 60
+  // 승인근무(원본) 게이트 — 직책자는 승인 개념 자체가 없어 항상 열림(실근무 그대로),
+  // 비직책자는 연장신청 승인 시에만 열림(미신청 시 소정외+법정연장 제외한 소정시간만 인정).
+  const rawApproveGate = isLeader === true || erpOtApplied === true
+  const approvedWorkRawH = rawApproveGate ? realWorkMins / 60 : (realWorkMins - otherMins - otMins) / 60
+  // 승인근무(급여용)/유급인정시간 — 직책자는 급여용 OT를 아예 계산하지 않으므로 0 고정.
+  const approvedWorkPayH = isLeader === true ? 0 : stdWorkMins / 60 + payOtherH + payOtH
+  const paidRecognizedH  = isLeader === true ? 0 : approvedWorkPayH + creditMins / 60
 
   return {
     stayMins, realWorkMins, otherMins, otMins, nightMins, payOtherH, payOtH, payNightH,
