@@ -117,6 +117,12 @@ function normalizeDivisions(employees: Employee[]): Employee[] {
 // 경로에 이미 있는 CHUNK_BATCH_SIZE=4 배치 컨벤션을 읽기 경로에도 동일하게 적용한다.
 const CHUNK_READ_BATCH_SIZE = 4
 
+// 청크 하나라도 실패하면 절대 빈 배열로 조용히 넘기지 않고 예외를 던져 전체 fetch를
+// 실패시킨다 — 그래야 dbGet()/dbGetProcessed()가 { data: null }을 돌려주고, 호출부의
+// "실패 시 기존 캐시 유지" 로직이 정상 작동한다. 예전엔 실패한 청크만 []로 채워서
+// "성공"처럼 리턴했는데, 그 결과 좋은 캐시 데이터가 부분 누락된 데이터로 조용히
+// 덮어써지는 사고가 있었다 (2026-08-11, 사원명단 페이지 검증 중 records 26262→137건으로
+// 급감하는 현상으로 발견 — 급여 직결 데이터라 무결성이 완전성보다 우선).
 async function fetchChunksBatched<T>(keyOf: (i: number) => string, chunkCount: number): Promise<T[]> {
   const out: T[] = []
   for (let start = 0; start < chunkCount; start += CHUNK_READ_BATCH_SIZE) {
@@ -125,12 +131,12 @@ async function fetchChunksBatched<T>(keyOf: (i: number) => string, chunkCount: n
       (_, j) => start + j,
     )
     const batch = await Promise.all(
-      batchIdx.map(i =>
-        fetch(`/api/shared-data/${keyOf(i)}`)
-          .then(r => r.ok ? r.json() as Promise<{ data: { records: T[] } | null }> : { data: null })
-          .then(r => r.data?.records ?? [])
-          .catch(() => [] as T[]),
-      ),
+      batchIdx.map(async i => {
+        const res = await fetch(`/api/shared-data/${keyOf(i)}`)
+        if (!res.ok) throw new Error(`chunk ${keyOf(i)} HTTP ${res.status}`)
+        const r = await res.json() as { data: { records: T[] } | null }
+        return r.data?.records ?? []
+      }),
     )
     for (const recs of batch) out.push(...recs)
   }

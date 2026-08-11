@@ -13,26 +13,54 @@ function todayStrFrom(d: Date): string {
 }
 
 // 이 페이지는 관리용이라 기간 탐색 UI가 없음 — 고정된 최근 90일 창으로만 데이터를 가져온다.
-// (부수 효과: Overview에서 "일" 단위로 볼 때 recentActiveRawIds의 7일 lookback이 그날
-// 하루치 레코드 안에서만 검색돼 무력화되던 문제가, 항상 90일치를 갖고 있는 이 페이지에서는
-// 구조적으로 발생하지 않는다.)
 const WINDOW_DAYS = 90
+const PAGE_SIZE = 20
 
 const CONTRACT_TYPE_LABEL: Record<string, string> = {
   FULL_TIME: '정규직', CONTRACT: '계약직', DISPATCHED: '파견', INTERN: '인턴/수습', EXECUTIVE: '임원', OTHER: '기타',
 }
-const MASTER_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
-  ACTIVE:   { label: '재직', cls: 'bg-emerald-50 text-emerald-700' },
-  ON_LEAVE: { label: '휴직', cls: 'bg-amber-50 text-amber-700' },
-  RESIGNED: { label: '퇴사', cls: 'bg-gray-100 text-gray-500' },
+
+type UnifiedStatus = 'ACTIVE' | 'ON_LEAVE' | 'RESIGNED' | 'REVIEW_RESIGN' | 'REVIEW_PARTTIME'
+
+const STATUS_LABEL: Record<UnifiedStatus, { label: string; cls: string }> = {
+  ACTIVE:           { label: '재직',   cls: 'bg-emerald-50 text-emerald-700' },
+  ON_LEAVE:         { label: '휴직',   cls: 'bg-amber-50 text-amber-700' },
+  RESIGNED:         { label: '퇴사',   cls: 'bg-gray-100 text-gray-500' },
+  REVIEW_RESIGN:    { label: '확인필요', cls: 'bg-red-50 text-red-700' },
+  REVIEW_PARTTIME:  { label: '확인필요', cls: 'bg-orange-50 text-orange-700' },
 }
-const ROSTER_PAGE_SIZE = 20
+
+interface UnifiedRow {
+  rawId:        string
+  name:         string
+  division:     string
+  team:         string
+  jobTitle:     string
+  contractType: string
+  hireDate:     string | null
+  resignedDate: string | null
+  status:       UnifiedStatus
+  note?:        string  // REVIEW_* 행에서 왜 확인이 필요한지
+  hasCapsMatch: boolean
+}
+
+function formatTenure(hireDate: string | null, endDate: string | null, today: string): string {
+  if (!hireDate) return '—'
+  const start = new Date(hireDate + 'T00:00')
+  const end   = new Date((endDate ?? today) + 'T00:00')
+  const days  = Math.round((end.getTime() - start.getTime()) / 86400000)
+  if (days < 0) return '—'
+  if (days < 31) return `${days}일`
+  const months = Math.floor(days / 30.4)
+  if (months < 12) return `${months}개월`
+  return `${Math.floor(months / 12)}년 ${months % 12}개월`
+}
 
 function EmptyNote({ text }: { text: string }) {
   return <p className="text-xs text-gray-400 text-center py-6">{text}</p>
 }
 
-type Tab = 'active' | 'resign' | 'parttime'
+type StatusFilter = 'ALL' | 'ACTIVE' | 'RESIGNED' | 'REVIEW'
 
 export default function EmployeesPage() {
   const { isLiveData } = useAttendanceSource()
@@ -67,8 +95,6 @@ export default function EmployeesPage() {
     () => buildMasterDiscrepancyRollup(masterActive, recentActiveRawIds, employees),
     [masterActive, recentActiveRawIds, employees],
   )
-  // CAPS_NOT_IN_MASTER는 최근 활동 여부를 안 따지므로(전체 CAPS 이력 기준), 최근 활동이
-  // 없는 사람은 "퇴사 추정" 쪽으로 보내고 여기선 최근 활동 있는 사람만 남긴다(중복 방지).
   const partTimerCandidates = useMemo(
     () => masterDiscrepancies.filter(d => d.type === 'CAPS_NOT_IN_MASTER' && recentActiveRawIds.has(d.rawId)),
     [masterDiscrepancies, recentActiveRawIds],
@@ -117,32 +143,81 @@ export default function EmployeesPage() {
     }
   }
 
-  const [rosterQuery, setRosterQuery] = useState('')
-  const [rosterPage, setRosterPage]   = useState(0)
-  const [selectedRosterRow, setSelectedRosterRow] = useState<RosterRow | null>(null)
-  const filteredRoster = useMemo(() => {
-    const active = roster.filter(r => r.status === 'ACTIVE')
-    const q = rosterQuery.trim().toLowerCase()
-    if (!q) return active
-    return active.filter(r =>
+  // ── 하나의 명단으로 합치기: 마스터(재직/휴직/퇴사) + 퇴사 확인 후보 + 파트타이머 확인 후보 ──
+  // resignationCandidates 중 inMaster=true인 사람은 roster에도 ACTIVE로 이미 있는 같은
+  // rawId라서, roster 쪽 행을 빼고 REVIEW_RESIGN 행 하나로 대체한다(중복 표시 방지).
+  const rosterByRawId = useMemo(() => new Map(roster.map(r => [r.rawId, r])), [roster])
+  const unifiedRows = useMemo<UnifiedRow[]>(() => {
+    const reviewRawIds = new Set([
+      ...resignationCandidates.map(c => c.rawId),
+      ...partTimerCandidates.map(d => d.rawId),
+    ])
+    const rows: UnifiedRow[] = roster
+      .filter(r => !reviewRawIds.has(r.rawId))
+      .map(r => ({
+        rawId: r.rawId, name: r.name, division: r.division, team: r.team,
+        jobTitle: r.jobTitle, contractType: r.contractType,
+        hireDate: r.hireDate, resignedDate: r.resignedDate,
+        status: r.status as UnifiedStatus,
+        hasCapsMatch: rawIdToEmployeeId.has(r.rawId),
+      }))
+    for (const c of resignationCandidates) {
+      const known = rosterByRawId.get(c.rawId)  // inMaster=true면 부서/직책 등 실제 값을 채울 수 있음
+      rows.push({
+        rawId: c.rawId, name: c.name, division: known?.division ?? c.division, team: known?.team ?? '',
+        jobTitle: known?.jobTitle ?? '', contractType: known?.contractType ?? '',
+        hireDate: known?.hireDate ?? null, resignedDate: c.resignedFrom ?? null,
+        status: 'REVIEW_RESIGN',
+        note: c.inMaster ? '조직도엔 있음 · 최근 활동 없음' : '조직도에도 없음 · 최근 활동 없음',
+        hasCapsMatch: rawIdToEmployeeId.has(c.rawId),
+      })
+    }
+    for (const d of partTimerCandidates) {
+      rows.push({
+        rawId: d.rawId, name: d.name, division: d.division, team: '',
+        jobTitle: '', contractType: '', hireDate: null, resignedDate: null,
+        status: 'REVIEW_PARTTIME', note: d.detail,
+        hasCapsMatch: rawIdToEmployeeId.has(d.rawId),
+      })
+    }
+    return rows.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+  }, [roster, resignationCandidates, partTimerCandidates, rawIdToEmployeeId, rosterByRawId])
+
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL')
+  const [page, setPage] = useState(0)
+  const [selectedRow, setSelectedRow] = useState<UnifiedRow | null>(null)
+
+  const filteredRows = useMemo(() => {
+    let rows = unifiedRows
+    if (statusFilter === 'ACTIVE')   rows = rows.filter(r => r.status === 'ACTIVE' || r.status === 'ON_LEAVE')
+    if (statusFilter === 'RESIGNED') rows = rows.filter(r => r.status === 'RESIGNED')
+    if (statusFilter === 'REVIEW')   rows = rows.filter(r => r.status === 'REVIEW_RESIGN' || r.status === 'REVIEW_PARTTIME')
+    const q = query.trim().toLowerCase()
+    if (!q) return rows
+    return rows.filter(r =>
       r.name.toLowerCase().includes(q) ||
       r.division.toLowerCase().includes(q) ||
-      r.team.toLowerCase().includes(q) ||
       r.rawId.toLowerCase().includes(q),
     )
-  }, [roster, rosterQuery])
-  const rosterPageCount = Math.max(1, Math.ceil(filteredRoster.length / ROSTER_PAGE_SIZE))
-  const rosterSafePage  = Math.min(rosterPage, rosterPageCount - 1)
-  const pageRoster = filteredRoster.slice(
-    rosterSafePage * ROSTER_PAGE_SIZE, rosterSafePage * ROSTER_PAGE_SIZE + ROSTER_PAGE_SIZE,
-  )
-  const selectedRosterRecords = useMemo(() => {
-    if (!selectedRosterRow) return []
-    const employeeId = rawIdToEmployeeId.get(selectedRosterRow.rawId)
-    return employeeId ? records.filter(r => r.employeeId === employeeId) : []
-  }, [selectedRosterRow, rawIdToEmployeeId, records])
+  }, [unifiedRows, statusFilter, query])
 
-  const [tab, setTab] = useState<Tab>('active')
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE))
+  const safePage  = Math.min(page, pageCount - 1)
+  const pageRows  = filteredRows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE)
+
+  const selectedRosterRow: RosterRow | null = selectedRow ? {
+    rawId: selectedRow.rawId, name: selectedRow.name, division: selectedRow.division, team: selectedRow.team,
+    jobTitle: selectedRow.jobTitle, contractType: selectedRow.contractType, status: selectedRow.status,
+    hireDate: selectedRow.hireDate, resignedDate: selectedRow.resignedDate,
+  } : null
+  const selectedRecords = useMemo(() => {
+    if (!selectedRow) return []
+    const employeeId = rawIdToEmployeeId.get(selectedRow.rawId)
+    return employeeId ? records.filter(r => r.employeeId === employeeId) : []
+  }, [selectedRow, rawIdToEmployeeId, records])
+
+  const knownResignCount = resignationCandidates.filter(c => c.resignedFrom).length
 
   if (!isLiveData) {
     return (
@@ -153,215 +228,144 @@ export default function EmployeesPage() {
   }
 
   return (
-    <div className="p-6 space-y-5 max-w-6xl">
-      <div>
-        <h1 className="text-lg font-bold text-gray-900">사원 명단</h1>
-        <p className="text-xs text-gray-400 mt-0.5">
-          조직도 시트 기준 재직자 관리 · 퇴사 처리 · 파트타이머 확인 (최근 {WINDOW_DAYS}일 CAPS 활동 기준)
-        </p>
-      </div>
-
-      {/* ── 탭: 개수가 곧 요약 ── */}
-      <div className="flex bg-gray-100 rounded-lg p-0.5 w-fit">
-        {([
-          { key: 'active',   label: '재직 중',       count: roster.filter(r => r.status === 'ACTIVE').length },
-          { key: 'resign',   label: '퇴사 처리 필요', count: resignationCandidates.length },
-          { key: 'parttime', label: '파트타이머 확인', count: partTimerCandidates.length },
-        ] as const).map(t => (
+    <div className="p-6 space-y-4 max-w-6xl">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-lg font-bold text-gray-900">사원 명단</h1>
+          <p className="text-xs text-gray-400 mt-0.5">
+            조직도 시트 + CAPS 대조 (최근 {WINDOW_DAYS}일 활동 기준) — 전체 {unifiedRows.length}명
+          </p>
+        </div>
+        {knownResignCount > 0 && (
           <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              tab === t.key ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}
+            onClick={bulkApplyKnownResignations}
+            disabled={isBulkApplying}
+            className="px-2.5 py-1.5 text-[11px] font-semibold text-red-600 bg-white border border-red-200 rounded-md hover:bg-red-50 disabled:opacity-40 transition-colors"
           >
-            {t.label} <span className="tabular-nums">{t.count}</span>
+            {isBulkApplying ? '반영 중…' : `예외규칙 등록된 ${knownResignCount}명 일괄 반영`}
           </button>
-        ))}
+        )}
       </div>
 
-      {/* ── 재직 중 ── */}
-      {tab === 'active' && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
-          <input
-            type="text"
-            value={rosterQuery}
-            onChange={e => { setRosterQuery(e.target.value); setRosterPage(0) }}
-            placeholder="이름·부서·팀·사번으로 검색…"
-            className="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg
-              focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          {pageRoster.length === 0 ? (
-            <EmptyNote text="검색 결과가 없습니다." />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-gray-100 text-gray-400">
-                    <th className="text-left py-2 font-medium">이름</th>
-                    <th className="text-left py-2 font-medium">부서</th>
-                    <th className="text-left py-2 font-medium">팀</th>
-                    <th className="text-left py-2 font-medium">직급</th>
-                    <th className="text-left py-2 font-medium">계약형태</th>
-                    <th className="text-left py-2 font-medium">재직상태</th>
-                    <th className="text-left py-2 font-medium">입사일</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {pageRoster.map(row => {
-                    const statusInfo = MASTER_STATUS_LABEL[row.status] ?? { label: row.status, cls: 'bg-gray-100 text-gray-500' }
-                    const hasCapsMatch = rawIdToEmployeeId.has(row.rawId)
-                    return (
-                      <tr
-                        key={row.rawId}
-                        onClick={() => setSelectedRosterRow(row)}
-                        className="hover:bg-gray-50/70 cursor-pointer"
-                        title={hasCapsMatch ? '클릭하면 개인별 근태 상세정보' : 'CAPS 출퇴근 데이터 없음(조직정보만 표시됨)'}
+      {/* ── 검색 + 상태 필터 ── */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          type="text"
+          value={query}
+          onChange={e => { setQuery(e.target.value); setPage(0) }}
+          placeholder="이름·부서·사번으로 검색…"
+          className="flex-1 min-w-[200px] px-3 py-2 text-xs border border-gray-200 rounded-lg
+            focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <select
+          value={statusFilter}
+          onChange={e => { setStatusFilter(e.target.value as StatusFilter); setPage(0) }}
+          className="px-3 py-2 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="ALL">전체 상태</option>
+          <option value="ACTIVE">재직/휴직만</option>
+          <option value="RESIGNED">퇴사만</option>
+          <option value="REVIEW">확인필요만</option>
+        </select>
+      </div>
+
+      {/* ── 통합 명단 ── */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        {pageRows.length === 0 ? (
+          <EmptyNote text="검색 결과가 없습니다." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-gray-400">
+                  <th className="text-left px-4 py-2.5 font-medium">사번</th>
+                  <th className="text-left px-4 py-2.5 font-medium">이름</th>
+                  <th className="text-left px-4 py-2.5 font-medium">부서</th>
+                  <th className="text-left px-4 py-2.5 font-medium">직책</th>
+                  <th className="text-left px-4 py-2.5 font-medium">고용형태</th>
+                  <th className="text-left px-4 py-2.5 font-medium">입사일</th>
+                  <th className="text-left px-4 py-2.5 font-medium">퇴직일</th>
+                  <th className="text-left px-4 py-2.5 font-medium">재직기간</th>
+                  <th className="text-left px-4 py-2.5 font-medium">상태</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {pageRows.map(row => {
+                  const statusInfo = STATUS_LABEL[row.status]
+                  const isReviewResign = row.status === 'REVIEW_RESIGN'
+                  const draft = resignationDateDrafts[row.rawId] ?? row.resignedDate ?? ''
+                  return (
+                    <tr key={row.rawId} className="hover:bg-gray-50/70">
+                      <td className="px-4 py-2 text-gray-400 font-mono">{row.rawId}</td>
+                      <td
+                        className="px-4 py-2 font-medium text-gray-800 cursor-pointer"
+                        onClick={() => setSelectedRow(row)}
+                        title={row.hasCapsMatch ? '클릭하면 개인별 근태 상세정보' : 'CAPS 출퇴근 데이터 없음(조직정보만 표시됨)'}
                       >
-                        <td className="py-1.5 font-medium text-gray-800">{row.name}</td>
-                        <td className="py-1.5 text-gray-500">{row.division}</td>
-                        <td className="py-1.5 text-gray-500">{row.team || '—'}</td>
-                        <td className="py-1.5 text-gray-500">{row.jobTitle || '—'}</td>
-                        <td className="py-1.5 text-gray-500">{CONTRACT_TYPE_LABEL[row.contractType] ?? row.contractType}</td>
-                        <td className="py-1.5">
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusInfo.cls}`}>{statusInfo.label}</span>
-                        </td>
-                        <td className="py-1.5 text-gray-400 tabular-nums">{row.hireDate ?? '—'}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-              <PaginationBar
-                page={rosterSafePage}
-                pageCount={rosterPageCount}
-                onPageChange={setRosterPage}
-                startItem={rosterSafePage * ROSTER_PAGE_SIZE + 1}
-                endItem={Math.min((rosterSafePage + 1) * ROSTER_PAGE_SIZE, filteredRoster.length)}
-                totalCount={filteredRoster.length}
-                unit="명"
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── 퇴사 처리 필요 ── */}
-      {tab === 'resign' && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-400">
-              조직도에도 없고 최근 {WINDOW_DAYS}일간 CAPS 활동도 없는 사람 — 예외규칙에 등록된 날짜가 있으면 미리 채워둠
-            </p>
-            {resignationCandidates.some(c => c.resignedFrom) && (
-              <button
-                onClick={bulkApplyKnownResignations}
-                disabled={isBulkApplying}
-                className="px-2.5 py-1 text-[11px] font-semibold text-red-600 bg-white border border-red-200 rounded-md hover:bg-red-50 disabled:opacity-40 transition-colors shrink-0 ml-3"
-              >
-                {isBulkApplying ? '반영 중…' : `예외규칙 등록된 ${resignationCandidates.filter(c => c.resignedFrom).length}명 일괄 반영`}
-              </button>
-            )}
-          </div>
-          {resignationCandidates.length === 0 ? (
-            <EmptyNote text="퇴사 확인이 필요한 인원이 없습니다." />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-gray-100 text-gray-400">
-                    <th className="text-left py-2 font-medium">이름</th>
-                    <th className="text-left py-2 font-medium">부서</th>
-                    <th className="text-left py-2 font-medium">사원번호</th>
-                    <th className="text-left py-2 font-medium">상태</th>
-                    <th className="text-left py-2 font-medium">퇴사일</th>
-                    <th className="text-left py-2 font-medium"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {resignationCandidates.map(c => {
-                    const draft = resignationDateDrafts[c.rawId] ?? c.resignedFrom ?? ''
-                    return (
-                      <tr key={c.rawId} className="hover:bg-gray-50/70">
-                        <td className="py-1.5 font-medium text-gray-800">{c.name}</td>
-                        <td className="py-1.5 text-gray-500">{c.division}</td>
-                        <td className="py-1.5 text-gray-400 tabular-nums">{c.rawId}</td>
-                        <td className="py-1.5">
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                            c.inMaster ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-500'
-                          }`}>
-                            {c.inMaster ? '조직도엔 있음' : '조직도에도 없음'}
-                          </span>
-                          {c.resignedFrom && (
-                            <span className="ml-1.5 text-[10px] text-emerald-600">예외규칙 등록됨</span>
-                          )}
-                        </td>
-                        <td className="py-1.5">
-                          <input
-                            type="date"
-                            value={draft}
-                            onChange={e => setResignationDateDrafts(prev => ({ ...prev, [c.rawId]: e.target.value }))}
-                            className="text-xs border border-gray-200 rounded px-1.5 py-0.5"
-                          />
-                        </td>
-                        <td className="py-1.5">
-                          <button
-                            disabled={!draft}
-                            onClick={() => confirmResignation(c, draft)}
-                            className="px-2 py-1 text-[11px] font-semibold text-red-600 bg-white border border-red-200 rounded-md hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                          >
-                            {c.resignedFrom ? '반영' : '퇴사 확정'}
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── 파트타이머 확인 필요 ── */}
-      {tab === 'parttime' && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-3">
-          <p className="text-xs text-gray-400">최근 {WINDOW_DAYS}일간 CAPS 활동은 있는데 조직도 마스터엔 없는 사람</p>
-          {partTimerCandidates.length === 0 ? (
-            <EmptyNote text="확인이 필요한 인원이 없습니다." />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-gray-100 text-gray-400">
-                    <th className="text-left py-2 font-medium">이름</th>
-                    <th className="text-left py-2 font-medium">부서</th>
-                    <th className="text-left py-2 font-medium">사원번호</th>
-                    <th className="text-left py-2 font-medium">내용</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {partTimerCandidates.map(d => (
-                    <tr key={d.rawId} className="hover:bg-gray-50/70">
-                      <td className="py-1.5 font-medium text-gray-800">{d.name}</td>
-                      <td className="py-1.5 text-gray-500">{d.division}</td>
-                      <td className="py-1.5 text-gray-400 tabular-nums">{d.rawId}</td>
-                      <td className="py-1.5 text-gray-500">{d.detail}</td>
+                        {row.name}
+                      </td>
+                      <td className="px-4 py-2 text-gray-500">
+                        {[row.division, row.team].filter(Boolean).join(' · ') || '—'}
+                      </td>
+                      <td className="px-4 py-2 text-gray-500">{row.jobTitle || '—'}</td>
+                      <td className="px-4 py-2 text-gray-500">{CONTRACT_TYPE_LABEL[row.contractType] ?? row.contractType ?? '—'}</td>
+                      <td className="px-4 py-2 text-gray-500 tabular-nums">{row.hireDate ?? '—'}</td>
+                      <td className="px-4 py-2">
+                        {isReviewResign ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="date"
+                              value={draft}
+                              onChange={e => setResignationDateDrafts(prev => ({ ...prev, [row.rawId]: e.target.value }))}
+                              className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[112px]"
+                            />
+                            <button
+                              disabled={!draft}
+                              onClick={() => confirmResignation(row, draft)}
+                              className="px-1.5 py-0.5 text-[10px] font-semibold text-red-600 bg-white border border-red-200 rounded hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+                            >
+                              {row.resignedDate ? '반영' : '확정'}
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-gray-500 tabular-nums">{row.resignedDate ?? '—'}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-gray-500 tabular-nums">
+                        {row.status === 'REVIEW_PARTTIME' ? '—' : formatTenure(row.hireDate, row.resignedDate, today)}
+                      </td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusInfo.cls}`}
+                          title={row.note}
+                        >
+                          {statusInfo.label}
+                        </span>
+                      </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
+                  )
+                })}
+              </tbody>
+            </table>
+            <PaginationBar
+              page={safePage}
+              pageCount={pageCount}
+              onPageChange={setPage}
+              startItem={safePage * PAGE_SIZE + 1}
+              endItem={Math.min((safePage + 1) * PAGE_SIZE, filteredRows.length)}
+              totalCount={filteredRows.length}
+              unit="명"
+            />
+          </div>
+        )}
+      </div>
 
       {selectedRosterRow && (
         <EmployeeDetailModal
           row={selectedRosterRow}
-          records={selectedRosterRecords}
+          records={selectedRecords}
           periodLabel={`최근 ${WINDOW_DAYS}일`}
-          onClose={() => setSelectedRosterRow(null)}
+          onClose={() => setSelectedRow(null)}
         />
       )}
     </div>
