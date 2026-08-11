@@ -182,14 +182,124 @@ const DETAIL_COL_DEFS: DetailColDef[] = [
   { id: 'attendanceStatus', header: '근태상태',        wch: 8  },
   { id: 'normalTags',       header: '정상정보',        wch: 14 },
   { id: 'anomalyTags',      header: '비정상정보',      wch: 18 },
-  { id: 'payOtherH',   header: '급여용 소정외',   wch: 14 },
-  { id: 'payOtH',      header: '급여용 법정연장', wch: 14 },
-  { id: 'payNightH',   header: '급여용 야간',     wch: 14 },
+  { id: 'payOtherH',   header: '소정외',          wch: 14 },
+  { id: 'payOtH',      header: '법정연장',        wch: 14 },
+  { id: 'payNightH',   header: '야간',            wch: 14 },
   { id: 'otherH',      header: '소정외',          wch: 10 },
   { id: 'otH',         header: '법정연장',        wch: 10 },
   { id: 'nightH',      header: '야간',            wch: 10 },
   { id: 'erpOtApplied', header: '연장신청',       wch: 12 },
 ]
+
+// 화면 테이블(AttendanceResultTable.tsx)의 급여용/실계산 2단 그룹 헤더와 동일한 구분을
+// 엑셀에도 반영하기 위한 그룹 정의.
+const PAY_GROUP_IDS = new Set(['payOtherH', 'payOtH', 'payNightH'])
+const RAW_GROUP_IDS = new Set(['otherH', 'otH', 'nightH'])
+
+interface ColSpan { start: number; end: number }
+
+function findGroupSpan(activeCols: DetailColDef[], ids: Set<string>): ColSpan | null {
+  const idxs: number[] = []
+  activeCols.forEach((c, i) => { if (ids.has(c.id)) idxs.push(i) })
+  return idxs.length ? { start: idxs[0], end: idxs[idxs.length - 1] } : null
+}
+
+/** row1(서브헤더) 스타일 — 기존 단일행 헤더와 동일한 네이비. */
+function styleDetailSubHeader(ws: XLSX.WorkSheet, r: number, c: number) {
+  cs(ws, r, c, {
+    font:      { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 },
+    fill:      { patternType: 'solid', fgColor: { rgb: '1F3864' } },
+    alignment: { horizontal: 'center', vertical: 'center' },
+  })
+}
+
+/**
+ * "근태결과" 시트를 2행 헤더로 빌드한다 — row0: 급여용/실계산(원본) 그룹 라벨(가로 병합),
+ * 그 외 컬럼은 row0:row1 세로 병합으로 기존처럼 한 줄 헤더로 보이게 함. row1: 그룹 내
+ * 개별 컬럼명. exportXlsx/exportTableXlsx가 rowData 구성만 다르게 하고 공유한다.
+ */
+function buildDetailSheet(
+  activeCols: DetailColDef[],
+  detailRows: unknown[][],
+): XLSX.WorkSheet {
+  const paySpan = findGroupSpan(activeCols, PAY_GROUP_IDS)
+  const rawSpan = findGroupSpan(activeCols, RAW_GROUP_IDS)
+  const inSpan  = (i: number, span: ColSpan | null) => span != null && i >= span.start && i <= span.end
+  const inGroup = (i: number) => inSpan(i, paySpan) || inSpan(i, rawSpan)
+
+  const groupRow: (string | null)[] = activeCols.map((c, i) => {
+    if (paySpan && i === paySpan.start) return '급여용'
+    if (rawSpan && i === rawSpan.start) return '실계산 (원본)'
+    return inGroup(i) ? null : c.header
+  })
+  const subRow: (string | null)[] = activeCols.map((c, i) => inGroup(i) ? c.header : null)
+
+  const wsDetail = XLSX.utils.aoa_to_sheet([groupRow, subRow, ...detailRows])
+
+  const merges: XLSX.Range[] = []
+  if (paySpan && paySpan.start !== paySpan.end) merges.push({ s: { r: 0, c: paySpan.start }, e: { r: 0, c: paySpan.end } })
+  if (rawSpan && rawSpan.start !== rawSpan.end) merges.push({ s: { r: 0, c: rawSpan.start }, e: { r: 0, c: rawSpan.end } })
+  activeCols.forEach((_c, i) => {
+    if (!inGroup(i)) merges.push({ s: { r: 0, c: i }, e: { r: 1, c: i } })
+  })
+  wsDetail['!merges'] = merges
+
+  // 날짜 포맷 (근무일자 컬럼) — 헤더가 2행이라 데이터는 row index 2부터 시작
+  const dateColIdx = activeCols.findIndex(c => c.id === 'date')
+  if (dateColIdx >= 0) {
+    for (let i = 0; i < detailRows.length; i++) {
+      const ref = XLSX.utils.encode_cell({ r: i + 2, c: dateColIdx })
+      if (wsDetail[ref]) wsDetail[ref].z = 'yyyy-mm-dd'
+    }
+  }
+
+  // 숫자 포맷 (0.00)
+  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'stayH', 'realWorkH', 'finalWorkH', 'payOtherH', 'payOtH', 'payNightH', 'otherH', 'otH', 'nightH'])
+  const numericColIndices = activeCols
+    .map((c, i) => ({ id: c.id, idx: i }))
+    .filter(({ id }) => NUMERIC_COL_IDS.has(id))
+
+  for (let rowIdx = 0; rowIdx < detailRows.length; rowIdx++) {
+    for (const { idx } of numericColIndices) {
+      const ref = XLSX.utils.encode_cell({ r: rowIdx + 2, c: idx })
+      if (wsDetail[ref] && typeof wsDetail[ref].v === 'number') {
+        wsDetail[ref].t = 'n'
+        wsDetail[ref].z = '0.00'
+      }
+    }
+  }
+
+  wsDetail['!cols'] = activeCols.map(c => ({ wch: c.wch }))
+
+  // 헤더 스타일 — 그룹 라벨(급여용=amber, 실계산=gray) / 그 외 네이비
+  activeCols.forEach((_c, i) => {
+    if (paySpan && i === paySpan.start) {
+      cs(wsDetail, 0, i, {
+        font:      { bold: true, color: { rgb: '7A4A00' }, sz: 10 },
+        fill:      { patternType: 'solid', fgColor: { rgb: 'FDECC8' } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+      })
+    } else if (rawSpan && i === rawSpan.start) {
+      cs(wsDetail, 0, i, {
+        font:      { bold: true, color: { rgb: '404040' }, sz: 10 },
+        fill:      { patternType: 'solid', fgColor: { rgb: 'E5E5E5' } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+      })
+    } else if (!inGroup(i)) {
+      styleDetailSubHeader(wsDetail, 0, i)
+    }
+    if (inGroup(i)) styleDetailSubHeader(wsDetail, 1, i)
+  })
+
+  // 데이터 행: 홀짝 줄무늬 (헤더 2행만큼 시작 행 보정, 줄무늬 패턴 자체는 기존과 동일)
+  styleBlock(wsDetail, 2, detailRows.length, activeCols.length, (r, _c, _v) => ({
+    fill:      { patternType: 'solid', fgColor: { rgb: (r - 2) % 2 === 0 ? 'FFFFFF' : 'F5F8FF' } },
+    font:      { sz: 9, color: { rgb: '333333' } },
+    alignment: { vertical: 'center' },
+  }))
+
+  return wsDetail
+}
 
 function buildDetailRowData(
   r:     ProcessedRecord,
@@ -314,47 +424,7 @@ export function exportXlsx(
     return activeCols.map(c => rowData[c.id] ?? null)
   })
 
-  const wsDetail = XLSX.utils.aoa_to_sheet([
-    activeCols.map(c => c.header),
-    ...detailRows,
-  ])
-
-  // Apply date format to the 근무일자 column
-  const dateColIdx = activeCols.findIndex(c => c.id === 'date')
-  if (dateColIdx >= 0) {
-    const letter = String.fromCharCode(65 + dateColIdx)
-    for (let i = 0; i < sorted.length; i++) {
-      const ref = `${letter}${i + 2}`
-      if (wsDetail[ref]) wsDetail[ref].z = 'yyyy-mm-dd'
-    }
-  }
-
-  // Apply 0.00 number format to all numeric columns
-  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'stayH', 'realWorkH', 'finalWorkH', 'payOtherH', 'payOtH', 'payNightH', 'otherH', 'otH', 'nightH'])
-  const numericColIndices = activeCols
-    .map((c, i) => ({ id: c.id, idx: i }))
-    .filter(({ id }) => NUMERIC_COL_IDS.has(id))
-
-  for (let rowIdx = 0; rowIdx < sorted.length; rowIdx++) {
-    for (const { idx } of numericColIndices) {
-      const ref = XLSX.utils.encode_cell({ r: rowIdx + 1, c: idx })
-      if (wsDetail[ref] && typeof wsDetail[ref].v === 'number') {
-        wsDetail[ref].t = 'n'
-        wsDetail[ref].z = '0.00'
-      }
-    }
-  }
-
-  wsDetail['!cols'] = activeCols.map(c => ({ wch: c.wch }))
-
-  // 근태결과 헤더 스타일 (네이비)
-  styleHeader(wsDetail, activeCols.length, '1F3864')
-  // 데이터 행: 홀짝 줄무늬
-  styleBlock(wsDetail, 1, sorted.length, activeCols.length, (r, _c, _v) => ({
-    fill:      { patternType: 'solid', fgColor: { rgb: r % 2 === 0 ? 'F5F8FF' : 'FFFFFF' } },
-    font:      { sz: 9, color: { rgb: '333333' } },
-    alignment: { vertical: 'center' },
-  }))
+  const wsDetail = buildDetailSheet(activeCols, detailRows)
 
   // ── Sheet 2: 요약 ──────────────────────────────────────────────────────
 
@@ -602,42 +672,7 @@ export function exportTableXlsx(
     return activeCols.map(c => rowData[c.id] ?? null)
   })
 
-  const wsDetail = XLSX.utils.aoa_to_sheet([
-    activeCols.map(c => c.header),
-    ...detailRows,
-  ])
-
-  const dateColIdx = activeCols.findIndex(c => c.id === 'date')
-  if (dateColIdx >= 0) {
-    const letter = String.fromCharCode(65 + dateColIdx)
-    for (let i = 0; i < sortedRows.length; i++) {
-      const ref = `${letter}${i + 2}`
-      if (wsDetail[ref]) wsDetail[ref].z = 'yyyy-mm-dd'
-    }
-  }
-
-  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'stayH', 'realWorkH', 'finalWorkH', 'payOtherH', 'payOtH', 'payNightH', 'otherH', 'otH', 'nightH'])
-  const numericColIndices = activeCols
-    .map((c, i) => ({ id: c.id, idx: i }))
-    .filter(({ id }) => NUMERIC_COL_IDS.has(id))
-
-  for (let rowIdx = 0; rowIdx < sortedRows.length; rowIdx++) {
-    for (const { idx } of numericColIndices) {
-      const ref = XLSX.utils.encode_cell({ r: rowIdx + 1, c: idx })
-      if (wsDetail[ref] && typeof wsDetail[ref].v === 'number') {
-        wsDetail[ref].t = 'n'
-        wsDetail[ref].z = '0.00'
-      }
-    }
-  }
-
-  wsDetail['!cols'] = activeCols.map(c => ({ wch: c.wch }))
-  styleHeader(wsDetail, activeCols.length, '1F3864')
-  styleBlock(wsDetail, 1, sortedRows.length, activeCols.length, (r, _c, _v) => ({
-    fill:      { patternType: 'solid', fgColor: { rgb: r % 2 === 0 ? 'F5F8FF' : 'FFFFFF' } },
-    font:      { sz: 9, color: { rgb: '333333' } },
-    alignment: { vertical: 'center' },
-  }))
+  const wsDetail = buildDetailSheet(activeCols, detailRows)
 
   // ── Sheet 2: 요약 (exportXlsx와 동일 로직 — ProcessedRecord 기준 카테고리 집계) ──
 

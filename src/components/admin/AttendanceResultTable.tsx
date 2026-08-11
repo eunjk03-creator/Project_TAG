@@ -230,8 +230,14 @@ const col = createColumnHelper<GridRow>()
 
 // 섹션 경계 — 이 컬럼들 왼쪽에 굵은 구분선 (출퇴근|연차정보|체류/근무|근태상태|급여용|원본|연장신청)
 const SECTION_BOUNDARY_COLS = new Set([
-  'leaveAmt', 'stayH', 'attendanceStatus', 'payOtherH', 'otherH', 'erpOtApplied',
+  'leaveAmt', 'stayH', 'attendanceStatus', 'payGroup', 'payOtherH', 'rawGroup', 'otherH', 'erpOtApplied',
 ])
+
+// 급여용/실계산 그룹 헤더 배경 틴트
+const GROUP_TINT: Record<string, string> = {
+  payGroup: 'bg-amber-50/70',
+  rawGroup: 'bg-gray-100/70',
+}
 
 // ── Inline filter popup (rendered via portal to escape overflow clip) ──────
 
@@ -716,42 +722,54 @@ export function AttendanceResultTable({
       },
     }),
     // ── 급여용 (11~13): ERP 연장신청 승인 게이트 + 30분 절삭, 직책 구분 없음 ──
-    col.accessor('payOtherH', {
-      id: 'payOtherH', header: () => <ColTip label="급여용 소정외" tip="소정외(1.0x)를 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
-      cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-xs font-semibold text-amber-600">{fmtH(i.getValue())}</span>
-        : <span className="text-gray-300">—</span>,
-    }),
-    col.accessor('payOtH', {
-      id: 'payOtH', header: () => <ColTip label="급여용 법정연장" tip="법정연장(1.5x)을 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
-      cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
-        : <span className="text-gray-300">—</span>,
-    }),
-    col.accessor('payNightH', {
-      id: 'payNightH', header: () => <ColTip label="급여용 야간" tip="야간(+0.5x)을 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
-      cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-xs font-semibold text-indigo-600">{fmtH(i.getValue())}</span>
-        : <span className="text-gray-300">—</span>,
+    col.group({
+      id: 'payGroup',
+      header: () => <ColTip label="급여용" tip="ERP 연장신청 승인 게이트 + 30분 단위 절삭 (실계산과 비교용)" />,
+      columns: [
+        col.accessor('payOtherH', {
+          id: 'payOtherH', header: () => <ColTip label="소정외" tip="소정외(1.0x)를 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
+          cell: i => i.getValue() > 0
+            ? <span className="tabular-nums text-xs font-semibold text-amber-600">{fmtH(i.getValue())}</span>
+            : <span className="text-gray-300">—</span>,
+        }),
+        col.accessor('payOtH', {
+          id: 'payOtH', header: () => <ColTip label="법정연장" tip="법정연장(1.5x)을 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
+          cell: i => i.getValue() > 0
+            ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
+            : <span className="text-gray-300">—</span>,
+        }),
+        col.accessor('payNightH', {
+          id: 'payNightH', header: () => <ColTip label="야간" tip="야간(+0.5x)을 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
+          cell: i => i.getValue() > 0
+            ? <span className="tabular-nums text-xs font-semibold text-indigo-600">{fmtH(i.getValue())}</span>
+            : <span className="text-gray-300">—</span>,
+        }),
+      ],
     }),
     // ── 원본(14~16): 1분 단위 정밀, 절삭·게이트 없음 ──────────────────────
-    col.accessor('otherH', {
-      id: 'otherH', header: () => <ColTip label="소정외" tip="실근무가 소정근로(8h−크레딧)를 넘어 8h까지의 구간, 1분 단위" />, size: 80, minSize: 65,
-      cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-xs font-medium text-amber-500">{fmtH(i.getValue())}</span>
-        : <span className="text-gray-300">—</span>,
-    }),
-    col.accessor('otH', {
-      id: 'otH', header: () => <ColTip label="법정연장" tip="실근무 8h 초과분, 1분 단위 (휴일근무는 기존 휴일근로 인정시간)" />, size: 80, minSize: 65,
-      cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-xs font-medium text-red-500">{fmtH(i.getValue())}</span>
-        : <span className="text-gray-300">—</span>,
-    }),
-    col.accessor('nightH', {
-      id: 'nightH', header: () => <ColTip label="야간" tip="22:00~익일06:00 실제 겹침, 1분 단위" />, size: 80, minSize: 65,
-      cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-xs font-medium text-indigo-500">{fmtH(i.getValue())}</span>
-        : <span className="text-gray-300">—</span>,
+    col.group({
+      id: 'rawGroup',
+      header: () => <ColTip label="실계산 (원본)" tip="절삭·게이트 없는 1분 단위 정밀 계산값 (급여용과 비교용)" />,
+      columns: [
+        col.accessor('otherH', {
+          id: 'otherH', header: () => <ColTip label="소정외" tip="실근무가 소정근로(8h−크레딧)를 넘어 8h까지의 구간, 1분 단위" />, size: 80, minSize: 65,
+          cell: i => i.getValue() > 0
+            ? <span className="tabular-nums text-xs font-medium text-amber-500">{fmtH(i.getValue())}</span>
+            : <span className="text-gray-300">—</span>,
+        }),
+        col.accessor('otH', {
+          id: 'otH', header: () => <ColTip label="법정연장" tip="실근무 8h 초과분, 1분 단위 (휴일근무는 기존 휴일근로 인정시간)" />, size: 80, minSize: 65,
+          cell: i => i.getValue() > 0
+            ? <span className="tabular-nums text-xs font-medium text-red-500">{fmtH(i.getValue())}</span>
+            : <span className="text-gray-300">—</span>,
+        }),
+        col.accessor('nightH', {
+          id: 'nightH', header: () => <ColTip label="야간" tip="22:00~익일06:00 실제 겹침, 1분 단위" />, size: 80, minSize: 65,
+          cell: i => i.getValue() > 0
+            ? <span className="tabular-nums text-xs font-medium text-indigo-500">{fmtH(i.getValue())}</span>
+            : <span className="text-gray-300">—</span>,
+        }),
+      ],
     }),
     col.accessor('erpOtStatus', {
       id: 'erpOtApplied', header: () => <ColTip label="연장신청" tip="신청했으면 무조건 신청, 신청대상(법정연장 발생)인데 미신청이면 미신청, 그 외(연장 미발생·휴일근로)는 —" />, size: 90, minSize: 75,
@@ -963,10 +981,13 @@ export function AttendanceResultTable({
           style={{ width: table.getCenterTotalSize(), minWidth: '100%' }}
         >
           <thead className="sticky top-0 z-20">
-            {table.getHeaderGroups().map(hg => (
+            {(() => {
+              const headerGroups   = table.getHeaderGroups()
+              const headerRowCount = headerGroups.length
+              return headerGroups.map((hg, hgIndex) => (
               <tr key={hg.id} className="bg-gray-50 border-b border-gray-200">
-                {onSelectionChange && (
-                  <th className="w-8 px-2 text-center sticky left-0 bg-gray-50 z-10">
+                {onSelectionChange && hgIndex === 0 && (
+                  <th className="w-8 px-2 text-center sticky left-0 bg-gray-50 z-10" rowSpan={headerRowCount}>
                     <input
                       type="checkbox"
                       checked={allSelected}
@@ -977,21 +998,42 @@ export function AttendanceResultTable({
                   </th>
                 )}
                 {hg.headers.map(header => {
+                  // 그룹(colSpan) 헤더가 아닌 leaf 컬럼의 placeholder — rowSpan으로 병합되는
+                  // 실제 셀은 다른 행에서 이미 렌더링되므로 여기선 셀 자체를 생략한다.
+                  if (header.isPlaceholder) return null
+
+                  // 급여용(payGroup) / 실계산(rawGroup) 그룹 헤더 — colSpan으로 하위 3개 컬럼을
+                  // 아우르는 라벨 행. 헷갈린다는 피드백으로 border만으로는 부족해 그룹 라벨 + 틴트 추가.
+                  const isGroup = header.subHeaders.length > 0
+                  const isGroupBoundary = SECTION_BOUNDARY_COLS.has(header.column.id)
+                  const rowSpan = isGroup ? 1 : headerRowCount - header.depth
+
+                  if (isGroup) {
+                    return (
+                      <th
+                        key={header.id}
+                        colSpan={header.colSpan}
+                        className={`px-2 py-1.5 text-[11px] text-gray-500 font-semibold text-center whitespace-nowrap select-none ${
+                          GROUP_TINT[header.column.id] ?? ''
+                        } ${isGroupBoundary ? 'border-l-2 border-l-gray-300' : ''}`}
+                      >
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                      </th>
+                    )
+                  }
+
                   const canFilter    = FILTERABLE.has(header.column.id)
                   const isFiltered   = header.column.getIsFiltered()
                   const isFilterOpen = filterAnchor?.columnId === header.column.id
 
-                  // 급여용(payOtherH/payOtH/payNightH) vs 원본(otherH/otH/nightH) 그룹 경계 —
-                  // 헷갈린다는 피드백으로 원본 그룹 시작 컬럼에 굵은 구분선 추가.
-                  const isGroupBoundary = SECTION_BOUNDARY_COLS.has(header.column.id)
-
                   return (
                     <th
                       key={header.id}
+                      rowSpan={rowSpan}
                       style={{ width: header.getSize(), position: 'relative' }}
                       className={`px-2 py-2.5 text-[11px] text-gray-500 whitespace-nowrap select-none font-semibold ${
                         isGroupBoundary ? 'border-l-2 border-l-gray-300' : ''
-                      }`}
+                      } ${GROUP_TINT[header.column.parent?.id ?? ''] ?? ''}`}
                     >
                       <div className="flex items-center gap-0.5">
                         {/* Sort area */}
@@ -1054,7 +1096,8 @@ export function AttendanceResultTable({
                   )
                 })}
               </tr>
-            ))}
+              ))
+            })()}
           </thead>
 
           <tbody>
