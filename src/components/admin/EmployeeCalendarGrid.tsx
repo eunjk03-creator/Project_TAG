@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds, EmployeeAttributeOverrides } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
-import { parseTimeToMins, compute4141BreakMins, computeVirtualInMins, isLeaderOnDate as isLeaderOnDateCore, computeDailyRecognizedHours, computeRealHoursOtForRecord, floorTo30 } from '@/utils/attendanceCalc'
+import { parseTimeToMins, computeVirtualInMins, isLeaderOnDate as isLeaderOnDateCore, computeDailyRecognizedHours, computeRealHoursOtForRecord } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
@@ -14,8 +14,9 @@ type SortDir = 'none' | 'asc' | 'desc'
 // ── Column widths ──────────────────────────────────────────────────────────
 const W_NAME       = 100  // +20 vs base 80 to fit the selection checkbox
 const W_ORG        = 108   // merged 본부 + 팀/부서 into a single stacked cell
-const W_RECOGNIZED = 72    // 인정근로 (신규)
-const W_TOTAL      = 72
+const W_REALWORK   = 72    // 실근무 (팩트)
+const W_TOTAL      = 60    // 총근로 (승인근무·원본)
+const W_RECOGNIZED = 60    // 인정근로 (승인근무·급여용)
 const W_OT         = 48    // 분리됨
 const W_NIGHT      = 48    // 추가됨
 const W_HOLIDAY    = 48    // 추가됨
@@ -227,21 +228,25 @@ export function EmployeeCalendarGrid({
   const [dropdownRect, setDropdownRect] = useState<DOMRect | null>(null)
   const [showAll,      setShowAll]      = useState(false)
   const [hoursFilter,  setHoursFilter]  = useState<'all' | 'over52' | 'over209'>('all')
-  // 실근로용(raw) 연장/야간/휴일 3열 — 기본 접힘, +/- 버튼으로 필요할 때만 펼침
+  // 실계산(원본)/급여용 두 그룹 모두 +/- 버튼으로 열고닫기 — 실계산은 기본 접힘, 급여용은 기본 펼침.
   const [showRawCols,  setShowRawCols]  = useState(false)
+  const [showPayCols,  setShowPayCols]  = useState(true)
 
-  // 인정근로 열이 항상 추가되고, 실근로용 3열은 토글에 따라 밀림 — sticky left 오프셋을
-  // state 의존으로 함수 스코프에서 계산 (모듈 상수였던 이전 L3~L4를 대체).
-  const L_RECOGNIZED = W_NAME + W_ORG                        // 인정근로   (신규)
-  const L3           = L_RECOGNIZED + W_RECOGNIZED           // 총 근로
-  const L_OT         = L3 + W_TOTAL                          // 연장(급여용)
-  const L_NIGHT      = L_OT + W_OT                           // 야간(급여용)
-  const L_HOLIDAY    = L_NIGHT + W_NIGHT                     // 휴일(급여용)
-  const L_ANOMALY    = L_HOLIDAY + W_HOLIDAY                 // 이상
-  const L_OT_RAW     = L_ANOMALY + W_ANOMALY                 // 연장(실근로용, 토글)
-  const L_NIGHT_RAW  = L_OT_RAW + W_OT_RAW                   // 야간(실근로용, 토글)
-  const L_HOLIDAY_RAW = L_NIGHT_RAW + W_NIGHT_RAW            // 휴일(실근로용, 토글)
-  const L4 = showRawCols ? (L_HOLIDAY_RAW + W_HOLIDAY_RAW) : (L_ANOMALY + W_ANOMALY)   // 구분
+  // 실근무/총근로/인정근로는 항상 노출, 실계산(원본)·급여용 두 그룹은 토글에 따라 밀림 —
+  // sticky left 오프셋을 state 의존으로 함수 스코프에서 계산.
+  const L_REALWORK   = W_NAME + W_ORG                        // 실근무 (팩트)
+  const L_TOTAL       = L_REALWORK + W_REALWORK               // 총근로 (승인근무·원본)
+  const L_RECOGNIZED = L_TOTAL + W_TOTAL                      // 인정근로 (승인근무·급여용)
+  const rawGroupW = showRawCols ? (W_OT_RAW + W_NIGHT_RAW + W_HOLIDAY_RAW) : 0
+  const payGroupW = showPayCols ? (W_OT + W_NIGHT + W_HOLIDAY) : 0
+  const L_OT_RAW      = L_RECOGNIZED + W_RECOGNIZED            // 연장·실 (실계산, 토글)
+  const L_NIGHT_RAW   = L_OT_RAW + W_OT_RAW                    // 야간·실 (실계산, 토글)
+  const L_HOLIDAY_RAW = L_NIGHT_RAW + W_NIGHT_RAW              // 휴일·실 (실계산, 토글)
+  const L_OT          = L_RECOGNIZED + W_RECOGNIZED + rawGroupW       // 연장(급여용, 토글)
+  const L_NIGHT       = L_OT + W_OT                            // 야간(급여용, 토글)
+  const L_HOLIDAY     = L_NIGHT + W_NIGHT                      // 휴일(급여용, 토글)
+  const L_ANOMALY     = L_RECOGNIZED + W_RECOGNIZED + rawGroupW + payGroupW   // 이상치
+  const L4            = L_ANOMALY + W_ANOMALY                  // 구분
 
   // Precompute the statutory ceiling once — used for filtering and bar rendering
   const maxLimit = getStatutoryLimit(dates.length)
@@ -288,13 +293,12 @@ const dateSet = useMemo(() => new Set(dates), [dates])
 
 const empStats = useMemo(() => {
   const stats: Record<string, {
-    total: number; nocreditTotal: number; rawTotal: number
-    ot: number; rawOt: number
-    night: number; rawNight: number
-    holiday: number; rawHoliday: number
     anomalies: number
-    // 실근무시간 기준 (신규) — recognized=인정근로, totalReal=총근로
-    recognized: number; totalReal: number
+    // 실근무시간 기준 — AttendanceResultTable.tsx와 동일한 computeRealHoursOtForRecord 재사용.
+    // realWork=실근무(팩트, 승인여부 무관), approvedRaw=승인근무(원본, 1분단위),
+    // approvedPay=승인근무(급여용, 30분절삭). 직책자는 payOtH/payNightH/approvedPay가
+    // 함수 내부에서 이미 0으로 고정됨(휴일 분기만 여기서 별도 처리, 아래 주석 참고).
+    realWork: number; approvedRaw: number; approvedPay: number
     otPay: number; nightPay: number; holidayPay: number
     otRaw: number; nightRaw: number; holidayRaw: number
   }> = {}
@@ -304,104 +308,29 @@ const empStats = useMemo(() => {
     // DB 예외규칙(leaderIdSet) OR 직급명 자동감지(emp.isLeader) 둘 다 인정 — 날짜 기준 판별
     const isLeaderOnDate = makeIsLeaderOnDate(emp.id)
 
-    let exactOt = 0, roundedOt = 0
-    let exactTotal = 0, roundedTotal = 0, nocreditTotal = 0
-    let exactNight = 0, roundedNight = 0
-
-    for (const r of recs) {
-      const leaveAmt       = r.erpLeaveAmount ?? 0
-      const isSlackInj     = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
-      const isErpApproved  = r.leaveType ? !isSlackInj : true
-      // r.effectiveClockIn(엔진이 계산한 값)을 그대로 사용 — 외근 09:00 동결 등 leaveType
-      // 기반 재계산(computeEffClockIn)이 모르는 보정까지 반영됨.
-      const effIn          = r.effectiveClockIn ?? r.clockIn
-      const ciRec          = effIn     ? parseTimeToMins(effIn)     : null
-      const ciExact     = r.clockIn ? parseTimeToMins(r.clockIn) : null
-      const co          = r.clockOut ? parseTimeToMins(r.clockOut) : null
-      const elRec       = (ciRec   !== null && co !== null) ? Math.max(0, co - ciRec)   : 0
-      const elExact     = (ciExact !== null && co !== null) ? Math.max(0, co - ciExact) : 0
-      const netRecMins  = Math.max(0, elRec   - compute4141BreakMins(elRec))
-      const netExactMins= Math.max(0, elExact - compute4141BreakMins(elExact))
-      const credit      = (!r.isUnpaidLeave && !isSlackInj) ? leaveAmt * 8 : 0
-      const netRecH     = netRecMins / 60
-
-      if (r.dayType === 'WEEKDAY') {
-        exactTotal += netExactMins / 60
-        // Button 3: virtualIn + 10h 기준 (ERP 가드·절삭 없음, 실제 출근 기준)
-        const viExact    = ciExact !== null ? computeVirtualInMins(ciExact, r.leaveType, isErpApproved) : 0
-        exactOt += (ciExact !== null && co !== null) ? Math.max(0, co - (viExact + 600)) / 60 : 0
-        exactNight    += r.nightHours ?? 0
-
-        if (isLeaderOnDate(r.date)) {
-          // 직책자: virtualIn + 10h 기준, 30분 절삭 없음
-          const vi         = ciRec !== null ? computeVirtualInMins(ciRec, r.leaveType, isErpApproved) : 0
-          const leaderOtH  = (ciRec !== null && co !== null) ? Math.max(0, co - (vi + 600)) / 60 : 0
-          roundedOt    += leaderOtH
-          roundedNight += r.nightHours ?? 0
-          roundedTotal  += netRecH + credit
-          nocreditTotal += netRecH
-        } else {
-          const approvedOt = r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
-          const stdH       = Math.min(netRecH, 8)
-          // 연장근로 발생일: 급여용 연장(approvedOt)이 이미 backtrack(반차보정)을 흡수했으므로
-          // credit을 별도로 더하면 이중계상됨 → 8h 고정 + approvedOt만 사용
-          const dayTotal    = approvedOt > 0 ? (8 + approvedOt) : (stdH + credit)
-          const dayNoCredit = approvedOt > 0 ? (8 + approvedOt) : stdH
-          roundedOt    += approvedOt
-          roundedNight += r.erpOtApplied ? floorTo30(r.nightHours ?? 0) : 0
-          roundedTotal  += dayTotal
-          nocreditTotal += dayNoCredit
-        }
-      } else if (r.finalStatus === '휴일근무') {
-        const holH    = r.holidayHours ?? 0
-        exactTotal   += holH
-        roundedTotal += floorTo30(holH)
-        nocreditTotal += floorTo30(holH)
-      } else {
-        const holH = r.holidayHours ?? 0
-        exactTotal   += holH
-        roundedTotal += floorTo30(holH)
-        nocreditTotal += floorTo30(holH)
-      }
-    }
-
-    const rawHoliday = recs.reduce(
-      (s, r) => s + (r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0), 0)
-    const roundedHoliday = recs.reduce((s, r) => {
-      if (r.dayType === 'WEEKDAY') return s
-      return s + floorTo30(r.holidayHours ?? 0)
-    }, 0)
-
-    // 실근무시간 기준 인정근로/총근로/연장/야간/휴일 — AttendanceResultTable.tsx와 동일한
-    // computeRealHoursOtForRecord 재사용. 직책자는 "30분절사"(급여용) 그룹만 0으로 고정
-    // (직책자는 절삭·게이트 개념 자체가 없음), "실근로용"(raw) 그룹은 동일하게 적용.
-    let recognized = 0, totalReal = 0
+    let realWork = 0, approvedRaw = 0, approvedPay = 0
     let otPay = 0, nightPay = 0, holidayPay = 0
     let otRaw = 0, nightRaw = 0, holidayRaw = 0
     for (const r of recs) {
-      const rh = computeRealHoursOtForRecord(r)
+      const isLeader = isLeaderOnDate(r.date)
+      const rh = computeRealHoursOtForRecord(r, isLeader)
       const isHolidayRec = r.dayType !== 'WEEKDAY'
-      recognized += floorTo30(rh.realWorkMins / 60)
-      totalReal  += rh.realWorkMins / 60
-      if (!isLeaderOnDate(r.date)) {
-        if (isHolidayRec) holidayPay += rh.payOtH
-        else { otPay += rh.payOtH; nightPay += rh.payNightH }
+      realWork    += rh.realWorkMins / 60
+      approvedRaw += rh.approvedWorkRawH
+      if (isHolidayRec) {
+        // 휴일 분기(computeRealHoursOtForRecord)는 게이트가 없어 payOtH가 직책자여도
+        // 채워지므로, 급여용 인정(휴일)에서 직책자를 제외하는 건 여기서 따로 처리한다.
+        if (!isLeader) { holidayPay += rh.payOtH; approvedPay += rh.approvedWorkPayH }
+        holidayRaw += rh.realWorkMins / 60
+      } else {
+        otPay += rh.payOtH; nightPay += rh.payNightH   // 직책자면 이미 0 (payGate가 처리)
+        approvedPay += rh.approvedWorkPayH             // 직책자면 이미 0
+        otRaw += rh.otMins / 60; nightRaw += rh.nightMins / 60
       }
-      if (isHolidayRec) holidayRaw += rh.realWorkMins / 60
-      else { otRaw += rh.otMins / 60; nightRaw += rh.nightMins / 60 }
     }
 
     stats[emp.id] = {
-      total:      roundedTotal,
-      nocreditTotal,
-      rawTotal:   exactTotal,
-      ot:         roundedOt,
-      rawOt:      exactOt,
-      night:      roundedNight,
-      rawNight:   exactNight,
-      holiday:    roundedHoliday,
-      rawHoliday,
-      recognized, totalReal,
+      realWork, approvedRaw, approvedPay,
       otPay, nightPay, holidayPay,
       otRaw, nightRaw, holidayRaw,
       anomalies: recs.filter(
@@ -420,13 +349,8 @@ const empStats = useMemo(() => {
     if (hoursFilter === 'all') return displayEmployees
 
     if (hoursFilter === 'over209') {
-      return displayEmployees.filter(e => {
-        const s = empStats[e.id]
-        const v = timeMode === 'exact'
-          ? (s?.rawTotal ?? 0)
-          : creditsOn ? (s?.total ?? 0) : (s?.nocreditTotal ?? 0)
-        return v >= 209
-      })
+      // 실근무(승인여부 무관 팩트) 기준 — 노동법 209h 한도는 실제 근로시간으로 판단.
+      return displayEmployees.filter(e => (empStats[e.id]?.realWork ?? 0) >= 209)
     }
 
     // over52: 주별 집계 — 어느 한 주라도 52h 초과 시 표시
@@ -471,8 +395,8 @@ const empStats = useMemo(() => {
         const sa = empStats[a.id]
         const sb = empStats[b.id]
         // 화면에 실제 표시되는 새 공식 기준 필드로 정렬 (급여용/30분절사 그룹)
-        const field: 'recognized' | 'otPay' | 'nightPay' | 'holidayPay' | 'anomalies' =
-          sortKey === 'recognized' ? 'recognized' :
+        const field: 'approvedPay' | 'otPay' | 'nightPay' | 'holidayPay' | 'anomalies' =
+          sortKey === 'recognized' ? 'approvedPay' :
           sortKey === 'ot'         ? 'otPay' :
           sortKey === 'night'      ? 'nightPay' :
           sortKey === 'holiday'    ? 'holidayPay' :
@@ -666,37 +590,56 @@ const empStats = useMemo(() => {
                   </button>
                 </th>
 
-                {/* 인정근로 — 최종근무(실근무 30분절삭) 합, 신규 */}
+                {/* 실근무 — 승인/미승인 무관, 실제 일한 총시간(팩트). 주52시간 준수 판단 기준. */}
+                <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
+                  style={{ top: 0, left: L_REALWORK, width: W_REALWORK, minWidth: W_REALWORK }}>
+                  <button
+                    onClick={handleTotalBtnClick}
+                    className="flex items-center justify-center gap-1 w-full hover:text-gray-700 transition-colors"
+                    title="실근무(승인여부 무관, 팩트) 기준 필터"
+                  >
+                    <span className={hoursFilter !== 'all' ? 'text-red-600' : ''}>실근무</span>
+                    <FilterIcon active={hoursFilter !== 'all'} danger />
+                  </button>
+                </th>
+
+                {/* 총근로 — 승인근무(원본), 1분 단위 */}
+                <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
+                  style={{ top: 0, left: L_TOTAL, width: W_TOTAL, minWidth: W_TOTAL }}>
+                  <span title="승인근무(원본) 합 — 회사에서 정식 승인받고 일한 총시간, 1분 단위">총근로</span>
+                </th>
+
+                {/* 인정근로 — 승인근무(급여용), 30분 절삭 정산용 */}
                 <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
                   style={{ top: 0, left: L_RECOGNIZED, width: W_RECOGNIZED, minWidth: W_RECOGNIZED }}>
                   <button
                     onClick={() => handleSort('recognized')}
                     className="flex items-center justify-center gap-0.5 w-full hover:text-gray-700 transition-colors"
-                    title="최종근무(실근무 30분절삭) 합"
+                    title="승인근무(급여용) 합 — 30분 절삭 완료된 정산용 총시간"
                   >
                     <span className={sortKey === 'recognized' && sortDir !== 'none' ? 'text-blue-600' : ''}>인정근로</span>
                     <SortIcon dir={sortKey === 'recognized' ? sortDir : 'none'} />
                   </button>
                 </th>
 
-                {/* 총 근로 — 실근무(크레딧 미반영) 합 */}
-                <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
-                  style={{ top: 0, left: L3, width: W_TOTAL, minWidth: W_TOTAL }}>
-                  <button
-                    onClick={handleTotalBtnClick}
-                    className="flex items-center justify-center gap-1 w-full hover:text-gray-700 transition-colors"
-                    title="총 근로시간 기준 필터"
-                  >
-                    <span className={hoursFilter !== 'all' ? 'text-red-600' : ''}>총 근로</span>
-                    <FilterIcon active={hoursFilter !== 'all'} danger />
-                  </button>
-                </th>
+                {/* [-] 실계산(원본) 연장·야간·휴일 — +/- 토글로만 노출 */}
+                {showRawCols && ([
+                  { key: 'otRaw',      label: '연장·실', left: L_OT_RAW,      w: W_OT_RAW      },
+                  { key: 'nightRaw',   label: '야간·실', left: L_NIGHT_RAW,   w: W_NIGHT_RAW   },
+                  { key: 'holidayRaw', label: '휴일·실', left: L_HOLIDAY_RAW, w: W_HOLIDAY_RAW },
+                ] as const).map(({ key, label, left, w }) => (
+                  <th key={key}
+                    className="sticky z-50 bg-amber-50 px-2 py-3 text-center text-[11px] font-semibold text-amber-700 border-l border-amber-200"
+                    style={{ top: 0, left, width: w, minWidth: w }}>
+                    {label}
+                  </th>
+                ))}
 
-                {([
+                {/* [-] 급여용 연장·야간·휴일 — +/- 토글로만 노출 (30분 절삭, 급여 지급 대상) */}
+                {showPayCols && ([
                   { key: 'ot',      label: '연장', left: L_OT,      w: W_OT      },
                   { key: 'night',   label: '야간', left: L_NIGHT,   w: W_NIGHT   },
                   { key: 'holiday', label: '휴일', left: L_HOLIDAY, w: W_HOLIDAY },
-                  { key: 'anomaly', label: '이상', left: L_ANOMALY, w: W_ANOMALY },
                 ] as const).map(({ key, label, left, w }) => (
                   <th key={key}
                     className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
@@ -711,30 +654,38 @@ const empStats = useMemo(() => {
                   </th>
                 ))}
 
-                {/* 실근로용(raw) 연장/야간/휴일 — +/- 토글로만 노출 */}
-                {showRawCols && ([
-                  { key: 'otRaw',      label: '연장·실', left: L_OT_RAW,      w: W_OT_RAW      },
-                  { key: 'nightRaw',   label: '야간·실', left: L_NIGHT_RAW,   w: W_NIGHT_RAW   },
-                  { key: 'holidayRaw', label: '휴일·실', left: L_HOLIDAY_RAW, w: W_HOLIDAY_RAW },
-                ] as const).map(({ key, label, left, w }) => (
-                  <th key={key}
-                    className="sticky z-50 bg-amber-50 px-2 py-3 text-center text-[11px] font-semibold text-amber-700 border-l border-amber-200"
-                    style={{ top: 0, left, width: w, minWidth: w }}>
-                    {label}
-                  </th>
-                ))}
+                {/* 이상치 — rowSpan 4 */}
+                <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
+                  style={{ top: 0, left: L_ANOMALY, width: W_ANOMALY, minWidth: W_ANOMALY }}>
+                  <button
+                    onClick={() => handleSort('anomaly')}
+                    className="flex items-center justify-center gap-0.5 w-full hover:text-gray-700 transition-colors"
+                  >
+                    <span className={sortKey === 'anomaly' && sortDir !== 'none' ? 'text-blue-600' : ''}>이상치</span>
+                    <SortIcon dir={sortKey === 'anomaly' ? sortDir : 'none'} />
+                  </button>
+                </th>
 
                 <th className="sticky z-50 bg-gray-50 px-1 py-3 text-left text-[11px] font-semibold text-gray-500 border-l border-gray-200"
                   style={{ top: 0, left: L4, width: W_CAT, minWidth: W_CAT, boxShadow: STICKY_SEP }}>
                   <div className="flex items-center justify-between gap-0.5">
                     구분
-                    <button
-                      onClick={() => setShowRawCols(v => !v)}
-                      title="실근로용(raw) 연장/야간/휴일 표시 토글"
-                      className="w-4 h-4 flex items-center justify-center rounded border border-gray-300 text-gray-500 hover:bg-gray-100 shrink-0"
-                    >
-                      {showRawCols ? '−' : '+'}
-                    </button>
+                    <span className="flex items-center gap-0.5 shrink-0">
+                      <button
+                        onClick={() => setShowRawCols(v => !v)}
+                        title="[-] 실계산(원본) 연장·야간·휴일 표시 토글"
+                        className="w-4 h-4 flex items-center justify-center rounded border border-amber-300 text-amber-600 hover:bg-amber-50"
+                      >
+                        {showRawCols ? '−' : '+'}
+                      </button>
+                      <button
+                        onClick={() => setShowPayCols(v => !v)}
+                        title="[-] 급여용 연장·야간·휴일 표시 토글"
+                        className="w-4 h-4 flex items-center justify-center rounded border border-gray-300 text-gray-500 hover:bg-gray-100"
+                      >
+                        {showPayCols ? '−' : '+'}
+                      </button>
+                    </span>
                   </div>
                 </th>
 
@@ -777,9 +728,9 @@ const empStats = useMemo(() => {
             {visibleEmployees.map((emp, rowIdx) => {
               const empRecs   = lookup[emp.id] ?? {}
               const s         = empStats[emp.id] ?? {
-                total: 0, nocreditTotal: 0, rawTotal: 0, ot: 0, rawOt: 0, night: 0, rawNight: 0,
-                holiday: 0, rawHoliday: 0, anomalies: 0,
-                recognized: 0, totalReal: 0, otPay: 0, nightPay: 0, holidayPay: 0,
+                anomalies: 0,
+                realWork: 0, approvedRaw: 0, approvedPay: 0,
+                otPay: 0, nightPay: 0, holidayPay: 0,
                 otRaw: 0, nightRaw: 0, holidayRaw: 0,
               }
               const isTopRisk = topRiskIds?.has(emp.id) ?? false
@@ -857,21 +808,12 @@ const empStats = useMemo(() => {
                       )}
                     </td>
 
-                    {/* 인정근로 — rowSpan 4 (최종근무=실근무 30분절삭 합, 신규) */}
-                    <td className={`${spanTd} border-l px-1 py-3 text-center`}
-                      style={{ left: L_RECOGNIZED, width: W_RECOGNIZED, minWidth: W_RECOGNIZED }}
-                      rowSpan={4}>
-                      <span className={`text-[12px] font-bold tabular-nums ${s.recognized > 0 ? 'text-gray-700' : 'text-gray-300'}`}>
-                        {fmt(s.recognized)}
-                      </span>
-                    </td>
-
-                    {/* 총 근로 — rowSpan 4 (실근무 합, 크레딧 미반영) */}
+                    {/* 실근무 — rowSpan 4 (승인여부 무관, 실제 일한 총시간, 팩트) */}
                     <td className={`${spanTd} border-l px-1.5 py-2 text-center`}
-                      style={{ left: L3, width: W_TOTAL, minWidth: W_TOTAL }}
+                      style={{ left: L_REALWORK, width: W_REALWORK, minWidth: W_REALWORK }}
                       rowSpan={4}>
                       {(() => {
-                        const display = s.totalReal
+                        const display = s.realWork
                         return (
                           <>
                             <span className="text-[12px] font-bold text-gray-800 tabular-nums block leading-tight">
@@ -903,63 +845,25 @@ const empStats = useMemo(() => {
                       })()}
                     </td>
 
-                    {/* 연장 — rowSpan 4 */}
+                    {/* 총근로 — rowSpan 4 (승인근무(원본), 1분 단위) */}
                     <td className={`${spanTd} border-l px-1 py-3 text-center`}
-                      style={{ left: L_OT, width: W_OT, minWidth: W_OT }}
+                      style={{ left: L_TOTAL, width: W_TOTAL, minWidth: W_TOTAL }}
                       rowSpan={4}>
-                      {(() => {
-                        const displayOt = s.otPay
-                        return (
-                          <span className={`text-[12px] font-bold tabular-nums ${
-                            displayOt > riskThresholds.otRedH   ? 'text-red-500'
-                            : displayOt > riskThresholds.otAmberH ? 'text-amber-500'
-                            : displayOt > 0                       ? 'text-amber-300'
-                            : 'text-gray-300'
-                          }`}>
-                            {fmt(displayOt)}
-                          </span>
-                        )
-                      })()}
-                    </td>
-
-                    {/* 야간 — rowSpan 4 */}
-                    <td className={`${spanTd} border-l px-1 py-3 text-center`}
-                      style={{ left: L_NIGHT, width: W_NIGHT, minWidth: W_NIGHT }}
-                      rowSpan={4}>
-                      {(() => {
-                        const displayNight = s.nightPay
-                        return (
-                          <span className={`text-[12px] font-bold tabular-nums ${displayNight > 0 ? 'text-blue-500' : 'text-gray-300'}`}>
-                            {fmt(displayNight)}
-                          </span>
-                        )
-                      })()}
-                    </td>
-
-                    {/* 휴일 — rowSpan 4 */}
-                    <td className={`${spanTd} border-l px-1 py-3 text-center`}
-                      style={{ left: L_HOLIDAY, width: W_HOLIDAY, minWidth: W_HOLIDAY }}
-                      rowSpan={4}>
-                      {(() => {
-                        const displayHoliday = s.holidayPay
-                        return (
-                          <span className={`text-[12px] font-bold tabular-nums ${displayHoliday > 0 ? 'text-violet-500' : 'text-gray-300'}`}>
-                            {fmt(displayHoliday)}
-                          </span>
-                        )
-                      })()}
-                    </td>
-
-                    {/* 이상 — rowSpan 4 */}
-                    <td className={`${spanTd} border-l px-1 py-3 text-center`}
-                      style={{ left: L_ANOMALY, width: W_ANOMALY, minWidth: W_ANOMALY }}
-                      rowSpan={4}>
-                      <span className={`text-[12px] font-bold tabular-nums ${s.anomalies > 0 ? 'text-red-500' : 'text-gray-300'}`}>
-                        {s.anomalies > 0 ? `${s.anomalies}건` : '0'}
+                      <span className={`text-[12px] font-bold tabular-nums ${s.approvedRaw > 0 ? 'text-gray-700' : 'text-gray-300'}`}>
+                        {fmt(s.approvedRaw)}
                       </span>
                     </td>
 
-                    {/* 실근로용(raw) 연장/야간/휴일 — rowSpan 4, +/- 토글로만 노출 */}
+                    {/* 인정근로 — rowSpan 4 (승인근무(급여용), 30분 절삭 정산용) */}
+                    <td className={`${spanTd} border-l px-1 py-3 text-center`}
+                      style={{ left: L_RECOGNIZED, width: W_RECOGNIZED, minWidth: W_RECOGNIZED }}
+                      rowSpan={4}>
+                      <span className={`text-[12px] font-bold tabular-nums ${s.approvedPay > 0 ? 'text-gray-700' : 'text-gray-300'}`}>
+                        {fmt(s.approvedPay)}
+                      </span>
+                    </td>
+
+                    {/* [-] 실계산(원본) 연장/야간/휴일 — rowSpan 4, +/- 토글로만 노출 */}
                     {showRawCols && (
                       <>
                         <td className={`${spanTd} border-l bg-amber-50/40 px-1 py-3 text-center`}
@@ -985,6 +889,62 @@ const empStats = useMemo(() => {
                         </td>
                       </>
                     )}
+
+                    {/* [-] 급여용 연장/야간/휴일 — rowSpan 4, +/- 토글로만 노출 */}
+                    {showPayCols && (
+                      <>
+                        <td className={`${spanTd} border-l px-1 py-3 text-center`}
+                          style={{ left: L_OT, width: W_OT, minWidth: W_OT }}
+                          rowSpan={4}>
+                          {(() => {
+                            const displayOt = s.otPay
+                            return (
+                              <span className={`text-[12px] font-bold tabular-nums ${
+                                displayOt > riskThresholds.otRedH   ? 'text-red-500'
+                                : displayOt > riskThresholds.otAmberH ? 'text-amber-500'
+                                : displayOt > 0                       ? 'text-amber-300'
+                                : 'text-gray-300'
+                              }`}>
+                                {fmt(displayOt)}
+                              </span>
+                            )
+                          })()}
+                        </td>
+                        <td className={`${spanTd} border-l px-1 py-3 text-center`}
+                          style={{ left: L_NIGHT, width: W_NIGHT, minWidth: W_NIGHT }}
+                          rowSpan={4}>
+                          {(() => {
+                            const displayNight = s.nightPay
+                            return (
+                              <span className={`text-[12px] font-bold tabular-nums ${displayNight > 0 ? 'text-blue-500' : 'text-gray-300'}`}>
+                                {fmt(displayNight)}
+                              </span>
+                            )
+                          })()}
+                        </td>
+                        <td className={`${spanTd} border-l px-1 py-3 text-center`}
+                          style={{ left: L_HOLIDAY, width: W_HOLIDAY, minWidth: W_HOLIDAY }}
+                          rowSpan={4}>
+                          {(() => {
+                            const displayHoliday = s.holidayPay
+                            return (
+                              <span className={`text-[12px] font-bold tabular-nums ${displayHoliday > 0 ? 'text-violet-500' : 'text-gray-300'}`}>
+                                {fmt(displayHoliday)}
+                              </span>
+                            )
+                          })()}
+                        </td>
+                      </>
+                    )}
+
+                    {/* 이상치 — rowSpan 4 */}
+                    <td className={`${spanTd} border-l px-1 py-3 text-center`}
+                      style={{ left: L_ANOMALY, width: W_ANOMALY, minWidth: W_ANOMALY }}
+                      rowSpan={4}>
+                      <span className={`text-[12px] font-bold tabular-nums ${s.anomalies > 0 ? 'text-red-500' : 'text-gray-300'}`}>
+                        {s.anomalies > 0 ? `${s.anomalies}건` : '0'}
+                      </span>
+                    </td>
 
                     {/* 구분: 출근 */}
                     <td className={`${catTd} border-b border-gray-100`}
