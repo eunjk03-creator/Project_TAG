@@ -256,9 +256,13 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
   // ── Handlers ──────────────────────────────────────────────────────────
 
   function handleSave() {
-    const origIn     = record.clockIn?.replace(/^\+/, '')  ?? ''
-    const origOut    = record.clockOut?.replace(/^\+/, '') ?? ''
-    const origErpOt  = record.erpOtApplied ? '신청됨' : record.overtimeHours > 0 ? '미신청' : '해당없음'
+    const origIn        = record.clockIn?.replace(/^\+/, '')  ?? ''
+    const origOut       = record.clockOut?.replace(/^\+/, '') ?? ''
+    const origErpOt     = record.erpOtApplied ? '신청됨' : record.overtimeHours > 0 ? '미신청' : '해당없음'
+    const origLeaveStr  = parseLeaveEntries(initialErpLeaveType).join(', ') || '없음'
+    const newLeaveStr   = erpLeaveEntries.join(', ') || '없음'
+    const otChanged     = isEditingErp && erpOtEdit !== origErpOt
+    const leaveChanged  = isEditingErp && newLeaveStr !== origLeaveStr
     const actionLog: string[] = []
 
     if (isEditingCaps) {
@@ -266,19 +270,17 @@ export function DailyDetailModal({ employee, record, policy, initialEditHistory,
       if (capsOut !== origOut) actionLog.push(`[CAPS] 퇴실 ${origOut || '미태깅'} → ${capsOut || '미태깅'}`)
     }
 
-    if (isEditingErp) {
-      if (erpOtEdit   !== origErpOt) actionLog.push(`[ERP] 연장근무 ${origErpOt} → ${erpOtEdit}`)
-      const origLeaveStr = parseLeaveEntries(initialErpLeaveType).join(', ') || '없음'
-      const newLeaveStr  = erpLeaveEntries.join(', ') || '없음'
-      if (newLeaveStr !== origLeaveStr) actionLog.push(`[ERP] 연차/반차 ${origLeaveStr} → ${newLeaveStr}`)
-    }
+    if (otChanged)    actionLog.push(`[ERP] 연장근무 ${origErpOt} → ${erpOtEdit}`)
+    if (leaveChanged) actionLog.push(`[ERP] 연차/반차 ${origLeaveStr} → ${newLeaveStr}`)
 
     if (markSoMyeong) actionLog.push('[소명] 이상 소명 완료 처리')
 
     const newClockIn      = isEditingCaps ? (capsIn  || null) : record.clockIn
     const newClockOut     = isEditingCaps ? (capsOut || null) : record.clockOut
-    const newErpOtApplied = isEditingErp  ? erpOtEdit === '신청됨' : null
-    const newErpLeaveType = isEditingErp  ? erpLeaveEdit : null
+    // 실제로 값이 바뀐 항목만 override로 반영 — 손대지 않은 필드는 null로 남겨 원본을 보존한다.
+    // (연차만 고쳤는데 ERP연장신청 여부까지 같이 덮어써지던 문제 수정)
+    const newErpOtApplied = otChanged    ? erpOtEdit === '신청됨' : null
+    const newErpLeaveType = leaveChanged ? erpLeaveEdit           : null
 
     const auditEntry: EditHistoryEntry = {
       timestamp: new Date().toISOString(),
