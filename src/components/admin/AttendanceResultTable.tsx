@@ -998,15 +998,18 @@ export function AttendanceResultTable({
                   </th>
                 )}
                 {hg.headers.map(header => {
-                  // 그룹(colSpan) 헤더가 아닌 leaf 컬럼의 placeholder — rowSpan으로 병합되는
-                  // 실제 셀은 다른 행에서 이미 렌더링되므로 여기선 셀 자체를 생략한다.
-                  if (header.isPlaceholder) return null
-
-                  // 급여용(payGroup) / 실계산(rawGroup) 그룹 헤더 — colSpan으로 하위 3개 컬럼을
-                  // 아우르는 라벨 행. 헷갈린다는 피드백으로 border만으로는 부족해 그룹 라벨 + 틴트 추가.
-                  const isGroup = header.subHeaders.length > 0
+                  // TanStack은 그룹에 속하지 않는(standalone) leaf 컬럼의 "진짜" 헤더를 맨 아래
+                  // depth(row)에 두고, 그 위 얕은 depth들에는 같은 컬럼의 placeholder를 채운다.
+                  // 즉 division처럼 그룹이 없는 컬럼은 여기(placeholder)서 rowSpan으로 렌더해야
+                  // 화면에 보이고, 맨 아래 depth의 "진짜" 헤더는 중복이라 생략해야 한다.
+                  const isGroup = !header.isPlaceholder && header.subHeaders.length > 0
                   const isGroupBoundary = SECTION_BOUNDARY_COLS.has(header.column.id)
-                  const rowSpan = isGroup ? 1 : headerRowCount - header.depth
+
+                  // 그룹에 속하지 않는 leaf의 맨 아래 depth "진짜" 헤더 — 위쪽 placeholder에서
+                  // 이미 렌더링되므로 여기선 생략.
+                  if (!header.isPlaceholder && !isGroup && !header.column.parent) return null
+
+                  const rowSpan = header.isPlaceholder ? headerRowCount - header.depth + 1 : 1
 
                   if (isGroup) {
                     return (
@@ -1041,9 +1044,7 @@ export function AttendanceResultTable({
                           className={`flex items-center gap-0.5 flex-1 min-w-0 ${header.column.getCanSort() ? 'cursor-pointer hover:text-gray-800' : ''}`}
                           onClick={header.column.getToggleSortingHandler()}
                         >
-                          {header.isPlaceholder
-                            ? null
-                            : flexRender(header.column.columnDef.header, header.getContext())}
+                          {flexRender(header.column.columnDef.header, header.getContext())}
                           {header.column.getIsSorted() === 'asc'  && <span className="text-blue-500 text-[9px] ml-0.5">▲</span>}
                           {header.column.getIsSorted() === 'desc' && <span className="text-blue-500 text-[9px] ml-0.5">▼</span>}
                         </div>
