@@ -228,9 +228,9 @@ const COL_LABELS: Record<string, string> = {
 
 const col = createColumnHelper<GridRow>()
 
-// 섹션 경계 — 이 컬럼들 왼쪽에 굵은 구분선 (출퇴근|연차정보|체류/근무|근태상태|급여용|원본|연장신청)
+// 섹션 경계 — 이 컬럼들 왼쪽에 굵은 구분선 (출퇴근|연차정보|체류/근무|근태상태|원본|급여용|연장신청)
 const SECTION_BOUNDARY_COLS = new Set([
-  'leaveAmt', 'stayH', 'attendanceStatus', 'payGroup', 'payOtherH', 'rawGroup', 'otherH', 'erpOtApplied',
+  'leaveAmt', 'stayH', 'attendanceStatus', 'rawGroup', 'otherH', 'payGroup', 'payOtherH', 'erpOtApplied',
 ])
 
 // 급여용/실계산 그룹 헤더 배경 틴트
@@ -721,31 +721,6 @@ export function AttendanceResultTable({
         )
       },
     }),
-    // ── 급여용 (11~13): ERP 연장신청 승인 게이트 + 30분 절삭, 직책 구분 없음 ──
-    col.group({
-      id: 'payGroup',
-      header: () => <ColTip label="급여용" tip="ERP 연장신청 승인 게이트 + 30분 단위 절삭 (실계산과 비교용)" />,
-      columns: [
-        col.accessor('payOtherH', {
-          id: 'payOtherH', header: () => <ColTip label="소정외" tip="소정외(1.0x)를 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
-          cell: i => i.getValue() > 0
-            ? <span className="tabular-nums text-xs font-semibold text-amber-600">{fmtH(i.getValue())}</span>
-            : <span className="text-gray-300">—</span>,
-        }),
-        col.accessor('payOtH', {
-          id: 'payOtH', header: () => <ColTip label="법정연장" tip="법정연장(1.5x)을 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
-          cell: i => i.getValue() > 0
-            ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
-            : <span className="text-gray-300">—</span>,
-        }),
-        col.accessor('payNightH', {
-          id: 'payNightH', header: () => <ColTip label="야간" tip="야간(+0.5x)을 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
-          cell: i => i.getValue() > 0
-            ? <span className="tabular-nums text-xs font-semibold text-indigo-600">{fmtH(i.getValue())}</span>
-            : <span className="text-gray-300">—</span>,
-        }),
-      ],
-    }),
     // ── 원본(14~16): 1분 단위 정밀, 절삭·게이트 없음 ──────────────────────
     col.group({
       id: 'rawGroup',
@@ -767,6 +742,31 @@ export function AttendanceResultTable({
           id: 'nightH', header: () => <ColTip label="야간" tip="22:00~익일06:00 실제 겹침, 1분 단위" />, size: 80, minSize: 65,
           cell: i => i.getValue() > 0
             ? <span className="tabular-nums text-xs font-medium text-indigo-500">{fmtH(i.getValue())}</span>
+            : <span className="text-gray-300">—</span>,
+        }),
+      ],
+    }),
+    // ── 급여용 (11~13): ERP 연장신청 승인 게이트 + 30분 절삭, 직책 구분 없음 ──
+    col.group({
+      id: 'payGroup',
+      header: () => <ColTip label="급여용" tip="ERP 연장신청 승인 게이트 + 30분 단위 절삭 (실계산과 비교용)" />,
+      columns: [
+        col.accessor('payOtherH', {
+          id: 'payOtherH', header: () => <ColTip label="소정외" tip="소정외(1.0x)를 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
+          cell: i => i.getValue() > 0
+            ? <span className="tabular-nums text-xs font-semibold text-amber-600">{fmtH(i.getValue())}</span>
+            : <span className="text-gray-300">—</span>,
+        }),
+        col.accessor('payOtH', {
+          id: 'payOtH', header: () => <ColTip label="법정연장" tip="법정연장(1.5x)을 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
+          cell: i => i.getValue() > 0
+            ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
+            : <span className="text-gray-300">—</span>,
+        }),
+        col.accessor('payNightH', {
+          id: 'payNightH', header: () => <ColTip label="야간" tip="야간(+0.5x)을 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
+          cell: i => i.getValue() > 0
+            ? <span className="tabular-nums text-xs font-semibold text-indigo-600">{fmtH(i.getValue())}</span>
             : <span className="text-gray-300">—</span>,
         }),
       ],

@@ -182,12 +182,12 @@ const DETAIL_COL_DEFS: DetailColDef[] = [
   { id: 'attendanceStatus', header: '근태상태',        wch: 8  },
   { id: 'normalTags',       header: '정상정보',        wch: 14 },
   { id: 'anomalyTags',      header: '비정상정보',      wch: 18 },
-  { id: 'payOtherH',   header: '소정외',          wch: 14 },
-  { id: 'payOtH',      header: '법정연장',        wch: 14 },
-  { id: 'payNightH',   header: '야간',            wch: 14 },
   { id: 'otherH',      header: '소정외',          wch: 10 },
   { id: 'otH',         header: '법정연장',        wch: 10 },
   { id: 'nightH',      header: '야간',            wch: 10 },
+  { id: 'payOtherH',   header: '소정외',          wch: 14 },
+  { id: 'payOtH',      header: '법정연장',        wch: 14 },
+  { id: 'payNightH',   header: '야간',            wch: 14 },
   { id: 'erpOtApplied', header: '연장신청',       wch: 12 },
 ]
 
