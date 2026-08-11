@@ -4,8 +4,10 @@ import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useProcessedAttendance } from '@/hooks/useProcessedAttendance'
 import { useMasterActiveRoster } from '@/hooks/useMasterActiveRoster'
 import { useEmployeeRoster, type RosterRow } from '@/hooks/useEmployeeRoster'
+import { useEmployeeExceptions, type RuleType } from '@/context/EmployeeExceptionsContext'
 import { PaginationBar } from '@/components/admin/PaginationBar'
 import { EmployeeDetailModal } from '@/components/admin/EmployeeDetailModal'
+import { RULE_BADGE } from '@/components/admin/ExceptionRulesTab'
 import { buildMasterDiscrepancyRollup, buildResignationCandidates } from '@/utils/overviewAggregations'
 
 function todayStrFrom(d: Date): string {
@@ -43,6 +45,7 @@ interface UnifiedRow {
   status:       UnifiedStatus
   note?:        string  // REVIEW_* 행에서 왜 확인이 필요한지
   hasCapsMatch: boolean
+  ruleTypes:    RuleType[]  // 이 사람에게 적용된 근태 예외규칙(직책자/육아휴직 등) — 명단 표 뱃지용
 }
 
 function formatTenure(hireDate: string | null, endDate: string | null, today: string): string {
@@ -71,6 +74,16 @@ export default function EmployeesPage() {
 
   const [masterActive, refetchMasterActive] = useMasterActiveRoster()
   const [roster, refetchRoster] = useEmployeeRoster()
+  const { exceptionRules } = useEmployeeExceptions()
+  const ruleTypesByEmployeeId = useMemo(() => {
+    const map = new Map<string, RuleType[]>()
+    for (const r of exceptionRules) {
+      const list = map.get(r.employeeId)
+      if (list) list.push(r.ruleType)
+      else map.set(r.employeeId, [r.ruleType])
+    }
+    return map
+  }, [exceptionRules])
   const employeeIdToRawId = useMemo(
     () => new Map(employees.map(e => [e.id, e.rawId ?? e.id.split('_')[0]])),
     [employees],
@@ -187,6 +200,7 @@ export default function EmployeesPage() {
         hireDate: r.hireDate, resignedDate: r.resignedDate,
         status: r.status as UnifiedStatus,
         hasCapsMatch: rawIdToEmployeeId.has(r.rawId),
+        ruleTypes: ruleTypesByEmployeeId.get(rawIdToEmployeeId.get(r.rawId) ?? '') ?? [],
       }))
     for (const c of resignationCandidates) {
       const known = rosterByRawId.get(c.rawId)  // inMaster=true면 부서/직책 등 실제 값을 채울 수 있음
@@ -198,6 +212,7 @@ export default function EmployeesPage() {
         status: 'REVIEW_RESIGN',
         note: c.inMaster ? '조직도엔 있음 · 최근 활동 없음' : '조직도에도 없음 · 최근 활동 없음',
         hasCapsMatch: rawIdToEmployeeId.has(c.rawId),
+        ruleTypes: ruleTypesByEmployeeId.get(rawIdToEmployeeId.get(c.rawId) ?? '') ?? [],
       })
     }
     for (const d of partTimerCandidates) {
@@ -206,10 +221,11 @@ export default function EmployeesPage() {
         jobTitle: '', contractType: '', hireDate: null, resignedDate: null,
         status: 'REVIEW_PARTTIME', note: d.detail,
         hasCapsMatch: rawIdToEmployeeId.has(d.rawId),
+        ruleTypes: ruleTypesByEmployeeId.get(rawIdToEmployeeId.get(d.rawId) ?? '') ?? [],
       })
     }
     return rows.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
-  }, [roster, resignationCandidates, partTimerCandidates, rawIdToEmployeeId, rosterByRawId])
+  }, [roster, resignationCandidates, partTimerCandidates, rawIdToEmployeeId, rosterByRawId, ruleTypesByEmployeeId])
 
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL')
@@ -316,6 +332,7 @@ export default function EmployeesPage() {
                   <th className="text-left px-4 py-2.5 font-medium">퇴직일</th>
                   <th className="text-left px-4 py-2.5 font-medium">재직기간</th>
                   <th className="text-left px-4 py-2.5 font-medium">상태</th>
+                  <th className="text-left px-4 py-2.5 font-medium">예외규칙</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -390,6 +407,22 @@ export default function EmployeesPage() {
                         >
                           {statusInfo.label}
                         </span>
+                      </td>
+                      <td className="px-4 py-2">
+                        {row.ruleTypes.length === 0 ? (
+                          <span className="text-gray-300">—</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {row.ruleTypes.map(t => (
+                              <span
+                                key={t}
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap ${RULE_BADGE[t]?.cls ?? 'bg-gray-100 text-gray-600'}`}
+                              >
+                                {RULE_BADGE[t]?.label ?? t}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   )
