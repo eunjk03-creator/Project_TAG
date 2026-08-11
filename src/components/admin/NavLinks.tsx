@@ -34,6 +34,13 @@ const ICONS = {
     'M5 11h14v4H5v-4z',
     'M6.5 15v4h-2v-4M12 15v4h-2v-4M17.5 15v4h-2v-4',
   ],
+  employees: [
+    'M17 20h5v-2a4 4 0 00-3-3.87',
+    'M9 20H4v-2a4 4 0 013-3.87',
+    'M9 7a3 3 0 106 0 3 3 0 00-6 0z',
+    'M13 13a4 4 0 00-2 0 4 4 0 00-4 4v3h8v-3a4 4 0 00-2-4z',
+    'M16 3.13a3 3 0 010 5.75',
+  ],
   help: 'M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
   logout: 'M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1',
 }
@@ -42,6 +49,7 @@ const NAV_MAIN = [
   { href: '/admin',          label: 'Dashboard', sub: '대시보드', icon: 'dashboard', exact: true },
   { href: '/admin/overview', label: 'Overview',  sub: '종합 현황', icon: 'overview' },
   { href: '/admin/org-chart', label: 'Org Chart', sub: '조직도',   icon: 'orgChart' },
+  { href: '/admin/employees', label: 'Employees', sub: '사원 명단', icon: 'employees' },
   { href: '/admin/settings', label: 'Settings',  sub: '설정',     icon: 'settings' },
 ] as const
 
