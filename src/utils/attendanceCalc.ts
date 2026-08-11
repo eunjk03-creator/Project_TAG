@@ -389,7 +389,8 @@ export interface RealHoursOtResult {
  * 반차/반반차의 조기출근 보정(13:00/10:00 스냅)은 없음 — 전사 공통 08:00 floor만 유지, 그 외엔
  * 실제 clockIn 그대로 사용. credit(휴가 유급인정)은 ERP 승인 + 무급 아님일 때만 반영되고,
  * 소정근로 = 8h−credit, 소정외는 그 이후부터 실근무 8h까지, 법정연장은 실근무 8h 초과분.
- * 급여용 3종은 직책 구분 없이 동일하게 ERP 연장신청 승인 게이트 + 30분 절삭.
+ * 급여용 3종은 ERP 연장신청 승인 게이트 + 30분 절삭 — 단, 직책자는 연장신청 절차 자체가
+ * 면제되므로(재량근로) 게이트를 걸지 않고 항상 인정한다 (isLeader).
  */
 export function computeRealHoursOt(params: {
   clockIn:             string | null | undefined
@@ -399,8 +400,9 @@ export function computeRealHoursOt(params: {
   isUnpaidLeave:       boolean | null | undefined
   isErpLeaveApproved:  boolean
   erpOtApplied:        boolean | null | undefined
+  isLeader?:           boolean
 }): RealHoursOtResult {
-  const { clockIn, clockOut, leaveType, erpLeaveAmount, isUnpaidLeave, isErpLeaveApproved, erpOtApplied } = params
+  const { clockIn, clockOut, leaveType, erpLeaveAmount, isUnpaidLeave, isErpLeaveApproved, erpOtApplied, isLeader } = params
   const empty = {
     stayMins: 0, realWorkMins: 0, otherMins: 0, otMins: 0, nightMins: 0,
     payOtherH: 0, payOtH: 0, payNightH: 0,
@@ -423,7 +425,7 @@ export function computeRealHoursOt(params: {
   const nightStart = 1320, nightEnd = 1800 // 22:00 ~ 익일 06:00(1440+360)
   const nightMins = Math.max(0, Math.min(outMins, nightEnd) - Math.max(inMins, nightStart))
 
-  const gate = erpOtApplied === true
+  const gate = isLeader === true || erpOtApplied === true
   const payOtherH = gate ? floorTo30(otherMins / 60) : 0
   const payOtH    = gate ? floorTo30(otMins    / 60) : 0
   const payNightH = gate ? floorTo30(nightMins / 60) : 0
@@ -458,13 +460,13 @@ export function computeRealHoursOtForRecord(r: {
   verificationNote?: string[] | null
   holidayHours?:     number | null
   erpOtApplied?:     boolean | null
-}): RealHoursOtResult {
+}, isLeader = false): RealHoursOtResult {
   const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
   const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
   const base = computeRealHoursOt({
     clockIn: r.clockIn, clockOut: r.clockOut, leaveType: r.leaveType,
     erpLeaveAmount: r.erpLeaveAmount, isUnpaidLeave: r.isUnpaidLeave,
-    isErpLeaveApproved, erpOtApplied: r.erpOtApplied,
+    isErpLeaveApproved, erpOtApplied: r.erpOtApplied, isLeader,
   })
   if (r.dayType === 'WEEKDAY') return base
   // 휴일근로는 ERP 연장신청 체계 밖 — 구글폼으로 수기 확인하는 별도 프로세스라

@@ -2,7 +2,7 @@ import Papa from 'papaparse'
 import * as XLSX from 'xlsx-js-style'
 import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
 import type { GridRow } from '@/components/admin/AttendanceResultTable'
-import { computeRealHoursOtForRecord } from '@/utils/attendanceCalc'
+import { computeRealHoursOtForRecord, isLeaderOnDate } from '@/utils/attendanceCalc'
 
 // 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE/LATE_AND_EARLY_DEPARTURE는
 // 재계산 전 캐시된 레코드 하위호환용 라벨(근태이상과 동일 취급).
@@ -317,6 +317,9 @@ function buildDetailRowData(
     r.leaveType      ? 'ERP' :
     null
   const isHoliday = r.dayType !== 'WEEKDAY'
+  // 직책자는 연장신청 절차 자체가 면제(재량근로)되므로 ERP 게이트를 걸지 않는다 — 발령/해임일
+  // 범위 밖(직책자 아닌 기간)은 일반 직원과 동일하게 게이트를 확인해야 함 (isLeaderOnDate).
+  const isLeader = isLeaderOnDate(attrs, emp, r.date)
 
   // 테이블과 동일한 태그 로직
   const anomalyTags: string[] = []
@@ -330,7 +333,7 @@ function buildDetailRowData(
   // 실근무시간 기준 순체류/실근무/소정외(1.0x)/법정연장(1.5x)/야간 — 테이블(AttendanceResultTable)/
   // 그리드(EmployeeCalendarGrid)와 동일한 공용 함수(computeRealHoursOtForRecord) 재사용. 휴일근무는
   // ERP 연장신청과 무관하게(구글폼으로 별도 확인) 소정외=0, 법정연장 슬롯에 기존 r.holidayHours.
-  const realHoursOt = computeRealHoursOtForRecord(r)
+  const realHoursOt = computeRealHoursOtForRecord(r, isLeader)
   const {
     stayMins, realWorkMins, nightMins, otherMins, otMins, payOtherH, payOtH, payNightH,
     approvedWorkRawH, approvedWorkPayH, paidRecognizedH,
@@ -377,6 +380,7 @@ function buildDetailRowData(
     nightH: nightH > 0 ? nightH : null,
     erpOtApplied:
       isHoliday      ? '—' :
+      isLeader       ? '—' :
       r.erpOtApplied ? '신청' :
       otH > 0        ? '미신청' :
       '—',

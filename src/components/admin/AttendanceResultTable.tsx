@@ -14,7 +14,7 @@ import { EMPLOYEES } from '@/data/orgChart'
 import {
   parseTimeToMins,
   compute4141BreakMins, computeEffClockIn,
-  computeRealHoursOtForRecord,
+  computeRealHoursOtForRecord, isLeaderOnDate,
 } from '@/utils/attendanceCalc'
 
 // ── Row shape ─────────────────────────────────────────────────────────────
@@ -523,11 +523,16 @@ export function AttendanceResultTable({
 
       const attendanceStatus: '정상' | '비정상' = anomalyTags.length === 0 ? '정상' : '비정상'
 
+      // 직책자는 연장신청 절차 자체가 면제(재량근로)되므로 ERP 게이트를 걸지 않는다 — 단 발령/해임일
+      // 범위 밖(직책자 아닌 기간)은 일반 직원과 동일하게 게이트를 확인해야 함 (isLeaderOnDate).
+      const attrs    = employeeAttrMap?.get(r.employeeId)
+      const isLeader = isLeaderOnDate(attrs, emp, r.date)
+
       // 실근무시간 기준 소정외(1.0x)/법정연장(1.5x)/야간 — 반차/반반차 조기보정 없음(08:00 floor만).
       // 휴일근무는 별도 배율 체계라 소정외=0, 법정연장 슬롯에 기존 r.holidayHours(이미 검증된 값)를
       // 그대로 넣는다(ERP 연장신청과 무관 — 구글폼으로 별도 확인) — 정확한 휴일 산식은 추후 확정 전까지의
       // 최소 반영. 테이블/엑셀내보내기/그리드 3곳이 이 공용 함수(computeRealHoursOtForRecord)를 공유.
-      const realHoursOt = computeRealHoursOtForRecord(r)
+      const realHoursOt = computeRealHoursOtForRecord(r, isLeader)
       const {
         stayMins, realWorkMins, otherMins, otMins, nightMins, payOtherH, payOtH, payNightH,
         approvedWorkRawH, approvedWorkPayH, paidRecognizedH,
@@ -548,11 +553,14 @@ export function AttendanceResultTable({
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
 
       // 급여용 값이 있는데 ERP 미신청인 경우 감사(audit) 대상 — raw(소정외/법정연장/야간) 기준.
-      const auditFlag = !isHoliday && (otherH > 0 || otH > 0 || nightH > 0) && r.erpOtApplied !== true
+      // 직책자는 게이트가 없어 미신청이어도 정상 반영되므로 감사 대상에서 제외.
+      const auditFlag = !isHoliday && !isLeader && (otherH > 0 || otH > 0 || nightH > 0) && r.erpOtApplied !== true
       // 연장근로(법정연장, otH) 기준 — 신청대상 여부와 무관하게 신청했으면 무조건 "신청",
       // 신청대상(otH>0)인데 미신청이면 "미신청", 신청대상도 아니고 미신청이면 "—".
+      // 직책자는 연장신청 절차가 면제되므로 신청여부 표시 자체가 무의미 — 항상 "—".
       const erpOtStatus: '신청' | '미신청' | '—' =
         isHoliday        ? '—' :
+        isLeader         ? '—' :
         r.erpOtApplied   ? '신청' :
         otH > 0          ? '미신청' :
         '—'
