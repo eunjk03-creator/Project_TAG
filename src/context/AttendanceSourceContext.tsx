@@ -240,6 +240,83 @@ async function dbGetProcessed(): Promise<{ data: StoredProcessed | null; updated
   }
 }
 
+// ── 원본(파싱 전) CAPS/ERP 로우 청크 저장·로드 ────────────────────────────
+// CAPS/ERP 중 하나만 재업로드해도(예: ERP만 최신화) 나머지는 여기 저장된 마지막
+// 원본 스냅샷으로 채워서 parseAttendanceData를 정상적으로 다시 돌릴 수 있게 한다.
+// attendance_records_N과 동일한 메타+청크 패턴, metaKey는 기존 whitelist에 있던
+// caps_data/erp_data를 재활용(예전엔 안 쓰이던 legacy 키).
+async function dbGetRawChunked<T>(metaKey: string, chunkPrefix: string): Promise<T[]> {
+  try {
+    const res = await fetch(`/api/shared-data/${metaKey}`)
+    if (!res.ok) return []
+    const { data: meta } = await res.json() as { data: { chunkCount?: number; rows?: T[] } | null }
+    if (!meta) return []
+    if (meta.rows?.length) return meta.rows // legacy/소량 — 청크 없이 통째로
+    const chunkCount = meta.chunkCount ?? 0
+    if (chunkCount === 0) return []
+    const chunkResponses = await Promise.all(
+      Array.from({ length: chunkCount }, (_, i) =>
+        fetch(`/api/shared-data/${chunkPrefix}_${i}`)
+          .then(r => r.ok ? r.json() as Promise<{ data: { records: T[] } | null }> : { data: null })
+          .catch(() => ({ data: null })),
+      ),
+    )
+    return chunkResponses.flatMap(r => r.data?.records ?? [])
+  } catch {
+    return []
+  }
+}
+
+async function dbPutRawChunked<T>(metaKey: string, chunkPrefix: string, rows: T[]): Promise<boolean> {
+  try {
+    const chunkCount = Math.ceil(rows.length / CHUNK_SIZE)
+    const metaRes = await fetch(`/api/shared-data/${metaKey}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { chunkCount } }),
+    })
+    if (!metaRes.ok) return false
+
+    const CHUNK_BATCH_SIZE = 4
+    for (let start = 0; start < chunkCount; start += CHUNK_BATCH_SIZE) {
+      const idx = Array.from({ length: Math.min(CHUNK_BATCH_SIZE, chunkCount - start) }, (_, j) => start + j)
+      const results = await Promise.all(idx.map(async i => {
+        const records = rows.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+        const res = await fetch(`/api/shared-data/${chunkPrefix}_${i}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: { records } }),
+        })
+        return res.ok
+      }))
+      if (results.some(ok => !ok)) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+function loadStoredCapsRows() { return dbGetRawChunked<CapsRow>('caps_data', 'caps_records') }
+function loadStoredErpRows()  { return dbGetRawChunked<ErpUnifiedRow>('erp_data', 'erp_records') }
+function saveCapsRows(rows: CapsRow[])      { return dbPutRawChunked('caps_data', 'caps_records', rows) }
+function saveErpRows(rows: ErpUnifiedRow[]) { return dbPutRawChunked('erp_data', 'erp_records', rows) }
+
+// CAPS 원본 dedup — (사원번호_이름_근무일자) 기준, 새 로우가 기존 로우를 덮어씀
+function mergeCapsRows(existing: CapsRow[], fresh: CapsRow[]): CapsRow[] {
+  const map = new Map<string, CapsRow>()
+  for (const r of existing) map.set(`${r.사원번호}_${r.이름}_${r.근무일자}`, r)
+  for (const r of fresh)    map.set(`${r.사원번호}_${r.이름}_${r.근무일자}`, r)
+  return Array.from(map.values())
+}
+
+// ERP 원본 dedup — (사원번호_근태코드_시작일_시작시간) 기준, 새 로우가 기존 로우를 덮어씀
+function mergeErpRows(existing: ErpUnifiedRow[], fresh: ErpUnifiedRow[]): ErpUnifiedRow[] {
+  const map = new Map<string, ErpUnifiedRow>()
+  const keyOf = (r: ErpUnifiedRow) => `${r.사원번호}_${r.근태코드}_${r.시작일}_${(r as { 시작시간?: string }).시작시간 ?? ''}`
+  for (const r of existing) map.set(keyOf(r), r)
+  for (const r of fresh)    map.set(keyOf(r), r)
+  return Array.from(map.values())
+}
+
 // 한 페이지당 처리 건수 — compute-attendance/route.ts가 이 슬라이스만큼만 processRecord()를
 // 돌리고 새 DailyAttendance 테이블에 upsert한다. 여러 번 나눠 호출해서 요청 하나가 4~5만
 // 건을 전부 처리할 필요가 없게 만드는 게 타임아웃(B14)의 구조적 해결책 — 이 상수를 줄이면
@@ -569,9 +646,16 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
   // ── mergeRawData: 기존 DB 데이터 유지 + 신규 파일 병합 ───────────────
   // (사번 + 날짜) 기준으로 merge — 신규 파일 쪽이 기존 데이터를 덮어씀
   const mergeRawData = useCallback(async (
-    caps: CapsRow[],
-    erp:  ErpUnifiedRow[],
+    capsIn: CapsRow[],
+    erpIn:  ErpUnifiedRow[],
   ): Promise<ParseResult & { addedCount: number; updatedCount: number }> => {
+    // CAPS/ERP 중 하나만 새로 올라온 경우, 나머지는 마지막에 저장해둔 원본 스냅샷으로
+    // 채운다 — "ERP만 갱신"해도 CAPS를 다시 안 올려도 되게(반대도 동일). 저장해둔 스냅샷은
+    // 항상 불러와서, 신규 업로드분과 dedup 병합한 뒤 다시 저장해 계속 최신으로 유지한다.
+    const [storedCaps, storedErp] = await Promise.all([loadStoredCapsRows(), loadStoredErpRows()])
+    const caps = capsIn.length > 0 ? mergeCapsRows(storedCaps, capsIn) : storedCaps
+    const erp  = erpIn.length  > 0 ? mergeErpRows(storedErp, erpIn)   : storedErp
+
     // 기존 DB 데이터 먼저 로드 — 이번 CAPS 배치에 없는 기존 직원도 ERP 휴가/연장 매칭 대상에
     // 포함시켜야 함(안 그러면 이번에 CAPS를 재업로드하지 않은 직원의 ERP 행이 전부
     // "직원 목록에 없음"으로 스킵되어 매칭 건수가 실제보다 크게 적게 나옴).
@@ -579,6 +663,10 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
 
     const newResult     = parseAttendanceData(caps, erp, policy, existing?.employees ?? [])
     const newNormalized = normalizeDivisions(newResult.employees)
+
+    // 원본 로우 스냅샷 갱신(다음 "한쪽만 업로드"를 위해) — 응답을 막지 않도록 백그라운드로 실행.
+    if (capsIn.length > 0) void saveCapsRows(caps).catch(() => {})
+    if (erpIn.length  > 0) void saveErpRows(erp).catch(() => {})
 
     // 기존 데이터 없으면 전체 교체와 동일하게 처리
     if (!existing || existing.rawRecords.length === 0) {

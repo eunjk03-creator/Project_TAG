@@ -17,13 +17,22 @@ import type { RawRecord, Employee } from '../src/types/tag'
   if (stored.rawRecords?.length) {
     rawRecords = stored.rawRecords
   } else if (stored.chunkCount) {
-    const chunks = await Promise.all(
-      Array.from({ length: stored.chunkCount }, (_, i) =>
-        prisma.sharedDataStore.findUnique({ where: { key: `attendance_records_${i}` } })
-          .then(r => (r?.data as { records?: RawRecord[] } | null)?.records ?? [])
-          .catch(() => [] as RawRecord[]),
-      ),
-    )
+    // 30개를 한꺼번에 Promise.all로 쏘면 Supabase pooler 동시연결이 스파이크됨 —
+    // AttendanceSourceContext.tsx의 기존 배치(4개씩) 패턴과 동일하게 제한.
+    const BATCH = 4
+    const chunks: RawRecord[][] = []
+    for (let start = 0; start < stored.chunkCount; start += BATCH) {
+      const idx = Array.from({ length: Math.min(BATCH, stored.chunkCount - start) }, (_, j) => start + j)
+      const batch = await Promise.all(
+        idx.map(i =>
+          prisma.sharedDataStore.findUnique({ where: { key: `attendance_records_${i}` } })
+            .then(r => (r?.data as { records?: RawRecord[] } | null)?.records ?? [])
+            .catch(() => [] as RawRecord[]),
+        ),
+      )
+      chunks.push(...batch)
+      console.log(`  청크 ${start + idx.length}/${stored.chunkCount} 로드`)
+    }
     rawRecords = chunks.flat()
   }
   console.log('rawRecords:', rawRecords.length)

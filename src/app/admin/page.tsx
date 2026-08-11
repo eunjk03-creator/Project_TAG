@@ -157,10 +157,12 @@ export default function AdminDashboard() {
     normalTags:    true,
     anomalyTags:   true,
     leaveSource:   true,
-    gasWorkAMins:  true,
-    breakH:        true,
-    payrollOtH:    true,
-    payrollNightH: true,
+    stayH:         true,
+    realWorkH:     true,
+    finalWorkH:    true,
+    payOtherH:     true,
+    payOtH:        true,
+    payNightH:     true,
     erpOtApplied:  true,
   })
   const [selectedDivisions,  setSelectedDivisions]  = useState<string[]>([])
@@ -779,9 +781,9 @@ export default function AdminDashboard() {
     // Mirror exactly what the table shows: false = hidden, absent = visible
     const ALL_DETAIL_IDS = [
       'division', 'empId', 'name', 'date', 'clockIn', 'clockOut',
-      'leaveAmt', 'leaveType', 'leaveSource', 'breakH',
-      'finalWorkH', 'attendanceStatus', 'normalTags', 'anomalyTags', 'systemOtH',
-      'payrollOtH', 'payrollNightH', 'payrollHolidayH', 'erpOtApplied',
+      'leaveAmt', 'leaveType', 'leaveSource', 'stayH', 'realWorkH', 'finalWorkH',
+      'attendanceStatus', 'normalTags', 'anomalyTags',
+      'payOtherH', 'payOtH', 'payNightH', 'otherH', 'otH', 'nightH', 'erpOtApplied',
     ]
     const visibleColIds = new Set(ALL_DETAIL_IDS.filter(id => tableColVisibility[id] !== false))
 
@@ -1540,9 +1542,9 @@ export default function AdminDashboard() {
                 const filename = `근태결과_${fmt6(dateRange.from)}-${fmt6(dateRange.to)}.xlsx`
                 const ALL_DETAIL_IDS = [
                   'division','empId','name','date','clockIn','clockOut',
-                  'leaveAmt','leaveType','leaveSource','breakH',
-                  'finalWorkH','attendanceStatus','normalTags','anomalyTags','systemOtH',
-                  'payrollOtH','payrollNightH','payrollHolidayH','erpOtApplied',
+                  'leaveAmt','leaveType','leaveSource','stayH','realWorkH',
+                  'attendanceStatus','normalTags','anomalyTags',
+                  'payOtherH','payOtH','payNightH','otherH','otH','nightH','erpOtApplied',
                 ]
                 const visibleColIds = new Set(ALL_DETAIL_IDS.filter(id => tableColVisibility[id] !== false))
                 exportTableXlsx(filtered, baseEmployees, filename, visibleColIds)

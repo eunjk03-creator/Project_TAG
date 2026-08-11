@@ -452,7 +452,9 @@ export function CsvUploader() {
   async function applyAll() {
     const allCaps = capsDataRefs.current.filter(Boolean) as Record<string, string>[][]
     const allErp  = erpDataRefs.current.filter(Boolean)  as Record<string, string>[][]
-    if (allCaps.length === 0 || allErp.length === 0) return
+    // CAPS/ERP 둘 다 없으면 할 게 없음 — 하나만 있어도 나머지는 mergeRawData가
+    // DB에 저장된 마지막 원본 스냅샷으로 채워서 정상 병합한다.
+    if (allCaps.length === 0 && allErp.length === 0) return
 
     const mergedCaps = allCaps.flat()
     const mergedErp  = allErp.flat()
@@ -786,15 +788,15 @@ export function CsvUploader() {
           </div>
 
           {/* Instruction footer */}
-          {(capsSlots.every(s => s.phase === 'idle') || erpSlots.every(s => s.phase === 'idle')) && (
+          {(capsSlots.every(s => s.phase === 'idle') && erpSlots.every(s => s.phase === 'idle')) && (
             <p className="mt-3 text-[10px] text-gray-400 text-center">
-              CAPS RAW + ERP 근태신청 필수 · 여러 파일 추가 가능 · Slack은 선택
+              CAPS RAW 또는 ERP 근태신청 — 한쪽만 올려도 자동 반영(나머지는 마지막 저장분 사용) · 여러 파일 추가 가능 · Slack은 선택
             </p>
           )}
           {(capsSlots.some(s => s.phase === 'ready') || erpSlots.some(s => s.phase === 'ready')) &&
            !(capsSlots.some(s => s.phase === 'ready') && erpSlots.some(s => s.phase === 'ready')) && (
             <p className="mt-3 text-[10px] text-blue-500 text-center font-medium">
-              나머지 파일을 업로드하면 자동 적용됩니다
+              이대로 자동 반영됩니다 (나머지 파일은 마지막 저장분을 그대로 사용)
             </p>
           )}
         </div>

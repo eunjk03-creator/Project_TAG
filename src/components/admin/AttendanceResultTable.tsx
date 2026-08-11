@@ -13,10 +13,8 @@ import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/ty
 import { EMPLOYEES } from '@/data/orgChart'
 import {
   parseTimeToMins,
-  computeGasNightMins,
-  computePayOtMins, computeLeaderPayOtMins,
   compute4141BreakMins, computeEffClockIn,
-  isLeaderOnDate,
+  computeRealHoursOtForRecord, floorTo30,
 } from '@/utils/attendanceCalc'
 
 // ── Row shape ─────────────────────────────────────────────────────────────
@@ -33,21 +31,23 @@ export interface GridRow {
   leaveAmt:       number
   leaveType:      string | null
   leaveSource:    string        // 'ERP' | 'Slack' | ''
-  gasWorkAMins:   number        // 근로A: 출근~퇴근 총 경과시간(gross, 휴게 차감 전)
-  breakH:         number        // 휴게: 4/1/4/1 레일 스킵값
-  finalWorkH:     number        // 최종근무: (근로A − 휴게) + 연차크레딧
+  // 6/7 — 실근무시간 기준(조기보정 없음, 08:00 floor만) 순체류/실근무
+  stayH:          number   // Col 6: 순체류 = clockOut − clockIn (raw, 08:00 floor)
+  realWorkH:      number   // Col 7: 실근무 = 순체류 − 4-1-4-1 자동휴게
+  finalWorkH:     number   // 최종근무 = 실근무 30분 단위 절삭 (게이트 없음)
   displayStatus:  string | null     // OT 계산용 내부 필드 (컬럼 미표시)
   attendanceStatus: '정상' | '비정상'
   normalTags:     string[]
   anomalyTags:    string[]
-  // Zone 2 — payroll reference (GAS leave-last formula, 30-min floor)
-  systemOtH:      number
-  payrollOtH:      number   // Col 16: 급여용연장 (hours) — Slack 패널티 시 0
-  slackOtH:        number   // Slack 주입 시 이론적 OT (표시용 dim red)
-  isSlackLeave:    boolean  // leaveType이 Slack 주입된 경우
-  payrollNightH:   number   // Col 17: 급여용야간 (hours)
-  payrollHolidayH: number   // Col 18: 급여용휴일 (hours)
-  erpOtStatus:    '신청' | '미신청' | '—'   // payrollOtH 기준 3-case
+  // 11~13 — 급여용 (ERP 연장신청 승인 게이트 + 30분 절삭, 직책 구분 없음)
+  payOtherH:      number   // Col 11: 급여용 소정외(1.0x)
+  payOtH:         number   // Col 12: 급여용 법정연장(1.5x)
+  payNightH:      number   // Col 13: 급여용 야간(+0.5x)
+  // 14~16 — 원본(raw, 1분 단위 정밀, 절삭·게이트 없음)
+  otherH:         number   // Col 14: 소정외(1.0x) raw
+  otH:            number   // Col 15: 법정연장(1.5x) raw
+  nightH:         number   // Col 16: 야간(+0.5x) raw
+  erpOtStatus:    '신청' | '미신청' | '—'   // Col 17: 연장신청 (휴일근로는 — 고정, 구글폼으로 별도 확인)
   auditFlag:      boolean
   note:           string
 }
@@ -67,7 +67,7 @@ export interface Props {
   selectedKeys?:            Set<string>
   onSelectionChange?:       (keys: Set<string>) => void
   otExemptIds?:             Set<string>
-  /** 엑셀 내보내기 — 테이블 내부 필터·정렬·토글(인정시간/실제값, 크레딧) 반영된 화면 표시 행 그대로 전달 */
+  /** 엑셀 내보내기 — 테이블 내부 필터·정렬·토글(인정시간/실제값) 반영된 화면 표시 행 그대로 전달 */
   onExport?:                (filteredRows: GridRow[]) => void
 }
 
@@ -185,39 +185,53 @@ const OPTIONAL_COL_GROUPS = [
   {
     label: 'T.A.G. 보조',
     cols: [
-      { id: 'leaveSource',  label: '연차정보' },
-      { id: 'gasWorkAMins', label: '근로A' },
-      { id: 'breakH',       label: '휴게' },
+      { id: 'leaveSource', label: '연차정보' },
+      { id: 'stayH',       label: '순체류' },
+      { id: 'realWorkH',   label: '실근무' },
+      { id: 'finalWorkH',  label: '최종근무' },
     ],
   },
   {
-    label: '급여 참조',
+    label: '급여 참조 (급여용, ERP게이트+30분절삭)',
     cols: [
-      { id: 'payrollOtH',      label: '급여용연장' },
-      { id: 'payrollNightH',   label: '급여용야간' },
-      { id: 'payrollHolidayH', label: '급여용휴일' },
-      { id: 'erpOtApplied',    label: 'ERP연장신청' },
+      { id: 'payOtherH', label: '급여용 소정외' },
+      { id: 'payOtH',    label: '급여용 법정연장' },
+      { id: 'payNightH', label: '급여용 야간' },
+      { id: 'erpOtApplied', label: '연장신청' },
+    ],
+  },
+  {
+    label: '원본 참조 (1분 단위 정밀)',
+    cols: [
+      { id: 'otherH', label: '소정외' },
+      { id: 'otH',    label: '법정연장' },
+      { id: 'nightH', label: '야간' },
     ],
   },
 ]
 
 // Columns that get an inline funnel filter button
-const FILTERABLE = new Set(['division', 'date', 'leaveAmt', 'leaveType', 'leaveSource', 'breakH', 'attendanceStatus', 'normalTags', 'anomalyTags', 'erpOtApplied'])
+const FILTERABLE = new Set(['division', 'date', 'leaveAmt', 'leaveType', 'leaveSource', 'attendanceStatus', 'normalTags', 'anomalyTags', 'erpOtApplied'])
 
 const COL_LABELS: Record<string, string> = {
   division: '본부', empId: '사번', name: '이름', date: '날짜',
   clockIn: '출근', clockOut: '퇴근',
   leaveAmt: '연차일수', leaveType: '연차코드', leaveSource: '연차정보',
-  gasWorkAMins: '근로A', breakH: '휴게',
-  finalWorkH: '최종근무',
+  stayH: '순체류', realWorkH: '실근무', finalWorkH: '최종근무',
   attendanceStatus: '근태상태',
   normalTags: '정상정보',
   anomalyTags: '비정상정보',
-  systemOtH: '초과근로', payrollOtH: '급여용연장',
-  payrollNightH: '급여용야간', payrollHolidayH: '급여용휴일', erpOtApplied: 'ERP연장신청',
+  payOtherH: '급여용 소정외', payOtH: '급여용 법정연장', payNightH: '급여용 야간',
+  otherH: '소정외', otH: '법정연장', nightH: '야간',
+  erpOtApplied: '연장신청',
 }
 
 const col = createColumnHelper<GridRow>()
+
+// 섹션 경계 — 이 컬럼들 왼쪽에 굵은 구분선 (출퇴근|연차정보|체류/근무|근태상태|급여용|원본|연장신청)
+const SECTION_BOUNDARY_COLS = new Set([
+  'leaveAmt', 'stayH', 'attendanceStatus', 'payOtherH', 'otherH', 'erpOtApplied',
+])
 
 // ── Inline filter popup (rendered via portal to escape overflow clip) ──────
 
@@ -226,7 +240,6 @@ function fmtOption(colId: string, val: unknown): string {
     return colId === 'leaveSource' ? '없음' : '없음'
   }
   if (colId === 'leaveAmt')  return `${Number(val)}일`
-  if (colId === 'breakH')    return `${Math.round(Number(val) * 60)}m`
   return String(val)
 }
 
@@ -413,8 +426,6 @@ export function AttendanceResultTable({
 }: Props) {
   const [showHolidayWork,  setShowHolidayWork]  = useState(false)
   const [showOver52h,      setShowOver52h]      = useState(false)
-  const [timeView,         setTimeView]         = useState<'인정시간' | '실제값'>('인정시간')
-  const [creditsOn,        setCreditsOn]        = useState(true)
   const [columnFilters,    setColumnFilters]    = useState<ColumnFiltersState>([])
   const [sorting,          setSorting]          = useState<SortingState>([
     { id: 'date', desc: true },
@@ -463,37 +474,23 @@ export function AttendanceResultTable({
     return src.map(r => {
       const emp        = empMap.get(r.employeeId)
       const empId      = emp?.rawId ?? r.employeeId.split('_')[0]
-      // r.isLeader(CAPS 자동감지, 날짜 무관 고정값)를 그대로 쓰면 발령일 이전 기록까지
-      // 전부 직책자로 취급돼 ERP 게이트가 통째로 안 걸림 — leaderFrom/leaderTo 있으면 그걸 우선한다.
-      const isLeaderToday = isLeaderOnDate(employeeAttrMap?.get(r.employeeId), emp, r.date)
       const leaveAmt   = r.erpLeaveAmount ?? 0
-      // 실제값: raw clockIn, 인정시간: 근무유형별 보정 출근시각 (오전반차 13:00, 오전반반차 10:00, 그 외 08:00 floor)
-      const isExactMode        = timeView === '실제값'
       const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
-      const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
-      // Button3(실제값): leaveType=null → std=480 → MAX(actualIn, 08:00) floor only, 연차보정 없음
+      // 조기출근 보정(오전반차→13:00, 오전반반차→10:00 스냅) 제거 — leaveType=null로 항상 호출해서
+      // 08:00 floor만 적용, 실제 출근시각 그대로 노출 (인정시간/실제값 두 모드 동일).
       // 외근: processRecord.ts(applyOffsiteEntry)가 9~18시 기본/조기출근/지연퇴근 규칙대로 이미
       // effectiveClockIn을 보정해둠 — 원본 태깅 시각(r.clockIn)으로 다시 계산하면, 외근으로 늦게
       // 태깅된 출근시각이 virtualIn+10h 기산점을 밀어버려 연장근로가 0으로 계산되는 버그가 있었음.
       const effectiveIn        = r.finalStatus === '외근'
         ? (r.effectiveClockIn ?? r.clockIn)
-        : isExactMode
-          ? computeEffClockIn(r.clockIn, null, true)
-          : computeEffClockIn(r.clockIn, r.leaveType, isErpLeaveApproved)
+        : computeEffClockIn(r.clockIn, null, true)
       const clockInMins        = effectiveIn ? parseTimeToMins(effectiveIn) : null
       const clockOutMins    = r.clockOut  ? parseTimeToMins(r.clockOut)  : null
       const isHoliday       = r.dayType !== 'WEEKDAY'
       // 4/1/4/1 슬라이딩 휴게: 분단위 연속값 (점심 +4h~+5h, 저녁 +9h~+10h)
       const elapsedMins     = (clockInMins !== null && clockOutMins !== null) ? Math.max(0, clockOutMins - clockInMins) : 0
       const displayBreakMins = isHoliday ? (r.breakMinutes ?? 0) : compute4141BreakMins(elapsedMins)
-      // 인정시간+creditsOn+ERP상신(Slack 미주입)일 때만 연차 크레딧 합산
-      const leaveCredit  = (!isExactMode && creditsOn && !r.isUnpaidLeave && !isSlackInjected)
-        ? leaveAmt * 8
-        : 0
-      // 근로A = 총 경과시간(gross, 휴게 차감 전) / 최종근무 = (근로A − 휴게) + 연차크레딧
-      const gasWorkAMins = elapsedMins
-      const netWorkMins  = Math.max(0, gasWorkAMins - displayBreakMins)
-      const finalWorkH   = isHoliday ? (r.holidayHours ?? 0) : netWorkMins / 60 + leaveCredit
+      const netWorkMins  = Math.max(0, elapsedMins - displayBreakMins)
       const leaveSource: string =
         isSlackInjected              ? 'Slack' :
         r.leaveType                  ? 'ERP' :
@@ -514,54 +511,37 @@ export function AttendanceResultTable({
 
       const attendanceStatus: '정상' | '비정상' = anomalyTags.length === 0 ? '정상' : '비정상'
 
+      // 실근무시간 기준 소정외(1.0x)/법정연장(1.5x)/야간 — 반차/반반차 조기보정 없음(08:00 floor만).
+      // 휴일근무는 별도 배율 체계라 소정외=0, 법정연장 슬롯에 기존 r.holidayHours(이미 검증된 값)를
+      // 그대로 넣는다(ERP 연장신청과 무관 — 구글폼으로 별도 확인) — 정확한 휴일 산식은 추후 확정 전까지의
+      // 최소 반영. 테이블/엑셀내보내기/그리드 3곳이 이 공용 함수(computeRealHoursOtForRecord)를 공유.
+      const realHoursOt = computeRealHoursOtForRecord(r)
+      const { stayMins, realWorkMins, otherMins, otMins, nightMins, payOtherH, payOtH, payNightH } = realHoursOt
+      const otherH = otherMins / 60
+      const otH    = otMins / 60
+      const nightH = nightMins / 60
+      const finalWorkH = floorTo30(realWorkMins / 60)
+
+      // 휴일근로는 연장신청(ERP) 체계 밖 — 구글폼으로 수기 확인하는 별도 프로세스라
+      // "연장근로" 태그·ERP상태 게이트를 안 걸고 "휴일근로" 하나만 표시한다.
       const normalTags: string[] = []
       if (r.finalStatus === '외근') normalTags.push('외근')
-      if (r.finalStatus === '휴일근무') normalTags.push('휴일근로')
-      if (r.overtimeHours > 0) normalTags.push('연장근로')
+      if (isHoliday) {
+        if (r.finalStatus === '휴일근무') normalTags.push('휴일근로')
+      } else {
+        if (otherH > 0 || otH > 0) normalTags.push('연장근로')
+      }
       if (normalTags.length === 0 && anomalyTags.length === 0 && r.clockIn !== null && r.dayType === 'WEEKDAY') normalTags.push('일반')
-      // Zone 2 — 급여 지표 v2 (Virtual In + 10h 기준선, 버튼 간 완전 격리)
-      // 초과근로 = 실제 근무시간 기준 raw OT(1분단위, 절삭 전) — ERP 연장신청 여부와 무관하게
-      // 항상 표시. "정상정보"의 연장근로 태그(r.overtimeHours 기준, 역시 ERP 무관)와 동일한
-      // 성격의 값이라 태그는 뜨는데 시간 컬럼은 비는 불일치를 없애고, ERP 미신청인데 실제로는
-      // 늦게 퇴근한 케이스를 감사(audit) 목적으로 바로 식별할 수 있게 한다.
-      // 급여용연장(payrollOtH)만 ERP 승인 게이트 + 30분 절삭을 유지 (실제 급여 인정 목적).
-      const systemOtMins   = isExactMode
-        ? computeLeaderPayOtMins(r.clockIn, r.clockOut, null, true)   // leaveType=null → 08:00 floor, no backtrack, no truncation, no guard
-        : (isLeaderToday
-          ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved)
-          : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved))
-      const systemOtH      = systemOtMins / 60
-      // 급여용 연장: Button1/2=ERP가드+30분절삭(직책자 노절삭), Button3=가드·절삭 모두 해제(초과근로와 동일)
-      const gasPayOtMins   = isExactMode
-        ? systemOtMins
-        : (isLeaderToday
-          ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved)
-          : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0))
-      // Slack 주입 시 이론적 OT (ERP 승인으로 가정) — 표시 전용, 총계 미반영
-      const isSlackLeave   = !!(r.leaveType && isSlackInjected)
-      const slackOtH       = isSlackLeave
-        ? (isLeaderToday
-          ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, true) / 60
-          : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, true) / 60 : 0))
-        : 0
-      // 급여용 야간: Button1/2=직책자 절삭없음·일반 30분절삭, Button3=전사 노절삭
-      const gasNightMins   = computeGasNightMins(r.clockOut, isExactMode ? true : isLeaderToday)
-      const payrollOtH     = gasPayOtMins / 60
-      const payrollNightH  = gasNightMins / 60
-      // 급여용 휴일근로: "최종근무"(r.holidayHours, processRecord.ts의 30분절삭+4단계 고정차감
-      // 공식으로 계산된 인정시간)와 항상 동일한 값을 쓴다 — 휴일근무는 인정값/실제값 토글과
-      // 무관하게 이 값 하나만 존재한다 (연장근로처럼 절삭 전 "실제값" 개념이 없음).
-      const payrollHolidayH = r.dayType !== 'WEEKDAY' ? (r.holidayHours ?? 0) : 0
-      const auditFlag  = (gasPayOtMins > 0 || gasNightMins > 0) && r.erpOtApplied !== true
-      // otExemptIds(발령일 범위를 모르는 고정 Set)를 여기 같이 걸면 예외규칙이 한 번이라도
-      // 있는 직원은 발령일 이전 기록까지 전부 '—'로 가려짐 — isLeaderToday(날짜 인지) 하나로 충분.
-      // otExemptIds는 이 파일 밖 어디에서도 실제로 조회되지 않는 값이라 여기서 빼도 안전함.
-      const isOtExempt = isLeaderToday
-      // payrollOtH는 미신청 시 0으로 강제되어 '미신청'을 절대 나타낼 수 없었음 — 실제
-      // 연장근로 여부(r.overtimeHours, ERP 게이트 적용 전 원시값) 기준으로 판정.
+
+      // 급여용 값이 있는데 ERP 미신청인 경우 감사(audit) 대상 — raw(소정외/법정연장/야간) 기준.
+      const auditFlag = !isHoliday && (otherH > 0 || otH > 0 || nightH > 0) && r.erpOtApplied !== true
+      // 연장근로(법정연장, otH) 기준 — 신청대상 여부와 무관하게 신청했으면 무조건 "신청",
+      // 신청대상(otH>0)인데 미신청이면 "미신청", 신청대상도 아니고 미신청이면 "—".
       const erpOtStatus: '신청' | '미신청' | '—' =
-        isOtExempt || r.overtimeHours === 0 ? '—' :
-        r.erpOtApplied                      ? '신청' : '미신청'
+        isHoliday        ? '—' :
+        r.erpOtApplied   ? '신청' :
+        otH > 0          ? '미신청' :
+        '—'
       return {
         record: r, division: emp?.division ?? '—', team: emp?.team ?? '', empId,
         name: emp?.name ?? r.employeeId,
@@ -569,10 +549,11 @@ export function AttendanceResultTable({
         clockIn:  effectiveIn ?? null,
         clockOut: r.clockOut ?? null,
         leaveAmt, leaveType: r.leaveType ?? null, leaveSource,
-        gasWorkAMins, breakH: displayBreakMins / 60,
-        finalWorkH, displayStatus,
+        stayH: stayMins / 60, realWorkH: realWorkMins / 60, finalWorkH,
+        displayStatus,
         attendanceStatus, normalTags, anomalyTags,
-        systemOtH, payrollOtH, slackOtH, isSlackLeave, payrollNightH, payrollHolidayH,
+        payOtherH, payOtH, payNightH,
+        otherH, otH, nightH,
         erpOtStatus,
         auditFlag,
         note: noteMap?.get(`${r.employeeId}_${r.date}`) ?? '',
@@ -581,7 +562,7 @@ export function AttendanceResultTable({
     // row-based list. Non-working days with punches (휴일근무) are preserved.
     // The calendar/grid view is unaffected (uses records directly).
     }).filter(row => row.record.dayType === 'WEEKDAY' || row.record.clockIn != null || row.record.clockOut != null)
-  }, [records, showHolidayWork, showOver52h, holidayWorkerIds, over52hEmployeeIds, empMap, employeeAttrMap, noteMap, timeView, creditsOn])
+  }, [records, showHolidayWork, showOver52h, holidayWorkerIds, over52hEmployeeIds, empMap, employeeAttrMap, noteMap])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const columns = useMemo<ColumnDef<GridRow, any>[]>(() => [
@@ -671,23 +652,22 @@ export function AttendanceResultTable({
         return <span className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-50 text-gray-600 border border-gray-200">{v}</span>
       },
     }),
-    col.accessor('gasWorkAMins', {
-      id: 'gasWorkAMins', header: () => <ColTip label="근로A" tip="출근~퇴근 총 경과시간 (휴가·휴게 차감 전)" />, size: 72, minSize: 55,
+    col.accessor('stayH', {
+      id: 'stayH', header: () => <ColTip label="순체류" tip="퇴근 − 출근 (물리적 체류시간, 조기보정 없음·08:00 floor만)" />, size: 72, minSize: 55,
       cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-gray-600 text-xs">{fmtH(i.getValue() / 60)}</span>
+        ? <span className="tabular-nums text-gray-600 text-xs">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
-    col.accessor('breakH', {
-      id: 'breakH', header: () => <ColTip label="휴게" tip="4/1/4/1 레일 스킵값 — 근로A 4h↑부터 점심 1h, 9h↑부터 저녁 1h 누적 (최대 2h)" />, size: 60, minSize: 48,
-      filterFn: numMultiSelectFilter,
+    col.accessor('realWorkH', {
+      id: 'realWorkH', header: () => <ColTip label="실근무" tip="순체류 − 4-1-4-1 자동휴게(최대 2h)" />, size: 72, minSize: 55,
       cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-gray-400 text-xs">{Math.round(i.getValue() * 60)}m</span>
+        ? <span className="tabular-nums text-xs font-semibold text-gray-800">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('finalWorkH', {
-      id: 'finalWorkH', header: () => <ColTip label="최종근무" tip="(근로A − 휴게) + 연차크레딧" />, size: 85, minSize: 70,
+      id: 'finalWorkH', header: () => <ColTip label="최종근무" tip="실근무를 30분 단위 절삭 (게이트 없음)" />, size: 72, minSize: 55,
       cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-xs font-semibold text-gray-800">{fmtH(i.getValue())}</span>
+        ? <span className="tabular-nums text-xs font-semibold text-gray-700">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('attendanceStatus', {
@@ -735,46 +715,53 @@ export function AttendanceResultTable({
         )
       },
     }),
-    // ── Zone 2: columns 13–16 (Payroll reference) ───────────────────────────
-    col.accessor('systemOtH', {
-      id: 'systemOtH', header: () => <ColTip label="초과근로" tip="MAX(0, 퇴근 − (Virtual In+10h)), 1분 단위 (급여용연장의 절삭 전 값, ERP 신청 여부 무관 — 실제 근무시간 기준 상시 표시)" />, size: 80, minSize: 65,
+    // ── 급여용 (11~13): ERP 연장신청 승인 게이트 + 30분 절삭, 직책 구분 없음 ──
+    col.accessor('payOtherH', {
+      id: 'payOtherH', header: () => <ColTip label="급여용 소정외" tip="소정외(1.0x)를 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
       cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-xs font-medium text-amber-600">{fmtH(i.getValue())}</span>
+        ? <span className="tabular-nums text-xs font-semibold text-amber-600">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
-    col.accessor('payrollOtH', {
-      id: 'payrollOtH', header: () => <ColTip label="급여용연장" tip="초과근로를 30분 단위 절사 (직책자 노절삭, 실제값 버튼은 절삭 없음)" />, size: 90, minSize: 72,
-      cell: i => {
-        const row = i.row.original
-        return i.getValue() > 0
-          ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
-          : <span className="text-gray-300">—</span>
-      },
+    col.accessor('payOtH', {
+      id: 'payOtH', header: () => <ColTip label="급여용 법정연장" tip="법정연장(1.5x)을 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
+      cell: i => i.getValue() > 0
+        ? <span className="tabular-nums text-xs font-semibold text-red-600">{fmtH(i.getValue())}</span>
+        : <span className="text-gray-300">—</span>,
     }),
-    col.accessor('payrollNightH', {
-      id: 'payrollNightH', header: () => <ColTip label="급여용야간" tip="22시 이후 근무시간, 30분 단위 절사 (직책자·실제값 버튼은 절삭 없음)" />, size: 90, minSize: 72,
+    col.accessor('payNightH', {
+      id: 'payNightH', header: () => <ColTip label="급여용 야간" tip="야간(+0.5x)을 ERP 연장신청 승인 게이트 + 30분 단위 절삭 (미신청 시 —)" />, size: 90, minSize: 72,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-semibold text-indigo-600">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
-    col.accessor('payrollHolidayH', {
-      id: 'payrollHolidayH', header: () => <ColTip label="급여용휴일" tip="휴일 실근무시간(4+1 패턴 휴게공제), 30분 단위 절사 (직책자·실제값 버튼은 절삭 없음)" />, size: 90, minSize: 72,
+    // ── 원본(14~16): 1분 단위 정밀, 절삭·게이트 없음 ──────────────────────
+    col.accessor('otherH', {
+      id: 'otherH', header: () => <ColTip label="소정외" tip="실근무가 소정근로(8h−크레딧)를 넘어 8h까지의 구간, 1분 단위" />, size: 80, minSize: 65,
       cell: i => i.getValue() > 0
-        ? <span className="tabular-nums text-xs font-semibold text-emerald-600">{fmtH(i.getValue())}</span>
+        ? <span className="tabular-nums text-xs font-medium text-amber-500">{fmtH(i.getValue())}</span>
+        : <span className="text-gray-300">—</span>,
+    }),
+    col.accessor('otH', {
+      id: 'otH', header: () => <ColTip label="법정연장" tip="실근무 8h 초과분, 1분 단위 (휴일근무는 기존 휴일근로 인정시간)" />, size: 80, minSize: 65,
+      cell: i => i.getValue() > 0
+        ? <span className="tabular-nums text-xs font-medium text-red-500">{fmtH(i.getValue())}</span>
+        : <span className="text-gray-300">—</span>,
+    }),
+    col.accessor('nightH', {
+      id: 'nightH', header: () => <ColTip label="야간" tip="22:00~익일06:00 실제 겹침, 1분 단위" />, size: 80, minSize: 65,
+      cell: i => i.getValue() > 0
+        ? <span className="tabular-nums text-xs font-medium text-indigo-500">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('erpOtStatus', {
-      id: 'erpOtApplied', header: () => <ColTip label="ERP연장신청" tip="ERP 연장근무 사전 신청 여부 및 신청 시간" />, size: 110, minSize: 85,
+      id: 'erpOtApplied', header: () => <ColTip label="연장신청" tip="신청했으면 무조건 신청, 신청대상(법정연장 발생)인데 미신청이면 미신청, 그 외(연장 미발생·휴일근로)는 —" />, size: 90, minSize: 75,
       filterFn: multiSelectFilter,
       cell: i => {
         const v = i.getValue() as '신청' | '미신청' | '—'
         if (v === '—') return <span className="text-gray-300 text-[10px]">—</span>
-        if (v === '신청') return (
-          <span className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-green-50 text-green-700 border-green-200">신청</span>
-        )
-        return (
-          <span className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-red-50 text-red-600 border-red-200">미신청</span>
-        )
+        return v === '신청'
+          ? <span className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-green-50 text-green-700 border-green-200">신청</span>
+          : <span className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-red-50 text-red-600 border-red-200">미신청</span>
       },
     }),
     col.accessor('note', {
@@ -825,39 +812,6 @@ export function AttendanceResultTable({
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
 
-      {/* ── 인정시간 / 실제값 탭 ───────────────────────────────────────────── */}
-      <div className="px-4 pt-2.5 pb-1.5 border-b border-gray-100 flex flex-col gap-1.5">
-        {/* 탭 전환 */}
-        <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-[11px] font-medium w-fit">
-          {(['인정시간', '실제값'] as const).map(tab => (
-            <button
-              key={tab}
-              onClick={() => setTimeView(tab)}
-              className={`px-2.5 py-1 rounded-md transition-all ${
-                timeView === tab
-                  ? 'bg-white text-gray-800 shadow-sm'
-                  : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-
-        {/* 크레딧 토글 — 인정시간 탭 바로 아래 */}
-        {timeView === '인정시간' && (
-          <button
-            onClick={() => setCreditsOn(prev => !prev)}
-            className={`w-fit px-1.5 py-px rounded text-[10px] leading-tight border transition-all ${
-              creditsOn
-                ? 'bg-indigo-50 border-indigo-300 text-indigo-600'
-                : 'bg-white border-gray-200 text-gray-400'
-            }`}
-          >
-            크레딧 {creditsOn ? 'ON' : 'OFF'}
-          </button>
-        )}
-      </div>
 
       {/* ── Slim toolbar ──────────────────────────────────────────────────── */}
       <div className="px-4 py-2 border-b border-gray-100 flex items-center gap-2 flex-wrap">
@@ -1027,11 +981,17 @@ export function AttendanceResultTable({
                   const isFiltered   = header.column.getIsFiltered()
                   const isFilterOpen = filterAnchor?.columnId === header.column.id
 
+                  // 급여용(payOtherH/payOtH/payNightH) vs 원본(otherH/otH/nightH) 그룹 경계 —
+                  // 헷갈린다는 피드백으로 원본 그룹 시작 컬럼에 굵은 구분선 추가.
+                  const isGroupBoundary = SECTION_BOUNDARY_COLS.has(header.column.id)
+
                   return (
                     <th
                       key={header.id}
                       style={{ width: header.getSize(), position: 'relative' }}
-                      className="px-2 py-2.5 text-[11px] text-gray-500 whitespace-nowrap select-none font-semibold"
+                      className={`px-2 py-2.5 text-[11px] text-gray-500 whitespace-nowrap select-none font-semibold ${
+                        isGroupBoundary ? 'border-l-2 border-l-gray-300' : ''
+                      }`}
                     >
                       <div className="flex items-center gap-0.5">
                         {/* Sort area */}
@@ -1136,7 +1096,9 @@ export function AttendanceResultTable({
                       <td
                         key={cell.id}
                         style={{ width: cell.column.getSize() }}
-                        className="px-3 py-2 text-center whitespace-nowrap overflow-hidden"
+                        className={`px-3 py-2 text-center whitespace-nowrap overflow-hidden ${
+                          SECTION_BOUNDARY_COLS.has(cell.column.id) ? 'border-l-2 border-l-gray-300' : ''
+                        }`}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>

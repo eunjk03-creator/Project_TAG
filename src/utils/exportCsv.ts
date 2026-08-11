@@ -2,11 +2,7 @@ import Papa from 'papaparse'
 import * as XLSX from 'xlsx-js-style'
 import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
 import type { GridRow } from '@/components/admin/AttendanceResultTable'
-import {
-  computeWorkA, parseTimeToMins, computeDisplayBreakMins,
-  computePayOtMins, computeLeaderPayOtMins, computeGasNightMins,
-  isLeaderOnDate,
-} from '@/utils/attendanceCalc'
+import { computeRealHoursOtForRecord, floorTo30 } from '@/utils/attendanceCalc'
 
 // 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE/LATE_AND_EARLY_DEPARTURE는
 // 재계산 전 캐시된 레코드 하위호환용 라벨(근태이상과 동일 취급).
@@ -180,16 +176,19 @@ const DETAIL_COL_DEFS: DetailColDef[] = [
   { id: 'leaveAmt',      header: '연차일수',          wch: 8  },
   { id: 'leaveType',     header: '연차코드',          wch: 10 },
   { id: 'leaveSource',   header: '연차정보',          wch: 8  },
-  { id: 'breakH',        header: '휴게',             wch: 6  },
-  { id: 'finalWorkH',       header: '최종근무(값)',    wch: 12 },
+  { id: 'stayH',            header: '순체류',          wch: 8  },
+  { id: 'realWorkH',        header: '실근무',          wch: 8  },
+  { id: 'finalWorkH',       header: '최종근무',        wch: 8  },
   { id: 'attendanceStatus', header: '근태상태',        wch: 8  },
   { id: 'normalTags',       header: '정상정보',        wch: 14 },
   { id: 'anomalyTags',      header: '비정상정보',      wch: 18 },
-  { id: 'systemOtH',        header: '시스템 초과근로', wch: 14 },
-  { id: 'payrollOtH',      header: '급여용 연장(최종)', wch: 16 },
-  { id: 'payrollNightH',   header: '급여용 야간(최종)', wch: 16 },
-  { id: 'payrollHolidayH', header: '급여용 휴일(최종)', wch: 16 },
-  { id: 'erpOtApplied',    header: 'ERP 연장 신청',    wch: 12 },
+  { id: 'payOtherH',   header: '급여용 소정외',   wch: 14 },
+  { id: 'payOtH',      header: '급여용 법정연장', wch: 14 },
+  { id: 'payNightH',   header: '급여용 야간',     wch: 14 },
+  { id: 'otherH',      header: '소정외',          wch: 10 },
+  { id: 'otH',         header: '법정연장',        wch: 10 },
+  { id: 'nightH',      header: '야간',            wch: 10 },
+  { id: 'erpOtApplied', header: '연장신청',       wch: 12 },
 ]
 
 function buildDetailRowData(
@@ -205,18 +204,7 @@ function buildDetailRowData(
     isSlackInjected  ? 'Slack' :
     r.leaveType      ? 'ERP' :
     null
-  const rawId = emp?.rawId ?? r.employeeId.split('_')[0]
-
-  const workA         = computeWorkA(r.effectiveClockIn ?? r.clockIn, r.clockOut)
-  const workAMins     = Math.round(workA * 60)
-  const ciMins        = (r.effectiveClockIn ?? r.clockIn) ? parseTimeToMins((r.effectiveClockIn ?? r.clockIn)!) : null
-  const coMins        = r.clockOut ? parseTimeToMins(r.clockOut) : null
-  const isHoliday     = r.dayType !== 'WEEKDAY'
-  const breakMins     = isHoliday ? r.breakMinutes : computeDisplayBreakMins(workAMins, ciMins, coMins, r.leaveType)
-  const breakHours    = breakMins / 60
-  const workBMins     = Math.max(0, workAMins - breakMins)
-  const leaveCredit   = r.isUnpaidLeave ? 0 : leaveAmt * 8
-  const finalWork     = isHoliday ? r.holidayHours : Math.max(0, workBMins / 60 + leaveCredit)
+  const isHoliday = r.dayType !== 'WEEKDAY'
 
   // 테이블과 동일한 태그 로직
   const anomalyTags: string[] = []
@@ -227,32 +215,27 @@ function buildDetailRowData(
 
   const attendanceStatus = anomalyTags.length === 0 ? '정상' : '비정상'
 
+  // 실근무시간 기준 순체류/실근무/소정외(1.0x)/법정연장(1.5x)/야간 — 테이블(AttendanceResultTable)/
+  // 그리드(EmployeeCalendarGrid)와 동일한 공용 함수(computeRealHoursOtForRecord) 재사용. 휴일근무는
+  // ERP 연장신청과 무관하게(구글폼으로 별도 확인) 소정외=0, 법정연장 슬롯에 기존 r.holidayHours.
+  const realHoursOt = computeRealHoursOtForRecord(r)
+  const { stayMins, realWorkMins, nightMins, otherMins, otMins, payOtherH, payOtH, payNightH } = realHoursOt
+  const otherH = otherMins / 60
+  const otH    = otMins / 60
+  const nightH = nightMins / 60
+  const finalWorkH = floorTo30(realWorkMins / 60)
+
+  // 휴일근로는 연장신청(ERP) 체계 밖 — 구글폼으로 수기 확인하는 별도 프로세스라
+  // "연장근로" 태그·ERP상태 게이트를 안 걸고 "휴일근로" 하나만 표시한다.
   const normalTags: string[] = []
   if (r.finalStatus === '외근')     normalTags.push('외근')
-  if (r.finalStatus === '휴일근무') normalTags.push('휴일근로')
-  if (r.overtimeHours > 0)         normalTags.push('연장근로')
+  if (isHoliday) {
+    if (r.finalStatus === '휴일근무') normalTags.push('휴일근로')
+  } else {
+    if (otherH > 0 || otH > 0) normalTags.push('연장근로')
+  }
   const isLeaveDay = !!(r.leaveType && ['연차','오전반차','오후반차','오전반반차','오후반반차','출장','재택근무'].includes(r.leaveType))
   if (normalTags.length === 0 && !isLeaveDay && r.dayType === 'WEEKDAY') normalTags.push('일반')
-
-  // r.isLeader(CAPS 자동감지, 날짜 무관 고정값)를 그대로 쓰면 발령일 이전 기록까지 전부
-  // 직책자로 취급됨 — leaderFrom/leaderTo가 설정돼 있으면 그걸 우선하는 공유 판별함수를 씀.
-  const isLeader           = isLeaderOnDate(attrs, emp, r.date)
-  const effectiveIn        = r.effectiveClockIn ?? r.clockIn
-  const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
-  // 시스템 초과근로: 절삭없음 기준 (직책자=raw clockIn, 일반=effectiveIn — 반차 ERP승인 게이트는 공통 적용)
-  const systemOtMins  = isLeader
-    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved)
-    : computeLeaderPayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved)
-  const systemOtH   = systemOtMins / 60
-  // 급여용 연장: 직책자=절삭없음+ERP무관(연장신청 자체는), 일반=30분절삭+ERP연장신청 필수
-  // (단, 반차 자체의 ERP 승인 여부는 직책자도 동일하게 게이트)
-  const gasPayOtMins = isLeader
-    ? computeLeaderPayOtMins(r.clockIn, r.clockOut, r.leaveType, isErpLeaveApproved)
-    : (r.erpOtApplied ? computePayOtMins(effectiveIn, r.clockOut, r.leaveType, isErpLeaveApproved) : 0)
-  const payrollOtH  = gasPayOtMins / 60
-  // 급여용 야간: 직책자=절삭없음, 일반=30분 절삭
-  const payrollNightH = computeGasNightMins(r.clockOut, isLeader) / 60
-  const erpOtLabel = r.erpOtApplied === true ? '신청' : r.erpOtApplied === false ? '미신청' : null
 
   return {
     division:      emp?.division ?? '',
@@ -264,15 +247,23 @@ function buildDetailRowData(
     leaveAmt:      leaveAmt > 0 ? leaveAmt : null,
     leaveType:     leaveCode,
     leaveSource,
-    breakH:           breakHours > 0 ? breakHours : null,
-    finalWorkH:       finalWork  > 0 ? finalWork  : null,
+    stayH:      stayMins / 60 > 0 ? stayMins / 60 : null,
+    realWorkH:  realWorkMins / 60 > 0 ? realWorkMins / 60 : null,
+    finalWorkH: finalWorkH > 0 ? finalWorkH : null,
     attendanceStatus,
     normalTags:       normalTags.length  > 0 ? normalTags.join(', ')  : null,
     anomalyTags:      anomalyTags.length > 0 ? anomalyTags.join(', ') : null,
-    systemOtH:        systemOtH  > 0 ? systemOtH  : null,
-    payrollOtH:    payrollOtH > 0 ? payrollOtH : null,
-    payrollNightH: payrollNightH > 0 ? payrollNightH : null,
-    erpOtApplied:  erpOtLabel,
+    payOtherH: payOtherH > 0 ? payOtherH : null,
+    payOtH:    payOtH    > 0 ? payOtH    : null,
+    payNightH: payNightH > 0 ? payNightH : null,
+    otherH: otherH > 0 ? otherH : null,
+    otH:    otH    > 0 ? otH    : null,
+    nightH: nightH > 0 ? nightH : null,
+    erpOtApplied:
+      isHoliday      ? '—' :
+      r.erpOtApplied ? '신청' :
+      otH > 0        ? '미신청' :
+      '—',
   }
 }
 
@@ -339,7 +330,7 @@ export function exportXlsx(
   }
 
   // Apply 0.00 number format to all numeric columns
-  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'breakH', 'finalWorkH', 'systemOtH', 'payrollOtH', 'payrollNightH', 'payrollHolidayH'])
+  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'stayH', 'realWorkH', 'finalWorkH', 'payOtherH', 'payOtH', 'payNightH', 'otherH', 'otH', 'nightH'])
   const numericColIndices = activeCols
     .map((c, i) => ({ id: c.id, idx: i }))
     .filter(({ id }) => NUMERIC_COL_IDS.has(id))
@@ -594,16 +585,19 @@ export function exportTableXlsx(
       leaveAmt:         row.leaveAmt > 0 ? row.leaveAmt : null,
       leaveType:        row.leaveType,
       leaveSource:      row.leaveSource || null,
-      breakH:           row.breakH > 0 ? row.breakH : null,
+      stayH:            row.stayH > 0 ? row.stayH : null,
+      realWorkH:        row.realWorkH > 0 ? row.realWorkH : null,
       finalWorkH:       row.finalWorkH > 0 ? row.finalWorkH : null,
       attendanceStatus: row.attendanceStatus,
       normalTags:       row.normalTags.length  > 0 ? row.normalTags.join(', ')  : null,
       anomalyTags:      row.anomalyTags.length > 0 ? row.anomalyTags.join(', ') : null,
-      systemOtH:        row.systemOtH  > 0 ? row.systemOtH  : null,
-      payrollOtH:       row.payrollOtH > 0 ? row.payrollOtH : null,
-      payrollNightH:    row.payrollNightH > 0 ? row.payrollNightH : null,
-      payrollHolidayH:  row.payrollHolidayH > 0 ? row.payrollHolidayH : null,
-      erpOtApplied:     row.erpOtStatus === '—' ? null : row.erpOtStatus,
+      payOtherH:        row.payOtherH > 0 ? row.payOtherH : null,
+      payOtH:           row.payOtH    > 0 ? row.payOtH    : null,
+      payNightH:        row.payNightH > 0 ? row.payNightH : null,
+      otherH:           row.otherH > 0 ? row.otherH : null,
+      otH:              row.otH    > 0 ? row.otH    : null,
+      nightH:           row.nightH > 0 ? row.nightH : null,
+      erpOtApplied:     row.erpOtStatus,
     }
     return activeCols.map(c => rowData[c.id] ?? null)
   })
@@ -622,7 +616,7 @@ export function exportTableXlsx(
     }
   }
 
-  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'breakH', 'finalWorkH', 'systemOtH', 'payrollOtH', 'payrollNightH', 'payrollHolidayH'])
+  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'stayH', 'realWorkH', 'finalWorkH', 'payOtherH', 'payOtH', 'payNightH', 'otherH', 'otH', 'nightH'])
   const numericColIndices = activeCols
     .map((c, i) => ({ id: c.id, idx: i }))
     .filter(({ id }) => NUMERIC_COL_IDS.has(id))

@@ -370,6 +370,97 @@ export function compute4141BreakMins(elapsedMins: number): number {
   return lunch + dinner
 }
 
+export interface RealHoursOtResult {
+  stayMins:     number   // 순체류
+  realWorkMins: number   // 실근무 (순체류 − 4/1/4/1 휴게)
+  otherMins:    number   // 소정외(1.0x) raw, 1분 단위
+  otMins:       number   // 법정연장(1.5x) raw, 1분 단위
+  nightMins:    number   // 야간(+0.5x) raw, 1분 단위 (22:00~익일06:00 실제 겹침)
+  payOtherH:    number   // 급여용 소정외 (ERP연장신청 게이트 + 30분 절삭)
+  payOtH:       number   // 급여용 법정연장 (ERP연장신청 게이트 + 30분 절삭)
+  payNightH:    number   // 급여용 야간 (ERP연장신청 게이트 + 30분 절삭)
+}
+
+/**
+ * 실근무시간 기준 소정외(1.0x)/법정연장(1.5x) 이원 계산.
+ * 반차/반반차의 조기출근 보정(13:00/10:00 스냅)은 없음 — 전사 공통 08:00 floor만 유지, 그 외엔
+ * 실제 clockIn 그대로 사용. credit(휴가 유급인정)은 ERP 승인 + 무급 아님일 때만 반영되고,
+ * 소정근로 = 8h−credit, 소정외는 그 이후부터 실근무 8h까지, 법정연장은 실근무 8h 초과분.
+ * 급여용 3종은 직책 구분 없이 동일하게 ERP 연장신청 승인 게이트 + 30분 절삭.
+ */
+export function computeRealHoursOt(params: {
+  clockIn:             string | null | undefined
+  clockOut:            string | null | undefined
+  leaveType:           ErpLeaveType | null | undefined
+  erpLeaveAmount:      number | null | undefined
+  isUnpaidLeave:       boolean | null | undefined
+  isErpLeaveApproved:  boolean
+  erpOtApplied:        boolean | null | undefined
+}): RealHoursOtResult {
+  const { clockIn, clockOut, leaveType, erpLeaveAmount, isUnpaidLeave, isErpLeaveApproved, erpOtApplied } = params
+  const empty = { stayMins: 0, realWorkMins: 0, otherMins: 0, otMins: 0, nightMins: 0, payOtherH: 0, payOtH: 0, payNightH: 0 }
+  if (!clockIn || !clockOut) return empty
+
+  const flexStartMins = 480 // 08:00 — 반차 전용 스냅 제거, 전사 공통 최저 floor만 유지
+  const inMins  = Math.max(parseTimeToMins(clockIn), flexStartMins)
+  const outMins = parseTimeToMins(clockOut)
+  const stayMins = Math.max(0, outMins - inMins)
+  const breakMins = compute4141BreakMins(stayMins)
+  const realWorkMins = Math.max(0, stayMins - breakMins)
+
+  const creditMins  = (leaveType && isErpLeaveApproved && !isUnpaidLeave) ? (erpLeaveAmount ?? 0) * 8 * 60 : 0
+  const stdWorkMins = Math.max(0, 480 - creditMins)
+  const otherMins = Math.min(Math.max(0, realWorkMins - stdWorkMins), 480 - stdWorkMins)
+  const otMins    = Math.max(0, realWorkMins - 480)
+
+  const nightStart = 1320, nightEnd = 1800 // 22:00 ~ 익일 06:00(1440+360)
+  const nightMins = Math.max(0, Math.min(outMins, nightEnd) - Math.max(inMins, nightStart))
+
+  const gate = erpOtApplied === true
+  const payOtherH = gate ? floorTo30(otherMins / 60) : 0
+  const payOtH    = gate ? floorTo30(otMins    / 60) : 0
+  const payNightH = gate ? floorTo30(nightMins / 60) : 0
+
+  return { stayMins, realWorkMins, otherMins, otMins, nightMins, payOtherH, payOtH, payNightH }
+}
+
+/**
+ * computeRealHoursOt의 ProcessedRecord 래퍼 — AttendanceResultTable.tsx/exportCsv.ts/
+ * EmployeeCalendarGrid.tsx 3곳에서 동일하게 재사용. 휴일근무(dayType!=='WEEKDAY')는
+ * 소정외=0, 법정연장 슬롯에 기존 r.holidayHours(이미 검증된 값)를 그대로 사용 —
+ * 순체류/실근무/야간은 휴일이어도 실제 시각 기준 그대로 계산.
+ */
+export function computeRealHoursOtForRecord(r: {
+  dayType:           DayType
+  clockIn?:          string | null
+  clockOut?:         string | null
+  leaveType?:        ErpLeaveType | null
+  erpLeaveAmount?:   number | null
+  isUnpaidLeave?:    boolean | null
+  verificationNote?: string[] | null
+  holidayHours?:     number | null
+  erpOtApplied?:     boolean | null
+}): RealHoursOtResult {
+  const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
+  const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
+  const base = computeRealHoursOt({
+    clockIn: r.clockIn, clockOut: r.clockOut, leaveType: r.leaveType,
+    erpLeaveAmount: r.erpLeaveAmount, isUnpaidLeave: r.isUnpaidLeave,
+    isErpLeaveApproved, erpOtApplied: r.erpOtApplied,
+  })
+  if (r.dayType === 'WEEKDAY') return base
+  // 휴일근로는 ERP 연장신청 체계 밖 — 구글폼으로 수기 확인하는 별도 프로세스라
+  // erpOtApplied 게이트를 걸지 않고 항상 표시한다 (미신청 이슈 자체가 없음).
+  return {
+    ...base,
+    otherMins: 0,
+    otMins:    (r.holidayHours ?? 0) * 60,
+    payOtherH: 0,
+    payOtH:    floorTo30(r.holidayHours ?? 0),
+    payNightH: 0,
+  }
+}
+
 /** 30분 단위 절삭 (시간 단위 입력) — EmployeeCalendarGrid.tsx/AllowanceTab.tsx/SummaryTab.tsx에
  *  각자 따로 있던 동일 구현을 여기로 통합. 새 집계 코드는 이걸 재사용할 것. */
 export function floorTo30(h: number): number {

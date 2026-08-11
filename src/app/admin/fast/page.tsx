@@ -84,8 +84,8 @@ export default function FastDashboard() {
   }
   const [tableColVisibility] = useState<Record<string, boolean>>({
     normalTags: true, anomalyTags: true, leaveSource: true,
-    gasWorkAMins: true, breakH: true,
-    payrollOtH: true, payrollNightH: true, erpOtApplied: true,
+    stayH: true, realWorkH: true, finalWorkH: true,
+    payOtherH: true, payOtH: true, payNightH: true, erpOtApplied: true,
   })
 
   // Reset grid page when filters change

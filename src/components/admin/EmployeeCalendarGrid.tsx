@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 import type { ProcessedRecord, Employee, RiskThresholds, EmployeeAttributeOverrides } from '@/types/tag'
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
-import { parseTimeToMins, compute4141BreakMins, computeVirtualInMins, isLeaderOnDate as isLeaderOnDateCore, computeDailyRecognizedHours } from '@/utils/attendanceCalc'
+import { parseTimeToMins, compute4141BreakMins, computeVirtualInMins, isLeaderOnDate as isLeaderOnDateCore, computeDailyRecognizedHours, computeRealHoursOtForRecord, floorTo30 } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
 
 // ── Internal status ────────────────────────────────────────────────────────
@@ -12,24 +12,22 @@ type Status = 'N' | 'OT' | 'L' | 'A' | 'H' | 'APPROVED' | 'WEEKEND' | 'ABSENT'
 type SortDir = 'none' | 'asc' | 'desc'
 
 // ── Column widths ──────────────────────────────────────────────────────────
-const W_NAME    = 100  // +20 vs base 80 to fit the selection checkbox
-const W_ORG     = 108   // merged 본부 + 팀/부서 into a single stacked cell
-const W_TOTAL   = 72
-const W_OT      = 48    // 분리됨
-const W_NIGHT   = 48    // 추가됨
-const W_HOLIDAY = 48    // 추가됨
-const W_ANOMALY = 44
-const W_CAT     = 66
-const W_DATE    = 62
+const W_NAME       = 100  // +20 vs base 80 to fit the selection checkbox
+const W_ORG        = 108   // merged 본부 + 팀/부서 into a single stacked cell
+const W_RECOGNIZED = 72    // 인정근로 (신규)
+const W_TOTAL      = 72
+const W_OT         = 48    // 분리됨
+const W_NIGHT      = 48    // 추가됨
+const W_HOLIDAY    = 48    // 추가됨
+const W_OT_RAW      = 48   // 연장(실근로용, 신규 — +/- 토글)
+const W_NIGHT_RAW   = 48   // 야간(실근로용, 신규 — +/- 토글)
+const W_HOLIDAY_RAW = 48   // 휴일(실근로용, 신규 — +/- 토글)
+const W_ANOMALY    = 44
+const W_CAT        = 66
+const W_DATE       = 62
 
 const L1        = 0
 const L2        = W_NAME                                         // 소속      left = 80
-const L3        = W_NAME + W_ORG                                 // 총 근로   left = 188
-const L_OT      = L3 + W_TOTAL                                   // 연장      left = 260
-const L_NIGHT   = L_OT + W_OT                                    // 야간      left = 308
-const L_HOLIDAY = L_NIGHT + W_NIGHT                              // 휴일      left = 356
-const L_ANOMALY = L_HOLIDAY + W_HOLIDAY                          // 이상      left = 404
-const L4        = L_ANOMALY + W_ANOMALY                          // 구분      left = 448
 
 const STICKY_SEP = '3px 0 6px -2px rgba(0,0,0,0.10)'
 
@@ -79,11 +77,6 @@ function fmt(h: number): string {
   const hh = Math.floor(totalMins / 60)
   const mm = totalMins % 60
   return mm > 0 ? `${hh}h ${mm}m` : `${hh}h`
-}
-
-/** Floor a decimal-hour value down to the nearest 30-minute boundary. */
-function floorTo30(h: number): number {
-  return Math.floor(h * 2) / 2
 }
 
 /** Splits a day's individually-submitted leave codes into AM/PM display buckets.
@@ -214,28 +207,41 @@ export function EmployeeCalendarGrid({
   }
 
   // ── Inline sort / filter state ─────────────────────────────────────────
-  type SortKey = 'name' | 'ot' | 'night' | 'holiday' | 'anomaly'
+  type SortKey = 'name' | 'recognized' | 'ot' | 'night' | 'holiday' | 'anomaly'
   const [sortKey,      setSortKey]      = useState<SortKey>('name')
   const [sortDir,      setSortDir]      = useState<SortDir>('none')
   const [filterDiv,    setFilterDiv]    = useState<string | null>(null)
   const [filterTeam,   setFilterTeam]   = useState<string | null>(null)
 
+  // onSortChange는 page.tsx의 별도 랭킹정렬(gridEmpStats)용 콜백 — 'recognized'(신규,
+  // 그리드 내부 전용 열)는 그 쪽 스탯에 없는 필드라 전달하지 않고 그리드 자체 정렬만 적용.
   function handleSort(key: SortKey) {
-    if (sortKey === key) {
-      const nextDir: SortDir = sortDir === 'none' ? (key === 'name' ? 'asc' : 'desc') : sortDir === 'asc' ? 'desc' : 'asc'
-      setSortDir(nextDir)
-      onSortChange?.(key, nextDir)
-    } else {
-      const nextDir: SortDir = key === 'name' ? 'asc' : 'desc'
-      setSortKey(key)
-      setSortDir(nextDir)
-      onSortChange?.(key, nextDir)
-    }
+    const nextDir: SortDir = sortKey === key
+      ? (sortDir === 'none' ? (key === 'name' ? 'asc' : 'desc') : sortDir === 'asc' ? 'desc' : 'asc')
+      : (key === 'name' ? 'asc' : 'desc')
+    setSortKey(key)
+    setSortDir(nextDir)
+    if (key !== 'recognized') onSortChange?.(key, nextDir)
   }
   const [openDropdown, setOpenDropdown] = useState<'org' | 'total' | null>(null)
   const [dropdownRect, setDropdownRect] = useState<DOMRect | null>(null)
   const [showAll,      setShowAll]      = useState(false)
   const [hoursFilter,  setHoursFilter]  = useState<'all' | 'over52' | 'over209'>('all')
+  // 실근로용(raw) 연장/야간/휴일 3열 — 기본 접힘, +/- 버튼으로 필요할 때만 펼침
+  const [showRawCols,  setShowRawCols]  = useState(false)
+
+  // 인정근로 열이 항상 추가되고, 실근로용 3열은 토글에 따라 밀림 — sticky left 오프셋을
+  // state 의존으로 함수 스코프에서 계산 (모듈 상수였던 이전 L3~L4를 대체).
+  const L_RECOGNIZED = W_NAME + W_ORG                        // 인정근로   (신규)
+  const L3           = L_RECOGNIZED + W_RECOGNIZED           // 총 근로
+  const L_OT         = L3 + W_TOTAL                          // 연장(급여용)
+  const L_NIGHT      = L_OT + W_OT                           // 야간(급여용)
+  const L_HOLIDAY    = L_NIGHT + W_NIGHT                     // 휴일(급여용)
+  const L_ANOMALY    = L_HOLIDAY + W_HOLIDAY                 // 이상
+  const L_OT_RAW     = L_ANOMALY + W_ANOMALY                 // 연장(실근로용, 토글)
+  const L_NIGHT_RAW  = L_OT_RAW + W_OT_RAW                   // 야간(실근로용, 토글)
+  const L_HOLIDAY_RAW = L_NIGHT_RAW + W_NIGHT_RAW            // 휴일(실근로용, 토글)
+  const L4 = showRawCols ? (L_HOLIDAY_RAW + W_HOLIDAY_RAW) : (L_ANOMALY + W_ANOMALY)   // 구분
 
   // Precompute the statutory ceiling once — used for filtering and bar rendering
   const maxLimit = getStatutoryLimit(dates.length)
@@ -287,6 +293,10 @@ const empStats = useMemo(() => {
     night: number; rawNight: number
     holiday: number; rawHoliday: number
     anomalies: number
+    // 실근무시간 기준 (신규) — recognized=인정근로, totalReal=총근로
+    recognized: number; totalReal: number
+    otPay: number; nightPay: number; holidayPay: number
+    otRaw: number; nightRaw: number; holidayRaw: number
   }> = {}
 
   for (const emp of employees) {
@@ -361,6 +371,26 @@ const empStats = useMemo(() => {
       if (r.dayType === 'WEEKDAY') return s
       return s + floorTo30(r.holidayHours ?? 0)
     }, 0)
+
+    // 실근무시간 기준 인정근로/총근로/연장/야간/휴일 — AttendanceResultTable.tsx와 동일한
+    // computeRealHoursOtForRecord 재사용. 직책자는 "30분절사"(급여용) 그룹만 0으로 고정
+    // (직책자는 절삭·게이트 개념 자체가 없음), "실근로용"(raw) 그룹은 동일하게 적용.
+    let recognized = 0, totalReal = 0
+    let otPay = 0, nightPay = 0, holidayPay = 0
+    let otRaw = 0, nightRaw = 0, holidayRaw = 0
+    for (const r of recs) {
+      const rh = computeRealHoursOtForRecord(r)
+      const isHolidayRec = r.dayType !== 'WEEKDAY'
+      recognized += floorTo30(rh.realWorkMins / 60)
+      totalReal  += rh.realWorkMins / 60
+      if (!isLeaderOnDate(r.date)) {
+        if (isHolidayRec) holidayPay += rh.payOtH
+        else { otPay += rh.payOtH; nightPay += rh.payNightH }
+      }
+      if (isHolidayRec) holidayRaw += rh.realWorkMins / 60
+      else { otRaw += rh.otMins / 60; nightRaw += rh.nightMins / 60 }
+    }
+
     stats[emp.id] = {
       total:      roundedTotal,
       nocreditTotal,
@@ -371,6 +401,9 @@ const empStats = useMemo(() => {
       rawNight:   exactNight,
       holiday:    roundedHoliday,
       rawHoliday,
+      recognized, totalReal,
+      otPay, nightPay, holidayPay,
+      otRaw, nightRaw, holidayRaw,
       anomalies: recs.filter(
         r => FINAL_STATUS_CATEGORY[r.finalStatus] === 'ANOMALY' &&
              !approvedKeys.has(`${r.employeeId}_${r.date}`),
@@ -435,18 +468,20 @@ const empStats = useMemo(() => {
       if (sortKey === 'name') {
         cmp = a.name.localeCompare(b.name, 'ko')
       } else {
-        const sa = empStats[a.id] ?? { ot: 0, night: 0, holiday: 0, anomalies: 0 }
-        const sb = empStats[b.id] ?? { ot: 0, night: 0, holiday: 0, anomalies: 0 }
-        const field = sortKey === 'ot' ? 'ot' : sortKey === 'night' ? 'night' : sortKey === 'holiday' ? 'holiday' : 'anomalies'
-        const prefix = timeMode === 'exact' ? 'raw' : ''
-        const cap = field.charAt(0).toUpperCase() + field.slice(1)
-        const getV = (s: Record<string, number>) =>
-          prefix ? (s[prefix + cap] ?? s[field]) : s[field]
-        cmp = getV(sa as Record<string, number>) - getV(sb as Record<string, number>)
+        const sa = empStats[a.id]
+        const sb = empStats[b.id]
+        // 화면에 실제 표시되는 새 공식 기준 필드로 정렬 (급여용/30분절사 그룹)
+        const field: 'recognized' | 'otPay' | 'nightPay' | 'holidayPay' | 'anomalies' =
+          sortKey === 'recognized' ? 'recognized' :
+          sortKey === 'ot'         ? 'otPay' :
+          sortKey === 'night'      ? 'nightPay' :
+          sortKey === 'holiday'    ? 'holidayPay' :
+          'anomalies'
+        cmp = (sa?.[field] ?? 0) - (sb?.[field] ?? 0)
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [filteredEmployees, sortKey, sortDir, empStats, timeMode])
+  }, [filteredEmployees, sortKey, sortDir, empStats])
 
   // Slice to 10 when risk mode is active and the user hasn't expanded yet
   const visibleEmployees = riskMode && !showAll
@@ -631,6 +666,20 @@ const empStats = useMemo(() => {
                   </button>
                 </th>
 
+                {/* 인정근로 — 최종근무(실근무 30분절삭) 합, 신규 */}
+                <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
+                  style={{ top: 0, left: L_RECOGNIZED, width: W_RECOGNIZED, minWidth: W_RECOGNIZED }}>
+                  <button
+                    onClick={() => handleSort('recognized')}
+                    className="flex items-center justify-center gap-0.5 w-full hover:text-gray-700 transition-colors"
+                    title="최종근무(실근무 30분절삭) 합"
+                  >
+                    <span className={sortKey === 'recognized' && sortDir !== 'none' ? 'text-blue-600' : ''}>인정근로</span>
+                    <SortIcon dir={sortKey === 'recognized' ? sortDir : 'none'} />
+                  </button>
+                </th>
+
+                {/* 총 근로 — 실근무(크레딧 미반영) 합 */}
                 <th className="sticky z-50 bg-gray-50 px-2 py-3 text-center text-[11px] font-semibold text-gray-500 border-l border-gray-200"
                   style={{ top: 0, left: L3, width: W_TOTAL, minWidth: W_TOTAL }}>
                   <button
@@ -662,9 +711,31 @@ const empStats = useMemo(() => {
                   </th>
                 ))}
 
-                <th className="sticky z-50 bg-gray-50 px-2 py-3 text-left text-[11px] font-semibold text-gray-500 border-l border-gray-200"
+                {/* 실근로용(raw) 연장/야간/휴일 — +/- 토글로만 노출 */}
+                {showRawCols && ([
+                  { key: 'otRaw',      label: '연장·실', left: L_OT_RAW,      w: W_OT_RAW      },
+                  { key: 'nightRaw',   label: '야간·실', left: L_NIGHT_RAW,   w: W_NIGHT_RAW   },
+                  { key: 'holidayRaw', label: '휴일·실', left: L_HOLIDAY_RAW, w: W_HOLIDAY_RAW },
+                ] as const).map(({ key, label, left, w }) => (
+                  <th key={key}
+                    className="sticky z-50 bg-amber-50 px-2 py-3 text-center text-[11px] font-semibold text-amber-700 border-l border-amber-200"
+                    style={{ top: 0, left, width: w, minWidth: w }}>
+                    {label}
+                  </th>
+                ))}
+
+                <th className="sticky z-50 bg-gray-50 px-1 py-3 text-left text-[11px] font-semibold text-gray-500 border-l border-gray-200"
                   style={{ top: 0, left: L4, width: W_CAT, minWidth: W_CAT, boxShadow: STICKY_SEP }}>
-                  구분
+                  <div className="flex items-center justify-between gap-0.5">
+                    구분
+                    <button
+                      onClick={() => setShowRawCols(v => !v)}
+                      title="실근로용(raw) 연장/야간/휴일 표시 토글"
+                      className="w-4 h-4 flex items-center justify-center rounded border border-gray-300 text-gray-500 hover:bg-gray-100 shrink-0"
+                    >
+                      {showRawCols ? '−' : '+'}
+                    </button>
+                  </div>
                 </th>
 
                 {dates.map(date => {
@@ -705,7 +776,12 @@ const empStats = useMemo(() => {
             ══════════════════════════════════════════════════════════════════ */}
             {visibleEmployees.map((emp, rowIdx) => {
               const empRecs   = lookup[emp.id] ?? {}
-              const s         = empStats[emp.id] ?? { total: 0, ot: 0, night: 0, holiday: 0, anomalies: 0 }
+              const s         = empStats[emp.id] ?? {
+                total: 0, nocreditTotal: 0, rawTotal: 0, ot: 0, rawOt: 0, night: 0, rawNight: 0,
+                holiday: 0, rawHoliday: 0, anomalies: 0,
+                recognized: 0, totalReal: 0, otPay: 0, nightPay: 0, holidayPay: 0,
+                otRaw: 0, nightRaw: 0, holidayRaw: 0,
+              }
               const isTopRisk = topRiskIds?.has(emp.id) ?? false
               const isLeaderOnDate = makeIsLeaderOnDate(emp.id)
               // 뱃지: 표시 기간 내 어느 날이라도 직책자면 표시
@@ -781,12 +857,21 @@ const empStats = useMemo(() => {
                       )}
                     </td>
 
-                    {/* 총 근로 — rowSpan 4 */}
+                    {/* 인정근로 — rowSpan 4 (최종근무=실근무 30분절삭 합, 신규) */}
+                    <td className={`${spanTd} border-l px-1 py-3 text-center`}
+                      style={{ left: L_RECOGNIZED, width: W_RECOGNIZED, minWidth: W_RECOGNIZED }}
+                      rowSpan={4}>
+                      <span className={`text-[12px] font-bold tabular-nums ${s.recognized > 0 ? 'text-gray-700' : 'text-gray-300'}`}>
+                        {fmt(s.recognized)}
+                      </span>
+                    </td>
+
+                    {/* 총 근로 — rowSpan 4 (실근무 합, 크레딧 미반영) */}
                     <td className={`${spanTd} border-l px-1.5 py-2 text-center`}
                       style={{ left: L3, width: W_TOTAL, minWidth: W_TOTAL }}
                       rowSpan={4}>
                       {(() => {
-                        const display = timeMode === 'exact' ? s.rawTotal : creditsOn ? s.total : s.nocreditTotal
+                        const display = s.totalReal
                         return (
                           <>
                             <span className="text-[12px] font-bold text-gray-800 tabular-nums block leading-tight">
@@ -823,7 +908,7 @@ const empStats = useMemo(() => {
                       style={{ left: L_OT, width: W_OT, minWidth: W_OT }}
                       rowSpan={4}>
                       {(() => {
-                        const displayOt = timeMode === 'exact' ? s.rawOt : s.ot
+                        const displayOt = s.otPay
                         return (
                           <span className={`text-[12px] font-bold tabular-nums ${
                             displayOt > riskThresholds.otRedH   ? 'text-red-500'
@@ -842,7 +927,7 @@ const empStats = useMemo(() => {
                       style={{ left: L_NIGHT, width: W_NIGHT, minWidth: W_NIGHT }}
                       rowSpan={4}>
                       {(() => {
-                        const displayNight = timeMode === 'exact' ? s.rawNight : s.night
+                        const displayNight = s.nightPay
                         return (
                           <span className={`text-[12px] font-bold tabular-nums ${displayNight > 0 ? 'text-blue-500' : 'text-gray-300'}`}>
                             {fmt(displayNight)}
@@ -856,7 +941,7 @@ const empStats = useMemo(() => {
                       style={{ left: L_HOLIDAY, width: W_HOLIDAY, minWidth: W_HOLIDAY }}
                       rowSpan={4}>
                       {(() => {
-                        const displayHoliday = timeMode === 'exact' ? s.rawHoliday : s.holiday
+                        const displayHoliday = s.holidayPay
                         return (
                           <span className={`text-[12px] font-bold tabular-nums ${displayHoliday > 0 ? 'text-violet-500' : 'text-gray-300'}`}>
                             {fmt(displayHoliday)}
@@ -873,6 +958,33 @@ const empStats = useMemo(() => {
                         {s.anomalies > 0 ? `${s.anomalies}건` : '0'}
                       </span>
                     </td>
+
+                    {/* 실근로용(raw) 연장/야간/휴일 — rowSpan 4, +/- 토글로만 노출 */}
+                    {showRawCols && (
+                      <>
+                        <td className={`${spanTd} border-l bg-amber-50/40 px-1 py-3 text-center`}
+                          style={{ left: L_OT_RAW, width: W_OT_RAW, minWidth: W_OT_RAW }}
+                          rowSpan={4}>
+                          <span className={`text-[12px] font-bold tabular-nums ${s.otRaw > 0 ? 'text-amber-600' : 'text-gray-300'}`}>
+                            {fmt(s.otRaw)}
+                          </span>
+                        </td>
+                        <td className={`${spanTd} border-l bg-amber-50/40 px-1 py-3 text-center`}
+                          style={{ left: L_NIGHT_RAW, width: W_NIGHT_RAW, minWidth: W_NIGHT_RAW }}
+                          rowSpan={4}>
+                          <span className={`text-[12px] font-bold tabular-nums ${s.nightRaw > 0 ? 'text-blue-600' : 'text-gray-300'}`}>
+                            {fmt(s.nightRaw)}
+                          </span>
+                        </td>
+                        <td className={`${spanTd} border-l bg-amber-50/40 px-1 py-3 text-center`}
+                          style={{ left: L_HOLIDAY_RAW, width: W_HOLIDAY_RAW, minWidth: W_HOLIDAY_RAW }}
+                          rowSpan={4}>
+                          <span className={`text-[12px] font-bold tabular-nums ${s.holidayRaw > 0 ? 'text-violet-600' : 'text-gray-300'}`}>
+                            {fmt(s.holidayRaw)}
+                          </span>
+                        </td>
+                      </>
+                    )}
 
                     {/* 구분: 출근 */}
                     <td className={`${catTd} border-b border-gray-100`}

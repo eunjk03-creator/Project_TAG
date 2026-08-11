@@ -7,7 +7,7 @@ import type {
   EmployeeAttributeOverrides,
   ErpLeaveType,
 } from '@/types/tag'
-import { normalizeLeaveType, computeDisplayBreakMins, computeEffInMins, computeVirtualInMins } from '@/utils/attendanceCalc'
+import { normalizeLeaveType, computeDisplayBreakMins, computeVirtualInMins, compute4141BreakMins } from '@/utils/attendanceCalc'
 
 export function parseTime(hhmm: string): number {
   const isNext = hhmm.startsWith('+')
@@ -570,9 +570,10 @@ export function processRecord(
       verificationNote: schedNote })
   }
 
-  // ERP 승인 반차 계열은 표준 출근 시각으로 스냅 (오전반반차→10:00, 오전반차→13:00)
-  // Slack 주입 반차(ERP 미신청)는 스냅 없이 08:00 floor만 적용
-  const effectiveInMins = computeEffInMins(actualInMins, effectiveLeaveType, !slackLeaveInjected)
+  // 조기출근 보정(오전반반차→10:00, 오전반차→13:00 스냅) 제거 — 실제 출근시각 그대로 쓰고
+  // 08:00 floor만 유지. 지각 판정(effectiveLateThreshold)은 이 값과 무관하게 별도로 이미
+  // 연차유형별 기준선(11:00/14:00 등)을 쓰고 있어서 영향 없음.
+  const effectiveInMins = Math.max(actualInMins, flexStartMins)
 
   // ERP 미상신(Slack전용) 반차는 인사 통제 대원칙에 따라 일반 마지노선(09:00) 적용.
   const effectiveLateThreshold =
@@ -594,7 +595,6 @@ export function processRecord(
   const outMins         = parseTime(clockOut)
   const rawStayMins     = outMins - effectiveInMins
   const breakMins       = computeDisplayBreakMins(rawStayMins, effectiveInMins, outMins, effectiveLeaveType)
-  const lunchDeducted   = outMins > lunchEndMins && effectiveInMins < lunchStartMins
   const elapsed         = Math.max(0, rawStayMins - breakMins)
 
   const leaveMinRequired: number | null =
@@ -606,23 +606,18 @@ export function processRecord(
     null
 
   const effectiveTargetMins = leaveMinRequired ?? effectiveStdH * 60
-  const standardOutMins     = effectiveInMins + effectiveTargetMins +
-    (lunchDeducted ? lunchEndMins - lunchStartMins : 0)
 
-  // OT 기산점 하한선: 반차 사용 여부와 무관하게 하루치 표준근무 이전에는 OT 미산정.
-  // 오전반차는 실제 출근이 오후이므로 기준 시작을 flexEndMins(09:00)로 고정.
-  const _isAMLeave  = effectiveLeaveType === '오전반차' || effectiveLeaveType === '오전반반차'
-  const _refInMins  = _isAMLeave ? flexEndMins : effectiveInMins
-  const _fullDayOut = _refInMins + effectiveStdH * 60
-    + (_refInMins < lunchStartMins ? lunchEndMins - lunchStartMins : 0)
-  const dinnerEndMins = Math.max(
-    standardOutMins + policy.dinnerGraceMinutes,
-    _fullDayOut    + policy.dinnerGraceMinutes,
-  )
-  const dinnerDeducted      = outMins > standardOutMins
+  // 연장근로 기산 — 점심시간(12:30~13:30) 겹침 여부와 무관하게, 실제 출근시각 기준 4-1-4-1
+  // (compute4141BreakMins, 4h~5h 점심 / 9h~10h 저녁 슬라이딩) 하나로 통일. 소정근로(effectiveStdH,
+  // 기본 8h) 초과분만 연장 인정 — 반차 등 연차유형과 무관 (반차 필요근무는 8h보다 항상 작아서
+  // 이 기준선이 어차피 더 늦게 잡힘). 휴일근무는 이 분기 자체를 안 타므로(별도 처리) 영향 없음.
+  const lunchDeducted  = rawStayMins > 240   // 4-1-4-1 점심 구간(4h) 진입
+  const dinnerDeducted = rawStayMins > 540   // 4-1-4-1 저녁 구간(9h) 진입
+  const otBreakMins    = compute4141BreakMins(rawStayMins)
+  const otNetMins      = Math.max(0, rawStayMins - otBreakMins)
 
   const regularHours   = Math.min(Math.max(elapsed, 0), effectiveTargetMins) / 60
-  const rawOtMins      = Math.max(0, outMins - dinnerEndMins)
+  const rawOtMins      = Math.max(0, otNetMins - effectiveStdH * 60)
   const otMins         = Math.floor(rawOtMins / policy.otUnitMinutes) * policy.otUnitMinutes
   const overtimeHours  = otMins / 60
 
