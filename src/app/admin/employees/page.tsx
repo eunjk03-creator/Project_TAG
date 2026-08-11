@@ -35,6 +35,7 @@ interface UnifiedRow {
   name:         string
   division:     string
   team:         string
+  departmentId: string | null
   jobTitle:     string
   contractType: string
   hireDate:     string | null
@@ -181,7 +182,7 @@ export default function EmployeesPage() {
     const rows: UnifiedRow[] = roster
       .filter(r => !reviewRawIds.has(r.rawId))
       .map(r => ({
-        rawId: r.rawId, name: r.name, division: r.division, team: r.team,
+        rawId: r.rawId, name: r.name, division: r.division, team: r.team, departmentId: r.departmentId,
         jobTitle: r.jobTitle, contractType: r.contractType,
         hireDate: r.hireDate, resignedDate: r.resignedDate,
         status: r.status as UnifiedStatus,
@@ -191,6 +192,7 @@ export default function EmployeesPage() {
       const known = rosterByRawId.get(c.rawId)  // inMaster=true면 부서/직책 등 실제 값을 채울 수 있음
       rows.push({
         rawId: c.rawId, name: c.name, division: known?.division ?? c.division, team: known?.team ?? '',
+        departmentId: known?.departmentId ?? null,
         jobTitle: known?.jobTitle ?? '', contractType: known?.contractType ?? '',
         hireDate: known?.hireDate ?? null, resignedDate: c.resignedFrom ?? null,
         status: 'REVIEW_RESIGN',
@@ -200,7 +202,7 @@ export default function EmployeesPage() {
     }
     for (const d of partTimerCandidates) {
       rows.push({
-        rawId: d.rawId, name: d.name, division: d.division, team: '',
+        rawId: d.rawId, name: d.name, division: d.division, team: '', departmentId: null,
         jobTitle: '', contractType: '', hireDate: null, resignedDate: null,
         status: 'REVIEW_PARTTIME', note: d.detail,
         hasCapsMatch: rawIdToEmployeeId.has(d.rawId),
@@ -234,6 +236,7 @@ export default function EmployeesPage() {
 
   const selectedRosterRow: RosterRow | null = selectedRow ? {
     rawId: selectedRow.rawId, name: selectedRow.name, division: selectedRow.division, team: selectedRow.team,
+    departmentId: selectedRow.departmentId,
     jobTitle: selectedRow.jobTitle, contractType: selectedRow.contractType, status: selectedRow.status,
     hireDate: selectedRow.hireDate, resignedDate: selectedRow.resignedDate,
   } : null
@@ -412,6 +415,7 @@ export default function EmployeesPage() {
           records={selectedRecords}
           periodLabel={`최근 ${WINDOW_DAYS}일`}
           onClose={() => setSelectedRow(null)}
+          onSaved={() => { refetchRoster(); refetchMasterActive() }}
         />
       )}
     </div>

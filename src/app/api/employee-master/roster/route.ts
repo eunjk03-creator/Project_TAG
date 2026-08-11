@@ -33,6 +33,7 @@ export interface RosterRow {
   name:         string
   division:     string
   team:         string
+  departmentId: string | null
   jobTitle:     string
   contractType: string
   status:       string
@@ -58,7 +59,7 @@ export async function GET() {
     const result: RosterRow[] = rows.map(e => {
       const { division, team } = resolveOrgPath(e.departmentId, byId)
       return {
-        rawId: e.rawId, name: e.name, division, team,
+        rawId: e.rawId, name: e.name, division, team, departmentId: e.departmentId,
         jobTitle: e.jobTitle, contractType: e.contractType, status: e.status,
         hireDate: e.hireDate ?? deriveHireDateFromRawId(e.rawId), resignedDate: e.resignedDate,
       }
