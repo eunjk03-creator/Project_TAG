@@ -84,7 +84,8 @@ export default function FastDashboard() {
   }
   const [tableColVisibility] = useState<Record<string, boolean>>({
     normalTags: true, anomalyTags: true, leaveSource: true,
-    stayH: true, realWorkH: true, finalWorkH: true,
+    stayH: true, realWorkH: true,
+    approvedWorkRawH: true, approvedWorkPayH: true, paidRecognizedH: true,
     payOtherH: true, payOtH: true, payNightH: true, erpOtApplied: true,
   })
 

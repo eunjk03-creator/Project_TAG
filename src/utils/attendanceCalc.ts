@@ -371,14 +371,17 @@ export function compute4141BreakMins(elapsedMins: number): number {
 }
 
 export interface RealHoursOtResult {
-  stayMins:     number   // 순체류
-  realWorkMins: number   // 실근무 (순체류 − 4/1/4/1 휴게)
-  otherMins:    number   // 소정외(1.0x) raw, 1분 단위
-  otMins:       number   // 법정연장(1.5x) raw, 1분 단위
-  nightMins:    number   // 야간(+0.5x) raw, 1분 단위 (22:00~익일06:00 실제 겹침)
-  payOtherH:    number   // 급여용 소정외 (ERP연장신청 게이트 + 30분 절삭)
-  payOtH:       number   // 급여용 법정연장 (ERP연장신청 게이트 + 30분 절삭)
-  payNightH:    number   // 급여용 야간 (ERP연장신청 게이트 + 30분 절삭)
+  stayMins:         number   // 순체류
+  realWorkMins:     number   // 실근무 (순체류 − 4/1/4/1 휴게)
+  otherMins:        number   // 소정외(1.0x) raw, 1분 단위
+  otMins:           number   // 법정연장(1.5x) raw, 1분 단위
+  nightMins:        number   // 야간(+0.5x) raw, 1분 단위 (22:00~익일06:00 실제 겹침)
+  payOtherH:        number   // 급여용 소정외 (ERP연장신청 게이트 + 30분 절삭)
+  payOtH:           number   // 급여용 법정연장 (ERP연장신청 게이트 + 30분 절삭)
+  payNightH:        number   // 급여용 야간 (ERP연장신청 게이트 + 30분 절삭)
+  approvedWorkRawH: number   // 승인근무(원본) — 실근무 − 미신청 연장, 1분 단위
+  approvedWorkPayH: number   // 승인근무(급여용) — 당일 소정시간 + 급여용 소정외 + 급여용 법정연장
+  paidRecognizedH:  number   // 유급인정시간 — 승인근무(급여용) + 휴가 Credit
 }
 
 /**
@@ -398,7 +401,11 @@ export function computeRealHoursOt(params: {
   erpOtApplied:        boolean | null | undefined
 }): RealHoursOtResult {
   const { clockIn, clockOut, leaveType, erpLeaveAmount, isUnpaidLeave, isErpLeaveApproved, erpOtApplied } = params
-  const empty = { stayMins: 0, realWorkMins: 0, otherMins: 0, otMins: 0, nightMins: 0, payOtherH: 0, payOtH: 0, payNightH: 0 }
+  const empty = {
+    stayMins: 0, realWorkMins: 0, otherMins: 0, otMins: 0, nightMins: 0,
+    payOtherH: 0, payOtH: 0, payNightH: 0,
+    approvedWorkRawH: 0, approvedWorkPayH: 0, paidRecognizedH: 0,
+  }
   if (!clockIn || !clockOut) return empty
 
   const flexStartMins = 480 // 08:00 — 반차 전용 스냅 제거, 전사 공통 최저 floor만 유지
@@ -421,7 +428,18 @@ export function computeRealHoursOt(params: {
   const payOtH    = gate ? floorTo30(otMins    / 60) : 0
   const payNightH = gate ? floorTo30(nightMins / 60) : 0
 
-  return { stayMins, realWorkMins, otherMins, otMins, nightMins, payOtherH, payOtH, payNightH }
+  // 승인근무(원본) — 연장신청 승인 시 실근무 전체 인정(1분 단위), 미신청 시 소정외+법정연장을
+  // 제외한 당일 소정시간만 인정.
+  const approvedWorkRawH = gate ? realWorkMins / 60 : (realWorkMins - otherMins - otMins) / 60
+  // 승인근무(급여용) — 당일 소정시간 + 급여용 소정외 + 급여용 법정연장 (30분 절삭 반영).
+  const approvedWorkPayH = stdWorkMins / 60 + payOtherH + payOtH
+  // 유급인정시간 — 승인근무(급여용) + 휴가 Credit.
+  const paidRecognizedH = approvedWorkPayH + creditMins / 60
+
+  return {
+    stayMins, realWorkMins, otherMins, otMins, nightMins, payOtherH, payOtH, payNightH,
+    approvedWorkRawH, approvedWorkPayH, paidRecognizedH,
+  }
 }
 
 /**
@@ -450,7 +468,8 @@ export function computeRealHoursOtForRecord(r: {
   })
   if (r.dayType === 'WEEKDAY') return base
   // 휴일근로는 ERP 연장신청 체계 밖 — 구글폼으로 수기 확인하는 별도 프로세스라
-  // erpOtApplied 게이트를 걸지 않고 항상 표시한다 (미신청 이슈 자체가 없음).
+  // erpOtApplied 게이트를 걸지 않고 항상 표시한다 (미신청 이슈 자체가 없음). 승인/소정시간
+  // 개념도 적용되지 않으므로 승인근무·유급인정은 실근무 그대로.
   return {
     ...base,
     otherMins: 0,
@@ -458,6 +477,9 @@ export function computeRealHoursOtForRecord(r: {
     payOtherH: 0,
     payOtH:    floorTo30(r.holidayHours ?? 0),
     payNightH: 0,
+    approvedWorkRawH: base.realWorkMins / 60,
+    approvedWorkPayH: base.realWorkMins / 60,
+    paidRecognizedH:  base.realWorkMins / 60,
   }
 }
 

@@ -159,7 +159,9 @@ export default function AdminDashboard() {
     leaveSource:   true,
     stayH:         true,
     realWorkH:     true,
-    finalWorkH:    true,
+    approvedWorkRawH: true,
+    approvedWorkPayH: true,
+    paidRecognizedH:  true,
     payOtherH:     true,
     payOtH:        true,
     payNightH:     true,
@@ -781,9 +783,10 @@ export default function AdminDashboard() {
     // Mirror exactly what the table shows: false = hidden, absent = visible
     const ALL_DETAIL_IDS = [
       'division', 'empId', 'name', 'date', 'clockIn', 'clockOut',
-      'leaveAmt', 'leaveType', 'leaveSource', 'stayH', 'realWorkH', 'finalWorkH',
+      'leaveAmt', 'leaveType', 'leaveSource', 'stayH', 'realWorkH',
+      'approvedWorkRawH', 'approvedWorkPayH', 'paidRecognizedH',
       'attendanceStatus', 'normalTags', 'anomalyTags',
-      'payOtherH', 'payOtH', 'payNightH', 'otherH', 'otH', 'nightH', 'erpOtApplied',
+      'otherH', 'otH', 'nightH', 'payOtherH', 'payOtH', 'payNightH', 'erpOtApplied',
     ]
     const visibleColIds = new Set(ALL_DETAIL_IDS.filter(id => tableColVisibility[id] !== false))
 

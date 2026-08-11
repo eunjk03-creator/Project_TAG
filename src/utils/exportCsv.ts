@@ -2,7 +2,7 @@ import Papa from 'papaparse'
 import * as XLSX from 'xlsx-js-style'
 import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
 import type { GridRow } from '@/components/admin/AttendanceResultTable'
-import { computeRealHoursOtForRecord, floorTo30 } from '@/utils/attendanceCalc'
+import { computeRealHoursOtForRecord } from '@/utils/attendanceCalc'
 
 // 3종 체계(지각/근무시간미달/미태깅) — EARLY_DEPARTURE/LATE_AND_EARLY_DEPARTURE는
 // 재계산 전 캐시된 레코드 하위호환용 라벨(근태이상과 동일 취급).
@@ -178,7 +178,9 @@ const DETAIL_COL_DEFS: DetailColDef[] = [
   { id: 'leaveSource',   header: '연차정보',          wch: 8  },
   { id: 'stayH',            header: '순체류',          wch: 8  },
   { id: 'realWorkH',        header: '실근무',          wch: 8  },
-  { id: 'finalWorkH',       header: '최종근무',        wch: 8  },
+  { id: 'approvedWorkRawH', header: '승인근무(원본)',   wch: 12 },
+  { id: 'approvedWorkPayH', header: '승인근무(급여용)', wch: 12 },
+  { id: 'paidRecognizedH',  header: '유급인정시간',     wch: 12 },
   { id: 'attendanceStatus', header: '근태상태',        wch: 8  },
   { id: 'normalTags',       header: '정상정보',        wch: 14 },
   { id: 'anomalyTags',      header: '비정상정보',      wch: 18 },
@@ -254,7 +256,7 @@ function buildDetailSheet(
   }
 
   // 숫자 포맷 (0.00)
-  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'stayH', 'realWorkH', 'finalWorkH', 'payOtherH', 'payOtH', 'payNightH', 'otherH', 'otH', 'nightH'])
+  const NUMERIC_COL_IDS = new Set(['leaveAmt', 'stayH', 'realWorkH', 'approvedWorkRawH', 'approvedWorkPayH', 'paidRecognizedH', 'payOtherH', 'payOtH', 'payNightH', 'otherH', 'otH', 'nightH'])
   const numericColIndices = activeCols
     .map((c, i) => ({ id: c.id, idx: i }))
     .filter(({ id }) => NUMERIC_COL_IDS.has(id))
@@ -329,11 +331,13 @@ function buildDetailRowData(
   // 그리드(EmployeeCalendarGrid)와 동일한 공용 함수(computeRealHoursOtForRecord) 재사용. 휴일근무는
   // ERP 연장신청과 무관하게(구글폼으로 별도 확인) 소정외=0, 법정연장 슬롯에 기존 r.holidayHours.
   const realHoursOt = computeRealHoursOtForRecord(r)
-  const { stayMins, realWorkMins, nightMins, otherMins, otMins, payOtherH, payOtH, payNightH } = realHoursOt
+  const {
+    stayMins, realWorkMins, nightMins, otherMins, otMins, payOtherH, payOtH, payNightH,
+    approvedWorkRawH, approvedWorkPayH, paidRecognizedH,
+  } = realHoursOt
   const otherH = otherMins / 60
   const otH    = otMins / 60
   const nightH = nightMins / 60
-  const finalWorkH = floorTo30(realWorkMins / 60)
 
   // 휴일근로는 연장신청(ERP) 체계 밖 — 구글폼으로 수기 확인하는 별도 프로세스라
   // "연장근로" 태그·ERP상태 게이트를 안 걸고 "휴일근로" 하나만 표시한다.
@@ -359,7 +363,9 @@ function buildDetailRowData(
     leaveSource,
     stayH:      stayMins / 60 > 0 ? stayMins / 60 : null,
     realWorkH:  realWorkMins / 60 > 0 ? realWorkMins / 60 : null,
-    finalWorkH: finalWorkH > 0 ? finalWorkH : null,
+    approvedWorkRawH: approvedWorkRawH > 0 ? approvedWorkRawH : null,
+    approvedWorkPayH: approvedWorkPayH > 0 ? approvedWorkPayH : null,
+    paidRecognizedH:  paidRecognizedH  > 0 ? paidRecognizedH  : null,
     attendanceStatus,
     normalTags:       normalTags.length  > 0 ? normalTags.join(', ')  : null,
     anomalyTags:      anomalyTags.length > 0 ? anomalyTags.join(', ') : null,
@@ -657,7 +663,9 @@ export function exportTableXlsx(
       leaveSource:      row.leaveSource || null,
       stayH:            row.stayH > 0 ? row.stayH : null,
       realWorkH:        row.realWorkH > 0 ? row.realWorkH : null,
-      finalWorkH:       row.finalWorkH > 0 ? row.finalWorkH : null,
+      approvedWorkRawH: row.approvedWorkRawH > 0 ? row.approvedWorkRawH : null,
+      approvedWorkPayH: row.approvedWorkPayH > 0 ? row.approvedWorkPayH : null,
+      paidRecognizedH:  row.paidRecognizedH  > 0 ? row.paidRecognizedH  : null,
       attendanceStatus: row.attendanceStatus,
       normalTags:       row.normalTags.length  > 0 ? row.normalTags.join(', ')  : null,
       anomalyTags:      row.anomalyTags.length > 0 ? row.anomalyTags.join(', ') : null,

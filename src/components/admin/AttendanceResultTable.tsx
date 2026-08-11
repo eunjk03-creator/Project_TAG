@@ -14,7 +14,7 @@ import { EMPLOYEES } from '@/data/orgChart'
 import {
   parseTimeToMins,
   compute4141BreakMins, computeEffClockIn,
-  computeRealHoursOtForRecord, floorTo30,
+  computeRealHoursOtForRecord,
 } from '@/utils/attendanceCalc'
 
 // ── Row shape ─────────────────────────────────────────────────────────────
@@ -34,7 +34,10 @@ export interface GridRow {
   // 6/7 — 실근무시간 기준(조기보정 없음, 08:00 floor만) 순체류/실근무
   stayH:          number   // Col 6: 순체류 = clockOut − clockIn (raw, 08:00 floor)
   realWorkH:      number   // Col 7: 실근무 = 순체류 − 4-1-4-1 자동휴게
-  finalWorkH:     number   // 최종근무 = 실근무 30분 단위 절삭 (게이트 없음)
+  // 8~10 — 승인/유급인정 (연장신청 게이트 반영)
+  approvedWorkRawH: number   // Col 8: 승인근무(원본) — 실근무 − 미신청 연장, 1분 단위
+  approvedWorkPayH: number   // Col 9: 승인근무(급여용) — 소정시간 + 급여용 소정외 + 급여용 법정연장
+  paidRecognizedH:  number   // Col 10: 유급인정시간 — 승인근무(급여용) + 휴가 Credit
   displayStatus:  string | null     // OT 계산용 내부 필드 (컬럼 미표시)
   attendanceStatus: '정상' | '비정상'
   normalTags:     string[]
@@ -188,7 +191,9 @@ const OPTIONAL_COL_GROUPS = [
       { id: 'leaveSource', label: '연차정보' },
       { id: 'stayH',       label: '순체류' },
       { id: 'realWorkH',   label: '실근무' },
-      { id: 'finalWorkH',  label: '최종근무' },
+      { id: 'approvedWorkRawH', label: '승인근무(원본)' },
+      { id: 'approvedWorkPayH', label: '승인근무(급여용)' },
+      { id: 'paidRecognizedH',  label: '유급인정시간' },
     ],
   },
   {
@@ -217,7 +222,8 @@ const COL_LABELS: Record<string, string> = {
   division: '본부', empId: '사번', name: '이름', date: '날짜',
   clockIn: '출근', clockOut: '퇴근',
   leaveAmt: '연차일수', leaveType: '연차코드', leaveSource: '연차정보',
-  stayH: '순체류', realWorkH: '실근무', finalWorkH: '최종근무',
+  stayH: '순체류', realWorkH: '실근무',
+  approvedWorkRawH: '승인근무(원본)', approvedWorkPayH: '승인근무(급여용)', paidRecognizedH: '유급인정시간',
   attendanceStatus: '근태상태',
   normalTags: '정상정보',
   anomalyTags: '비정상정보',
@@ -522,11 +528,13 @@ export function AttendanceResultTable({
       // 그대로 넣는다(ERP 연장신청과 무관 — 구글폼으로 별도 확인) — 정확한 휴일 산식은 추후 확정 전까지의
       // 최소 반영. 테이블/엑셀내보내기/그리드 3곳이 이 공용 함수(computeRealHoursOtForRecord)를 공유.
       const realHoursOt = computeRealHoursOtForRecord(r)
-      const { stayMins, realWorkMins, otherMins, otMins, nightMins, payOtherH, payOtH, payNightH } = realHoursOt
+      const {
+        stayMins, realWorkMins, otherMins, otMins, nightMins, payOtherH, payOtH, payNightH,
+        approvedWorkRawH, approvedWorkPayH, paidRecognizedH,
+      } = realHoursOt
       const otherH = otherMins / 60
       const otH    = otMins / 60
       const nightH = nightMins / 60
-      const finalWorkH = floorTo30(realWorkMins / 60)
 
       // 휴일근로는 연장신청(ERP) 체계 밖 — 구글폼으로 수기 확인하는 별도 프로세스라
       // "연장근로" 태그·ERP상태 게이트를 안 걸고 "휴일근로" 하나만 표시한다.
@@ -555,7 +563,8 @@ export function AttendanceResultTable({
         clockIn:  effectiveIn ?? null,
         clockOut: r.clockOut ?? null,
         leaveAmt, leaveType: r.leaveType ?? null, leaveSource,
-        stayH: stayMins / 60, realWorkH: realWorkMins / 60, finalWorkH,
+        stayH: stayMins / 60, realWorkH: realWorkMins / 60,
+        approvedWorkRawH, approvedWorkPayH, paidRecognizedH,
         displayStatus,
         attendanceStatus, normalTags, anomalyTags,
         payOtherH, payOtH, payNightH,
@@ -670,10 +679,22 @@ export function AttendanceResultTable({
         ? <span className="tabular-nums text-xs font-semibold text-gray-800">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
-    col.accessor('finalWorkH', {
-      id: 'finalWorkH', header: () => <ColTip label="최종근무" tip="실근무를 30분 단위 절삭 (게이트 없음)" />, size: 72, minSize: 55,
+    col.accessor('approvedWorkRawH', {
+      id: 'approvedWorkRawH', header: () => <ColTip label="승인근무(원본)" tip="연장신청 승인 시 실근무 전체(1분 단위), 미신청 시 소정외·법정연장 제외한 당일 소정시간만 인정" />, size: 90, minSize: 72,
       cell: i => i.getValue() > 0
         ? <span className="tabular-nums text-xs font-semibold text-gray-700">{fmtH(i.getValue())}</span>
+        : <span className="text-gray-300">—</span>,
+    }),
+    col.accessor('approvedWorkPayH', {
+      id: 'approvedWorkPayH', header: () => <ColTip label="승인근무(급여용)" tip="당일 소정시간 + 급여용 소정외 + 급여용 법정연장 (30분 절삭 반영)" />, size: 90, minSize: 72,
+      cell: i => i.getValue() > 0
+        ? <span className="tabular-nums text-xs font-semibold text-gray-700">{fmtH(i.getValue())}</span>
+        : <span className="text-gray-300">—</span>,
+    }),
+    col.accessor('paidRecognizedH', {
+      id: 'paidRecognizedH', header: () => <ColTip label="유급인정시간" tip="승인근무(급여용) + 휴가 Credit — 급여 지급 기준 총 인정시간" />, size: 90, minSize: 72,
+      cell: i => i.getValue() > 0
+        ? <span className="tabular-nums text-xs font-semibold text-blue-700">{fmtH(i.getValue())}</span>
         : <span className="text-gray-300">—</span>,
     }),
     col.accessor('attendanceStatus', {
