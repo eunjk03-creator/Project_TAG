@@ -414,6 +414,7 @@ export default function EmployeesPage() {
           row={selectedRosterRow}
           records={selectedRecords}
           periodLabel={`최근 ${WINDOW_DAYS}일`}
+          employeeId={rawIdToEmployeeId.get(selectedRosterRow.rawId) ?? null}
           onClose={() => setSelectedRow(null)}
           onSaved={() => { refetchRoster(); refetchMasterActive() }}
         />

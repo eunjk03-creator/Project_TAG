@@ -13,7 +13,7 @@ const RULES_PAGE_SIZE = 20
 
 // ── Config ────────────────────────────────────────────────────────────────
 
-const RULE_BADGE: Record<RuleType, { label: string; cls: string; desc: string }> = {
+export const RULE_BADGE: Record<RuleType, { label: string; cls: string; desc: string }> = {
   manager_exemption: {
     label: '직책자',
     desc:  'Manager Exemption',
