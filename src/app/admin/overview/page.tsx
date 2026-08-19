@@ -58,19 +58,41 @@ function EmptyNote({ text }: { text: string }) {
   return <p className="text-xs text-gray-400 text-center py-6">{text}</p>
 }
 
-/** Zone1 슬롯2 전용 — 일/주/월 공통으로 쓰는 이상치 미니 카드(sm 뱃지). */
-function AnomalySlotCard({
-  late, shortage, notag, sub, onClick,
-}: { late: number; shortage: number; notag: number; sub?: string; onClick: () => void }) {
+/** Zone1 맨 위 히어로 줄 한 칸 — 출근율/위험군/초과자(슬롯1) + 지각·미달·미태깅을
+ *  전부 같은 카드 안에 나란히 놓아서(구 슬롯1+슬롯2 통합) 여러 카드에 흩어져 보이지
+ *  않고 한 줄에서 바로 비교되게 한다. */
+function HeroMetricCol({
+  label, value, unit, sub, color, onClick,
+}: { label: string; value: string | number; unit?: string; sub?: string; color: string; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="text-left bg-white border border-gray-100 rounded-xl px-4 py-3.5 shadow-sm hover:shadow hover:-translate-y-px transition-all"
+      className="text-left px-4 py-3.5 first:pl-0 hover:bg-gray-50/70 rounded-lg transition-colors"
     >
-      <p className="text-xs font-semibold text-gray-400 mb-2">근태 이상치</p>
-      <AnomalyMetricBadges m={{ late, shortage, notag, leave: 0 }} />
-      {sub && <p className="text-[11px] text-gray-400 mt-2 truncate">{sub}</p>}
+      <p className="text-xs font-semibold text-gray-400">{label}</p>
+      <p className="text-2xl font-extrabold tabular-nums mt-1 leading-tight" style={{ color }}>
+        {value}{unit && <span className="text-xs font-semibold text-gray-300 ml-1">{unit}</span>}
+      </p>
+      {sub && <p className="text-[11px] text-gray-400 mt-1 truncate">{sub}</p>}
     </button>
+  )
+}
+
+/** 슬롯1(출근율/위험군/초과자) + 지각/미달/미태깅 4칸을 한 줄 전체폭 카드로. */
+function AnomalyHeroRow({
+  first, late, shortage, notag, onAnomalyClick,
+}: {
+  first: { label: string; value: string | number; unit?: string; sub?: string; color: string; onClick: () => void }
+  late: number; shortage: number; notag: number
+  onAnomalyClick: () => void
+}) {
+  return (
+    <div className="bg-white border border-gray-100 rounded-2xl shadow-sm px-4 grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-gray-100">
+      <HeroMetricCol {...first} />
+      <HeroMetricCol label="지각" value={late} unit="명" color="#b4650a" onClick={onAnomalyClick} />
+      <HeroMetricCol label="근무시간 미달" value={shortage} unit="명" color="#c4291f" onClick={onAnomalyClick} />
+      <HeroMetricCol label="미태깅" value={notag} unit="명" color="#c4291f" onClick={onAnomalyClick} />
+    </div>
   )
 }
 
@@ -370,32 +392,25 @@ export default function OverviewPage() {
         <span className="text-[10.5px] text-gray-300 ml-1">선택한 본부 기준으로 아래 숫자·그래프가 전부 바뀝니다</span>
       </div>
 
-      {/* ── Zone1: 일/주/월 전환해도 슬롯 4개의 틀은 고정, 슬롯 안의 지표만 바뀐다 ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* 슬롯1 — 출근율/위험군/초과자 */}
-        {period.granularity === 'day' && (
-          <KpiTile label="오늘 정상출근율" value={normalRate.pct.toFixed(1)} unit="%" color="#2f6fed"
-            sub={`(${normalRate.normal}/${normalRate.total})`}
-            onClick={() => openAndScroll('anomaly')} />
-        )}
-        {period.granularity === 'week' && (
-          <KpiTile label="주 52시간 위험군" value={weeklyRisk.danger} unit="명" color="#c4291f"
-            sub={`주의 ${weeklyRisk.caution} · 경고 ${weeklyRisk.warning} · 위험 ${weeklyRisk.danger}`}
-            onClick={() => openAndScroll('ot')} />
-        )}
-        {period.granularity === 'month' && (
-          <KpiTile label="월 209시간 초과자" value={overLimitRows.length} unit="명" color="#c4291f"
-            sub={`기준 ${overLimitHours}h`}
-            onClick={() => openAndScroll('ot')} />
-        )}
+      {/* ── Zone1: 일/주/월 전환해도 레이아웃 틀(히어로 1줄 + 타일 2칸)은 고정, 안의 지표만 바뀐다 ──
+           출근율/위험군/초과자(구 슬롯1)과 지각·미달·미태깅(구 슬롯2)을 4칸짜리 히어로 한 줄로
+           합쳐서, 서로 다른 세 정보가 좁은 카드 한 칸에 뭉쳐 보이던 것을 넓게 펼쳤다. ── */}
+      <AnomalyHeroRow
+        first={
+          period.granularity === 'day'
+            ? { label: '오늘 정상출근율', value: normalRate.pct.toFixed(1), unit: '%', color: '#2f6fed',
+                sub: `(${normalRate.normal}/${normalRate.total})`, onClick: () => openAndScroll('anomaly') }
+            : period.granularity === 'week'
+            ? { label: '주 52시간 위험군', value: weeklyRisk.danger, unit: '명', color: '#c4291f',
+                sub: `주의 ${weeklyRisk.caution} · 경고 ${weeklyRisk.warning} · 위험 ${weeklyRisk.danger}`, onClick: () => openAndScroll('ot') }
+            : { label: '월 209시간 초과자', value: overLimitRows.length, unit: '명', color: '#c4291f',
+                sub: `기준 ${overLimitHours}h`, onClick: () => openAndScroll('ot') }
+        }
+        late={anomalyTotals.late} shortage={anomalyTotals.shortage} notag={anomalyTotals.notag}
+        onAnomalyClick={() => openAndScroll('anomaly')}
+      />
 
-        {/* 슬롯2 — 이상치(지각/미달/미태깅), 일/주/월 공통 형태 */}
-        <AnomalySlotCard
-          late={anomalyTotals.late} shortage={anomalyTotals.shortage} notag={anomalyTotals.notag}
-          sub={period.granularity === 'month' && divAnomaly[0] ? `최다발생 ${divAnomaly[0].label}` : undefined}
-          onClick={() => openAndScroll('anomaly')}
-        />
-
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {/* 슬롯3 — 근무시간/수당 */}
         {period.granularity === 'day' && (
           <KpiTile label="오늘 초과근무" value={todayOt.length} unit="명" color="#2f6fed"
