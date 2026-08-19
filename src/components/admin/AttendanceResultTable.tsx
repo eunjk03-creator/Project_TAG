@@ -751,6 +751,10 @@ export function AttendanceResultTable({
       },
     }),
     // ── 원본(14~16): 1분 단위 정밀, 절삭·게이트 없음 ──────────────────────
+    // auditFlag(ERP 미신청 야간/연장 체류)는 신청주의 원칙상 회사의 법적 수당 지급 의무가
+    // 없는 케이스라 경영진 KPI 타일(종합현황 Zone1 등)에 별도 카운터로 올리지 않기로 확정됨
+    // — 감사 목적으로 이 상세 테이블/엑셀 내보내기에서만 하이라이트로 노출한다.
+    // (다른 화면에 "게이트키퍼 미신청 건수" 같은 위젯을 추가하려는 경우 이 결정을 먼저 확인할 것.)
     col.group({
       id: 'rawGroup',
       header: () => <ColTip label="실계산 (원본)" tip="절삭·게이트 없는 1분 단위 정밀 계산값 (급여용과 비교용)" />,
@@ -758,19 +762,19 @@ export function AttendanceResultTable({
         col.accessor('otherH', {
           id: 'otherH', header: () => <ColTip label="소정외" tip="실근무가 소정근로(8h−크레딧)를 넘어 8h까지의 구간, 1분 단위" />, size: 80, minSize: 65,
           cell: i => i.getValue() > 0
-            ? <span className="tabular-nums text-xs font-medium text-amber-500">{fmtH(i.getValue())}</span>
+            ? <span className={`tabular-nums text-xs font-medium text-amber-500 ${i.row.original.auditFlag ? 'px-1 rounded border border-dashed border-red-300 bg-red-50' : ''}`}>{fmtH(i.getValue())}</span>
             : <span className="text-gray-300">—</span>,
         }),
         col.accessor('otH', {
           id: 'otH', header: () => <ColTip label="법정연장" tip="실근무 8h 초과분, 1분 단위 (휴일근무는 기존 휴일근로 인정시간)" />, size: 80, minSize: 65,
           cell: i => i.getValue() > 0
-            ? <span className="tabular-nums text-xs font-medium text-red-500">{fmtH(i.getValue())}</span>
+            ? <span className={`tabular-nums text-xs font-medium text-red-500 ${i.row.original.auditFlag ? 'px-1 rounded border border-dashed border-red-300 bg-red-50' : ''}`}>{fmtH(i.getValue())}</span>
             : <span className="text-gray-300">—</span>,
         }),
         col.accessor('nightH', {
           id: 'nightH', header: () => <ColTip label="야간" tip="22:00~익일06:00 실제 겹침, 1분 단위" />, size: 80, minSize: 65,
           cell: i => i.getValue() > 0
-            ? <span className="tabular-nums text-xs font-medium text-indigo-500">{fmtH(i.getValue())}</span>
+            ? <span className={`tabular-nums text-xs font-medium text-indigo-500 ${i.row.original.auditFlag ? 'px-1 rounded border border-dashed border-red-300 bg-red-50' : ''}`}>{fmtH(i.getValue())}</span>
             : <span className="text-gray-300">—</span>,
         }),
       ],

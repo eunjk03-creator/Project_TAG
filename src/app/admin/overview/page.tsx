@@ -10,7 +10,12 @@ import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useProcessedAttendance } from '@/hooks/useProcessedAttendance'
 import { useManagementMetrics } from '@/hooks/useManagementMetrics'
-import { usePeriodRange, type PeriodGranularity } from '@/hooks/usePeriodRange'
+import { usePeriodRange } from '@/hooks/usePeriodRange'
+import { PeriodSelector } from '@/components/admin/PeriodSelector'
+import { AnomalyMetricBadges } from '@/components/admin/AnomalyMetricBadges'
+import { KpiTile } from '@/components/admin/KpiTile'
+import { DivisionSummaryCardGrid } from '@/components/admin/DivisionSummaryCardGrid'
+import { AnomalyPersonTable } from '@/components/admin/AnomalyPersonTable'
 import { useOrgMasterHeadcount } from '@/hooks/useOrgMasterHeadcount'
 import { useMasterActiveRoster } from '@/hooks/useMasterActiveRoster'
 import {
@@ -18,7 +23,10 @@ import {
   buildLeaveUsageRollup, buildTodayLeaveList,
   buildDailyOvertimeSeries, buildTodayOvertimeList,
   buildHolidayWorkRollup, buildTodayHolidayList,
-  computeOverLimitEmployees, buildMasterDiscrepancyRollup,
+  buildOffsiteRollup, buildTodayOffsiteList,
+  computeOverLimitEmployees, computeWeeklyRiskBuckets,
+  buildDivisionNormalRateRollup, buildWeeklyAnomalySeries,
+  buildMasterDiscrepancyRollup,
 } from '@/utils/overviewAggregations'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee } from '@/types/tag'
@@ -44,56 +52,18 @@ function EmptyNote({ text }: { text: string }) {
   return <p className="text-xs text-gray-400 text-center py-6">{text}</p>
 }
 
-/** 요약 타일 한 칸 — 클릭하면 해당 상세 아코디언이 펼쳐지며 스크롤된다. */
-function KpiTile({
-  label, value, unit, color, sub, onClick, wide,
-}: {
-  label: string; value: string | number; unit?: string; color: string; sub?: string
-  onClick: () => void; wide?: boolean
-}) {
+/** Zone1 슬롯2 전용 — 일/주/월 공통으로 쓰는 이상치 미니 카드(sm 뱃지). */
+function AnomalySlotCard({
+  late, shortage, notag, sub, onClick,
+}: { late: number; shortage: number; notag: number; sub?: string; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className={`text-left bg-white border border-gray-100 rounded-xl px-4 py-3.5 shadow-sm hover:shadow
-        hover:-translate-y-px transition-all ${wide ? 'col-span-2' : ''}`}
+      className="text-left bg-white border border-gray-100 rounded-xl px-4 py-3.5 shadow-sm hover:shadow hover:-translate-y-px transition-all"
     >
-      <p className="text-xs font-semibold text-gray-400 flex items-center gap-1.5">
-        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
-        {label}
-      </p>
-      <p className="text-3xl font-extrabold tabular-nums mt-1 leading-tight" style={{ color }}>
-        {value}{unit && <span className="text-sm font-semibold text-gray-300 ml-1">{unit}</span>}
-      </p>
-      {sub && <p className="text-[11px] text-gray-400 mt-1 truncate">{sub}</p>}
-    </button>
-  )
-}
-
-/** 이상치(지각·근무시간미달·미태깅) 3-in-1 요약 카드 — 항목이 묶여있음을 시각적으로 표현. */
-function AnomalyGroupCard({
-  late, shortage, notag, onClick,
-}: { late: number; shortage: number; notag: number; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="col-span-3 text-left bg-white border border-gray-100 rounded-xl px-4 py-3.5 shadow-sm
-        hover:shadow hover:-translate-y-px transition-all"
-    >
-      <p className="text-xs font-semibold text-gray-400 mb-2">근태 이상치 <span className="font-normal text-gray-300">· 지각 · 미달 · 미태깅</span></p>
-      <div className="grid grid-cols-3 divide-x divide-gray-100">
-        {[
-          { label: '지각', value: late, color: '#b4650a' },
-          { label: '근무시간 미달', value: shortage, color: '#c4291f' },
-          { label: '미태깅', value: notag, color: '#c4291f' },
-        ].map(it => (
-          <div key={it.label} className="px-3 first:pl-0">
-            <p className="text-xs text-gray-400 font-medium mb-0.5">{it.label}</p>
-            <p className="text-2xl font-extrabold tabular-nums leading-tight" style={{ color: it.color }}>
-              {it.value}<span className="text-xs font-semibold text-gray-300 ml-0.5">건</span>
-            </p>
-          </div>
-        ))}
-      </div>
+      <p className="text-xs font-semibold text-gray-400 mb-2">근태 이상치</p>
+      <AnomalyMetricBadges m={{ late, shortage, notag, leave: 0 }} />
+      {sub && <p className="text-[11px] text-gray-400 mt-2 truncate">{sub}</p>}
     </button>
   )
 }
@@ -271,7 +241,6 @@ export default function OverviewPage() {
     for (const r of overLimitRows) m.set(r.division, (m.get(r.division) ?? 0) + 1)
     return m
   }, [overLimitRows])
-  const otTileCount = period.granularity === 'day' ? todayOt.length : overLimitRows.length
   const otTileLabel = period.granularity === 'day' ? '오늘 초과근무'
     : period.granularity === 'week' ? '주 52시간 초과자' : '월 209시간 초과자'
 
@@ -318,6 +287,35 @@ export default function OverviewPage() {
     [overLimitByDivision],
   )
 
+  // ── 외근 — Zone1 슬롯4(부재현황)용. 휴가와 별개로 집계. ─────────────────────
+  const todayOffsite = useMemo(() => buildTodayOffsiteList(scopedRecords, empMap, todayForView), [scopedRecords, empMap, todayForView])
+  const empOffsite = useMemo(() => buildOffsiteRollup(scopedRecords, empMap, 'employee'), [scopedRecords, empMap])
+  const totalOffsiteCount = useMemo(() => empOffsite.reduce((s, r) => s + r.count, 0), [empOffsite])
+
+  // ── 주 52시간 위험군 — Zone1 슬롯1(주간뷰) + Zone2 주간 랭킹용 ────────────────
+  const weeklyRisk = useMemo(
+    () => period.granularity === 'week' ? computeWeeklyRiskBuckets(scopedRecords, scopedEmployees, finalAttrMap) : { caution: 0, warning: 0, danger: 0, rows: [] },
+    [scopedRecords, scopedEmployees, finalAttrMap, period.granularity],
+  )
+  const weeklyRiskByDivision = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of weeklyRisk.rows) m.set(r.division, (m.get(r.division) ?? 0) + 1)
+    return [...m.entries()].map(([division, count]) => ({ division, count })).sort((a, b) => b.count - a.count)
+  }, [weeklyRisk])
+
+  // ── 월간 Zone2 전용 — 본부별 정상출근율 정합성표 + 주차별 이상치 추이 ────────────
+  const divNormalRate = useMemo(
+    () => period.granularity === 'month' ? buildDivisionNormalRateRollup(scopedRecords, empMap) : [],
+    [scopedRecords, empMap, period.granularity],
+  )
+  const weeklyAnomalySeries = useMemo(
+    () => period.granularity === 'month' ? buildWeeklyAnomalySeries(scopedRecords, period.from, period.to) : [],
+    [scopedRecords, period.from, period.to, period.granularity],
+  )
+
+  // ── Zone2 뷰 토글 — 🏢 조직도 카드 / 📋 이상치 목록 ──────────────────────────
+  const [viewMode, setViewMode] = useState<'chart' | 'anomaly'>('chart')
+
   if (!isLiveData) {
     return (
       <div className="p-8">
@@ -334,36 +332,7 @@ export default function OverviewPage() {
           <h1 className="text-lg font-bold text-gray-900">종합 현황</h1>
           <p className="text-xs text-gray-400 mt-0.5">이상치 · 휴일근무 · 초과근무 · 휴가를 한눈에</p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex bg-gray-100 rounded-lg p-0.5">
-            {(['day', 'week', 'month'] as PeriodGranularity[]).map(g => (
-              <button
-                key={g}
-                onClick={() => period.setGranularity(g)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  period.granularity === g ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {g === 'day' ? '일' : g === 'week' ? '주' : '월'}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-lg px-1">
-            <button onClick={() => period.shift(-1)} className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-50">
-              ‹
-            </button>
-            <span className="text-xs font-medium text-gray-700 px-1.5 min-w-[120px] text-center tabular-nums">{period.label}</span>
-            <button onClick={() => period.shift(1)} className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-50">
-              ›
-            </button>
-          </div>
-          <button
-            onClick={period.goToday}
-            className="px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            오늘
-          </button>
-        </div>
+        <PeriodSelector period={period} />
       </div>
 
       {/* ── 본부 필터 ── */}
@@ -391,79 +360,162 @@ export default function OverviewPage() {
         <span className="text-[10.5px] text-gray-300 ml-1">선택한 본부 기준으로 아래 숫자·그래프가 전부 바뀝니다</span>
       </div>
 
-      {/* ── 요약 타일: 일 = 플렉스 스타일 히어로(도넛+인라인), 주/월 = 이상치 그룹카드+3개 타일 ── */}
-      {period.granularity === 'day' ? (
-        <>
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 grid grid-cols-1 md:grid-cols-[auto_1px_1fr] gap-5 items-center">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={[{ value: normalRate.normal }, { value: Math.max(0, normalRate.total - normalRate.normal) }]}
-                      dataKey="value" innerRadius={22} outerRadius={32} startAngle={90} endAngle={-270} stroke="none"
-                    >
-                      {PIE_COLORS.map((c, i) => <Cell key={i} fill={c} />)}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div>
-                <p className="text-xs text-gray-400">오늘 출근율</p>
-                <p className="text-2xl font-extrabold tabular-nums text-gray-900">{normalRate.pct.toFixed(1)}%</p>
-                <p className="text-xs text-gray-400 tabular-nums">({normalRate.normal}/{normalRate.total})</p>
-              </div>
-            </div>
-            <div className="hidden md:block bg-gray-100 w-px h-full" />
-            <button
-              onClick={() => openAndScroll('anomaly')}
-              className="grid grid-cols-3 divide-x divide-gray-100 text-left hover:bg-gray-50/60 rounded-xl transition-colors -mx-2 px-2 py-1"
-            >
-              {[
-                { label: '지각', value: anomalyTotals.late, color: '#b4650a' },
-                { label: '근무시간 미달', value: anomalyTotals.shortage, color: '#c4291f' },
-                { label: '미태깅', value: anomalyTotals.notag, color: '#c4291f' },
-              ].map(it => (
-                <div key={it.label} className="px-3 first:pl-0">
-                  <p className="text-xs text-gray-400 font-medium mb-0.5">{it.label}</p>
-                  <p className="text-2xl font-extrabold tabular-nums leading-tight" style={{ color: it.color }}>
-                    {it.value}<span className="text-xs font-semibold text-gray-300 ml-0.5">명</span>
-                  </p>
-                </div>
-              ))}
-            </button>
-          </div>
-          <div className={`grid gap-3 ${isHolidayToday ? 'grid-cols-3' : 'grid-cols-2'}`}>
-            {isHolidayToday && (
-              <KpiTile label="휴일근무" value={todayHoliday.length} unit="명" color="#6d3fd1"
-                sub={todayHoliday.length === 0 ? '오늘 휴일근무 없음' : '눌러서 시간·명단 보기'}
-                onClick={() => openAndScroll('holiday')} />
-            )}
-            <KpiTile label={otTileLabel} value={otTileCount} unit="명" color="#2f6fed"
-              sub={`기간 합계 ${fmtH(totalOtH)}`}
-              onClick={() => openAndScroll('ot')} />
-            <KpiTile label="휴가" value={todayLeave.length} unit="명" color="#6d3fd1"
-              sub={todayLeave.length === 0 ? '오늘 휴가 없음' : `사용일수 ${fmtDays(totalLeaveDays)}일`}
-              onClick={() => openAndScroll('leave')} />
-          </div>
-        </>
-      ) : (
-        <div className="grid grid-cols-6 gap-3">
-          <AnomalyGroupCard
-            late={anomalyTotals.late} shortage={anomalyTotals.shortage} notag={anomalyTotals.notag}
-            onClick={() => openAndScroll('anomaly')}
-          />
-          <KpiTile label="휴일근무" value={empHoliday.length} unit="명" color="#6d3fd1"
-            sub={`합계 ${fmtH(totalHolidayH)}`}
-            onClick={() => openAndScroll('holiday')} />
-          <KpiTile label={otTileLabel} value={otTileCount} unit="명" color="#2f6fed"
+      {/* ── Zone1: 일/주/월 전환해도 슬롯 4개의 틀은 고정, 슬롯 안의 지표만 바뀐다 ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* 슬롯1 — 출근율/위험군/초과자 */}
+        {period.granularity === 'day' && (
+          <KpiTile label="오늘 정상출근율" value={normalRate.pct.toFixed(1)} unit="%" color="#2f6fed"
+            sub={`(${normalRate.normal}/${normalRate.total})`}
+            onClick={() => openAndScroll('anomaly')} />
+        )}
+        {period.granularity === 'week' && (
+          <KpiTile label="주 52시간 위험군" value={weeklyRisk.danger} unit="명" color="#c4291f"
+            sub={`주의 ${weeklyRisk.caution} · 경고 ${weeklyRisk.warning} · 위험 ${weeklyRisk.danger}`}
+            onClick={() => openAndScroll('ot')} />
+        )}
+        {period.granularity === 'month' && (
+          <KpiTile label="월 209시간 초과자" value={overLimitRows.length} unit="명" color="#c4291f"
             sub={`기준 ${overLimitHours}h`}
             onClick={() => openAndScroll('ot')} />
-          <KpiTile label="휴가 사용" value={empLeave.length} unit="명" color="#6d3fd1"
-            sub={`사용일수 ${fmtDays(totalLeaveDays)}일`}
+        )}
+
+        {/* 슬롯2 — 이상치(지각/미달/미태깅), 일/주/월 공통 형태 */}
+        <AnomalySlotCard
+          late={anomalyTotals.late} shortage={anomalyTotals.shortage} notag={anomalyTotals.notag}
+          sub={period.granularity === 'month' && divAnomaly[0] ? `최다발생 ${divAnomaly[0].label}` : undefined}
+          onClick={() => openAndScroll('anomaly')}
+        />
+
+        {/* 슬롯3 — 근무시간/수당 */}
+        {period.granularity === 'day' && (
+          <KpiTile label="오늘 초과근무" value={todayOt.length} unit="명" color="#2f6fed"
+            sub={`기간 합계 ${fmtH(totalOtH)}`}
+            onClick={() => openAndScroll('ot')} />
+        )}
+        {period.granularity === 'week' && (
+          <KpiTile label="주간 평균 실근무시간" value={fmtH(total.headcount > 0 ? total.totalHours / total.headcount : 0)} color="#2f6fed"
+            sub={`전체 ${total.headcount}명 기준`}
+            onClick={() => openAndScroll('ot')} />
+        )}
+        {period.granularity === 'month' && (
+          <KpiTile label="월간 총 초과근로시간" value={fmtH(totalOtH)} color="#2f6fed"
+            sub="전사 누적 합계"
+            onClick={() => openAndScroll('ot')} />
+        )}
+
+        {/* 슬롯4 — 부재/휴가 (월간 "소진율"은 부여일수 데이터가 없어 1차는 누적사용일수만 표시) */}
+        {period.granularity === 'day' && (
+          <KpiTile label="오늘의 부재현황" value={todayLeave.length + todayOffsite.length} unit="명" color="#6d3fd1"
+            sub={`휴가 ${todayLeave.length} · 외근 ${todayOffsite.length}`}
             onClick={() => openAndScroll('leave')} />
+        )}
+        {period.granularity === 'week' && (
+          <KpiTile label="주간 휴가·부재 현황" value={empLeave.length} unit="명" color="#6d3fd1"
+            sub={`휴가 ${empLeave.length}명 · 외근 ${totalOffsiteCount}건`}
+            onClick={() => openAndScroll('leave')} />
+        )}
+        {period.granularity === 'month' && (
+          <KpiTile label="연차 소진율" value={fmtDays(totalLeaveDays)} unit="일" color="#6d3fd1"
+            sub="누적 사용일수 · 소진율(%) 계산은 준비중"
+            onClick={() => openAndScroll('leave')} />
+        )}
+      </div>
+
+      {/* ── Zone2: 🏢 조직도 카드 뷰 / 📋 이상치 목록 뷰 토글 ── */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <p className="text-xs font-semibold text-gray-400">부서별 현황</p>
+          <div className="flex bg-gray-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setViewMode('chart')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                viewMode === 'chart' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              🏢 조직도 카드
+            </button>
+            <button
+              onClick={() => setViewMode('anomaly')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                viewMode === 'anomaly' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              📋 이상치 목록
+            </button>
+          </div>
         </div>
-      )}
+
+        {viewMode === 'chart' ? (
+          <DivisionSummaryCardGrid
+            divisions={metrics}
+            divAnomaly={divAnomaly}
+            divLeave={divLeave}
+            divHoliday={divHoliday}
+            showHolidayBadge={period.granularity !== 'day' || isHolidayToday}
+          />
+        ) : (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+            <AnomalyPersonTable
+              rows={empAnomaly.map(r => ({ key: r.key, name: r.label, division: r.division, late: r.late, shortage: r.shortage, notag: r.notag, total: r.total }))}
+              showDivisionCol
+            />
+          </div>
+        )}
+
+        {period.granularity === 'week' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <DivisionCompareChart
+              title="본부별 주간 평균 근로시간" color="#2f6fed" unit="h"
+              data={metrics.map(m => ({ label: m.division, value: m.headcount > 0 ? Math.round((m.totalHours / m.headcount) * 10) / 10 : 0 })).filter(r => r.value > 0)}
+            />
+            <Box>
+              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">주 52h 위험군 랭킹</p>
+              {weeklyRiskByDivision.length === 0 ? <p className="text-xs text-gray-300">위험군 없음</p> : (
+                <ul className="space-y-1">
+                  {weeklyRiskByDivision.map(r => (
+                    <li key={r.division} className="flex items-center justify-between text-xs">
+                      <span className="text-gray-600 truncate">{r.division}</span>
+                      <span className="font-semibold text-red-600 tabular-nums">{r.count}명</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Box>
+          </div>
+        )}
+
+        {period.granularity === 'month' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Box>
+              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">본부별 정상출근율 · 이상치</p>
+              {divNormalRate.length === 0 ? <p className="text-xs text-gray-300">데이터 없음</p> : (
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-gray-400">
+                      <th className="text-left py-1.5 font-medium">부서</th>
+                      <th className="text-right py-1.5 font-medium">정상출근율</th>
+                      <th className="text-right py-1.5 font-medium">이상치 합계</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {divNormalRate.map(r => (
+                      <tr key={r.division} className="hover:bg-gray-50/70">
+                        <td className="py-1.5 text-gray-700 font-medium">{r.division}</td>
+                        <td className="py-1.5 text-right tabular-nums">{r.pct.toFixed(1)}%</td>
+                        <td className="py-1.5 text-right tabular-nums">{divAnomaly.find(a => a.label === r.division)?.total ?? 0}건</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Box>
+            <DivisionCompareChart
+              title="주차별 이상치 추이" color="#c4291f" unit="건"
+              data={weeklyAnomalySeries.map(w => ({ label: w.label, value: w.total }))}
+            />
+          </div>
+        )}
+      </div>
 
       {/* ── 조직 정합성: 인력 마스터가 아직 연동 전이면(재직자 0명) 자동으로 숨김 ── */}
       {masterActive.length > 0 && (
@@ -507,11 +559,7 @@ export default function OverviewPage() {
             </Box>
             <Box className="flex flex-col justify-center gap-2">
               <p className="text-[11px] text-gray-400 uppercase tracking-wide">이상 건수 합계</p>
-              <div className="flex items-center gap-4">
-                <div><span className="text-lg font-bold text-amber-600 tabular-nums">{anomalyTotals.late}</span><span className="text-[11px] text-gray-400 ml-1">지각</span></div>
-                <div><span className="text-lg font-bold text-red-600 tabular-nums">{anomalyTotals.shortage}</span><span className="text-[11px] text-gray-400 ml-1">미달</span></div>
-                <div><span className="text-lg font-bold text-purple-600 tabular-nums">{anomalyTotals.notag}</span><span className="text-[11px] text-gray-400 ml-1">미태깅</span></div>
-              </div>
+              <AnomalyMetricBadges m={{ ...anomalyTotals, leave: 0 }} size="lg" />
             </Box>
             <Box>
               <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">부서별 TOP3</p>

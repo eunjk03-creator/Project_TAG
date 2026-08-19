@@ -3,8 +3,11 @@ import { useState, useEffect, useMemo, Fragment } from 'react'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import { useProcessedAttendance } from '@/hooks/useProcessedAttendance'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
-import { usePeriodRange, type PeriodGranularity } from '@/hooks/usePeriodRange'
+import { usePeriodRange } from '@/hooks/usePeriodRange'
 import { flagToAnomalyCategories } from '@/utils/attendanceCalc'
+import { PeriodSelector } from '@/components/admin/PeriodSelector'
+import { AnomalyMetricBadges, emptyDivisionAnomalyMetrics, type DivisionAnomalyMetrics } from '@/components/admin/AnomalyMetricBadges'
+import { AnomalyPersonTable } from '@/components/admin/AnomalyPersonTable'
 import type { Employee, EmployeeAttributeOverrides, ProcessedRecord } from '@/types/tag'
 
 const BUSINESS_DIVISIONS = DIVISION_ORDER.slice(0, 5)   // 사업조직 — HMR/음료/헬스케어/뷰티/신사업본부
@@ -14,20 +17,8 @@ const SUPPORT_DIVISIONS = DIVISION_ORDER.slice(5)       // 지원조직 — 경�
  *  두 정보가 한 화면에 뭉쳐 있으면 못 알아본다는 피드백으로 토글로 분리. */
 type ViewMode = 'chart' | 'anomaly'
 
-/** 종합현황과 동일한 3개 지표(건수) — 지각/미달/미태깅. 휴가는 이상치가 아니라 따로 뺀다. */
-interface DivisionMetrics {
-  late: number
-  shortage: number
-  notag: number
-  leave: number
-}
-
-function emptyMetrics(): DivisionMetrics {
-  return { late: 0, shortage: 0, notag: 0, leave: 0 }
-}
-
-function computeMetrics(records: ProcessedRecord[]): DivisionMetrics {
-  const m = emptyMetrics()
+function computeMetrics(records: ProcessedRecord[]): DivisionAnomalyMetrics {
+  const m = emptyDivisionAnomalyMetrics()
   for (const r of records) {
     if (r.leaveType) m.leave++
     if (r.flag) {
@@ -188,84 +179,16 @@ function TeamHeaderRow({ name, count, anomalies }: { name: string; count: number
   )
 }
 
-/** 지각/근무미달/미태깅 — "이상치" 3종만 색으로 뚜렷이 분리(종합현황 KPI 타일과 동일 색:
- *  지각=amber, 미달·미태깅=red). 휴가는 이상치가 아니라서 여기 안 섞고 별도 뱃지로 뺐다
- *  (종합현황도 "근태 이상치 상세"와 "휴가 사용 상세"를 서로 다른 카드로 분리해서 보여줌). */
-function MetricBadges({ m, size = 'sm' }: { m: DivisionMetrics; size?: 'sm' | 'lg' }) {
-  const items = [
-    { label: '지각', value: m.late, color: size === 'lg' ? '#b4650a' : 'text-amber-600' },
-    { label: '미달', value: m.shortage, color: size === 'lg' ? '#c4291f' : 'text-red-600' },
-    { label: '미태깅', value: m.notag, color: size === 'lg' ? '#c4291f' : 'text-red-600' },
-  ]
-  if (size === 'lg') {
-    return (
-      <div className="grid grid-cols-3 divide-x divide-gray-100">
-        {items.map(it => (
-          <div key={it.label} className="px-3 first:pl-0">
-            <p className="text-xs text-gray-400 font-medium mb-0.5">{it.label}</p>
-            <p className="text-2xl font-extrabold tabular-nums leading-tight" style={{ color: it.color as string }}>
-              {it.value}<span className="text-xs font-semibold text-gray-300 ml-0.5">건</span>
-            </p>
-          </div>
-        ))}
-      </div>
-    )
-  }
-  return (
-    <div className="flex items-center gap-2.5">
-      {items.map(it => (
-        <span key={it.label} className={`text-[10px] font-semibold whitespace-nowrap ${it.color as string}`}>
-          {it.label} {it.value}
-        </span>
-      ))}
-    </div>
-  )
-}
-
 function LeaveBadge({ count }: { count: number }) {
   if (count === 0) return null
   return <span className="text-[11px] font-medium text-violet-300">휴가 {count}</span>
-}
-
-/** "이상치" 모드에서 조직트리 대신 보여줄, 종합현황 person-table의 division 축소판.
- *  부서 컬럼 없이(이미 이 카드=그 부서) 팀·이름·지각·미달·미태깅·총합계만. */
-function AnomalyTable({ rows }: { rows: PersonAnomalyRow[] }) {
-  if (rows.length === 0) {
-    return <p className="text-xs text-gray-300 text-center py-6">이 기간 이상치 없음</p>
-  }
-  return (
-    <table className="w-full">
-      <thead>
-        <tr className="text-[10px] text-gray-300 uppercase tracking-wide border-b border-gray-100">
-          <th className="text-left pb-1.5 font-medium">팀</th>
-          <th className="text-left pb-1.5 font-medium">이름</th>
-          <th className="text-right pb-1.5 font-medium">지각</th>
-          <th className="text-right pb-1.5 font-medium">미달</th>
-          <th className="text-right pb-1.5 font-medium">미태깅</th>
-          <th className="text-right pb-1.5 font-medium">합계</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-gray-50">
-        {rows.map(r => (
-          <tr key={r.rawId}>
-            <td className="py-1 text-xs text-gray-400 truncate max-w-[100px]">{r.team}</td>
-            <td className="py-1 text-xs font-medium text-gray-800 whitespace-nowrap">{r.name}</td>
-            <td className="py-1 text-xs text-right tabular-nums text-amber-600">{r.late || '—'}</td>
-            <td className="py-1 text-xs text-right tabular-nums text-red-600">{r.shortage || '—'}</td>
-            <td className="py-1 text-xs text-right tabular-nums text-red-600">{r.notag || '—'}</td>
-            <td className="py-1 text-xs text-right tabular-nums font-bold text-gray-800">{r.total}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
 }
 
 function DivisionCard({
   division, isOpen, onToggle, metrics, teamAnomalies, viewMode, personAnomalies,
 }: {
   division: DivisionGroup; isOpen: boolean; onToggle: () => void
-  metrics: DivisionMetrics; teamAnomalies: Map<string, number>
+  metrics: DivisionAnomalyMetrics; teamAnomalies: Map<string, number>
   viewMode: ViewMode; personAnomalies: PersonAnomalyRow[]
 }) {
   return (
@@ -281,7 +204,7 @@ function DivisionCard({
         </span>
       </button>
       <div className="px-4 py-2.5 border-b border-gray-50 bg-gray-50/60">
-        <MetricBadges m={metrics} />
+        <AnomalyMetricBadges m={metrics} shortageLabel="미달" />
       </div>
       <button onClick={onToggle} className="w-full flex items-center justify-center py-1 text-gray-300 hover:bg-gray-50">
         <ChevronIcon open={isOpen} />
@@ -289,7 +212,9 @@ function DivisionCard({
       {isOpen && (
         <div className="p-3 max-h-[480px] overflow-y-auto">
           {viewMode === 'anomaly' ? (
-            <AnomalyTable rows={personAnomalies} />
+            <AnomalyPersonTable
+              rows={personAnomalies.map(p => ({ key: p.rawId, name: p.name, team: p.team, late: p.late, shortage: p.shortage, notag: p.notag, total: p.total }))}
+            />
           ) : (
             <table className="w-full">
               <thead>
@@ -391,7 +316,7 @@ export default function OrgChartPage() {
   }, [effectiveRecords, empMap])
 
   const metricsByDivision = useMemo(() => {
-    const map = new Map<string, DivisionMetrics>()
+    const map = new Map<string, DivisionAnomalyMetrics>()
     for (const division of allDivisions) map.set(division.name, computeMetrics(recordsByDivision.get(division.name) ?? []))
     return map
   }, [allDivisions, recordsByDivision])
@@ -494,27 +419,7 @@ export default function OrgChartPage() {
           </p>
         </div>
         {/* ── 기간 선택: 종합현황과 동일한 일/주/월 + 이동 ── */}
-        <div className="flex items-center gap-2">
-          <div className="flex bg-gray-100 rounded-lg p-0.5">
-            {(['day', 'week', 'month'] as PeriodGranularity[]).map(g => (
-              <button
-                key={g}
-                onClick={() => period.setGranularity(g)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  period.granularity === g ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {g === 'day' ? '일' : g === 'week' ? '주' : '월'}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-lg px-1">
-            <button onClick={() => period.shift(-1)} className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-50">‹</button>
-            <span className="text-xs font-medium text-gray-700 px-1.5 min-w-[120px] text-center tabular-nums">{period.label}</span>
-            <button onClick={() => period.shift(1)} className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-50">›</button>
-          </div>
-          <button onClick={period.goToday} className="px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50">오늘</button>
-        </div>
+        <PeriodSelector period={period} />
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -564,7 +469,7 @@ export default function OrgChartPage() {
           </p>
         </div>
         <div className="hidden md:block bg-gray-100 w-px h-full" />
-        <MetricBadges m={overallMetrics} size="lg" />
+        <AnomalyMetricBadges m={overallMetrics} size="lg" shortageLabel="미달" />
       </div>
 
       {execDivision && (
@@ -573,7 +478,7 @@ export default function OrgChartPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <DivisionCard
               division={execDivision} isOpen={!collapsed.has(execDivision.name)} onToggle={() => toggle(execDivision.name)}
-              metrics={metricsByDivision.get(execDivision.name) ?? emptyMetrics()}
+              metrics={metricsByDivision.get(execDivision.name) ?? emptyDivisionAnomalyMetrics()}
               teamAnomalies={teamStatsByDivision.get(execDivision.name) ?? new Map()}
               viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(execDivision.name) ?? []}
             />
@@ -588,7 +493,7 @@ export default function OrgChartPage() {
             {supportDivisions.map(division => (
               <DivisionCard
                 key={division.name} division={division} isOpen={!collapsed.has(division.name)} onToggle={() => toggle(division.name)}
-                metrics={metricsByDivision.get(division.name) ?? emptyMetrics()}
+                metrics={metricsByDivision.get(division.name) ?? emptyDivisionAnomalyMetrics()}
                 teamAnomalies={teamStatsByDivision.get(division.name) ?? new Map()}
                 viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(division.name) ?? []}
               />
@@ -604,7 +509,7 @@ export default function OrgChartPage() {
             {businessDivisions.map(division => (
               <DivisionCard
                 key={division.name} division={division} isOpen={!collapsed.has(division.name)} onToggle={() => toggle(division.name)}
-                metrics={metricsByDivision.get(division.name) ?? emptyMetrics()}
+                metrics={metricsByDivision.get(division.name) ?? emptyDivisionAnomalyMetrics()}
                 teamAnomalies={teamStatsByDivision.get(division.name) ?? new Map()}
                 viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(division.name) ?? []}
               />
@@ -620,7 +525,7 @@ export default function OrgChartPage() {
             {otherDivisions.map(division => (
               <DivisionCard
                 key={division.name} division={division} isOpen={!collapsed.has(division.name)} onToggle={() => toggle(division.name)}
-                metrics={metricsByDivision.get(division.name) ?? emptyMetrics()}
+                metrics={metricsByDivision.get(division.name) ?? emptyDivisionAnomalyMetrics()}
                 teamAnomalies={teamStatsByDivision.get(division.name) ?? new Map()}
                 viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(division.name) ?? []}
               />

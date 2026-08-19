@@ -284,6 +284,184 @@ export interface MasterDiscrepancy {
   detail: string
 }
 
+// ── 주 52h 위험군 버킷 (45~50h 주의 / 50~52h 경고 / 52h+ 위험) ────────────────
+// computeOverLimitEmployees와 동일한 인정시간 합산(computeDailyRecognizedHours)을 쓰되,
+// 단일 한도 초과자 목록이 아니라 3개 구간으로 나눠 인원수를 센다. 종합현황 Zone1의
+// 주간 뷰 1번 슬롯 전용.
+
+export type RiskBucket = 'caution' | 'warning' | 'danger'
+
+export interface RiskBucketRow {
+  employeeId: string
+  name:       string
+  division:   string
+  hours:      number
+  bucket:     RiskBucket
+}
+
+export interface WeeklyRiskBuckets {
+  caution: number  // 45~50h
+  warning: number  // 50~52h
+  danger:  number  // 52h 이상
+  rows:    RiskBucketRow[]
+}
+
+export function computeWeeklyRiskBuckets(
+  records:      ProcessedRecord[],
+  employees:    Employee[],
+  finalAttrMap: Map<string, EmployeeAttributeOverrides>,
+): WeeklyRiskBuckets {
+  const empMap = new Map(employees.map(e => [e.id, e]))
+  const byEmp  = new Map<string, ProcessedRecord[]>()
+  for (const r of records) {
+    const bucket = byEmp.get(r.employeeId)
+    if (bucket) bucket.push(r)
+    else byEmp.set(r.employeeId, [r])
+  }
+
+  const rows: RiskBucketRow[] = []
+  let caution = 0, warning = 0, danger = 0
+  for (const [employeeId, recs] of byEmp) {
+    const emp   = empMap.get(employeeId)
+    const attrs = finalAttrMap.get(employeeId)
+    let hours = 0
+    for (const r of recs) hours += computeDailyRecognizedHours(r, isLeaderOnDate(attrs, emp, r.date))
+
+    let bucket: RiskBucket | null = null
+    if (hours >= 52) bucket = 'danger'
+    else if (hours >= 50) bucket = 'warning'
+    else if (hours >= 45) bucket = 'caution'
+    if (!bucket) continue
+
+    if (bucket === 'danger') danger++
+    else if (bucket === 'warning') warning++
+    else caution++
+    rows.push({ employeeId, name: emp?.name ?? employeeId, division: emp?.division ?? '—', hours, bucket })
+  }
+  return { caution, warning, danger, rows: rows.sort((a, b) => b.hours - a.hours) }
+}
+
+// ── 외근 ─────────────────────────────────────────────────────────────────
+// buildLeaveUsageRollup/buildTodayLeaveList와 동일한 패턴, finalStatus === '외근' 기준.
+
+export interface OffsiteRow {
+  key:      string
+  label:    string
+  division?: string
+  count:    number  // 외근 일수(레코드 수)
+}
+
+export function buildOffsiteRollup(
+  records: ProcessedRecord[],
+  empMap:  Map<string, Employee>,
+  groupBy: 'division' | 'employee',
+): OffsiteRow[] {
+  const map = new Map<string, OffsiteRow>()
+  for (const r of records) {
+    if (r.finalStatus !== '외근') continue
+    const emp = empMap.get(r.employeeId)
+    const div = emp?.division ?? '—'
+    const key   = groupBy === 'division' ? div : r.employeeId
+    const label = groupBy === 'division' ? div : (emp?.name ?? r.employeeId)
+    if (!map.has(key)) map.set(key, { key, label, division: div, count: 0 })
+    map.get(key)!.count += 1
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count)
+}
+
+export interface TodayOffsiteEntry {
+  employeeId: string
+  name:       string
+  division:   string
+}
+
+export function buildTodayOffsiteList(
+  records: ProcessedRecord[],
+  empMap:  Map<string, Employee>,
+  today:   string,
+): TodayOffsiteEntry[] {
+  return records
+    .filter(r => r.date === today && r.finalStatus === '외근')
+    .map(r => {
+      const emp = empMap.get(r.employeeId)
+      return { employeeId: r.employeeId, name: emp?.name ?? r.employeeId, division: emp?.division ?? '—' }
+    })
+    .sort((a, b) => a.division.localeCompare(b.division, 'ko') || a.name.localeCompare(b.name, 'ko'))
+}
+
+// ── 부서별 정상출근율 (월간 Zone2 정합성표용) ─────────────────────────────────
+// computeNormalRate와 동일 필터(WEEKDAY && 연차 아님)를 division 단위로 그룹핑.
+// 정상출근율이 낮은(문제가 큰) 부서가 위로 오도록 오름차순 정렬.
+
+export interface DivisionNormalRateRow {
+  division: string
+  normal:   number
+  total:    number
+  pct:      number
+}
+
+export function buildDivisionNormalRateRollup(
+  records: ProcessedRecord[],
+  empMap:  Map<string, Employee>,
+): DivisionNormalRateRow[] {
+  const map = new Map<string, { normal: number; total: number }>()
+  for (const r of records) {
+    if (r.dayType !== 'WEEKDAY' || r.finalStatus === '연차') continue
+    const div = empMap.get(r.employeeId)?.division ?? '—'
+    const row = map.get(div) ?? { normal: 0, total: 0 }
+    row.total++
+    if (!r.flag) row.normal++
+    map.set(div, row)
+  }
+  return [...map.entries()]
+    .map(([division, { normal, total }]) => ({ division, normal, total, pct: total > 0 ? (normal / total) * 100 : 0 }))
+    .sort((a, b) => a.pct - b.pct)
+}
+
+// ── 주차별(1~5주차) 이상치 추이 (월간 Zone2 차트용) ───────────────────────────
+// buildDailyOvertimeSeries와 같은 형태의 시리즈이나, 일자 단위가 아니라 월 내
+// 주차(월요일 시작) 단위로 flagToAnomalyCategories 합계를 묶는다.
+
+function mondayBasedDow(d: Date): number {
+  const dow = d.getDay() // 0 = Sun
+  return dow === 0 ? 6 : dow - 1
+}
+
+function weekOfMonth(dateStr: string): number {
+  const d = new Date(dateStr + 'T12:00')
+  const day1 = new Date(d.getFullYear(), d.getMonth(), 1)
+  return Math.ceil((d.getDate() + mondayBasedDow(day1)) / 7)
+}
+
+export interface WeeklyAnomalyPoint {
+  week:     number   // 1-based 월 내 주차
+  label:    string   // "1주차" 등
+  late:     number
+  shortage: number
+  notag:    number
+  total:    number
+}
+
+export function buildWeeklyAnomalySeries(records: ProcessedRecord[], from: string, to: string): WeeklyAnomalyPoint[] {
+  const byWeek = new Map<number, { late: number; shortage: number; notag: number; total: number }>()
+  for (const r of records) {
+    if (!r.flag) continue
+    if (r.date < from || r.date > to) continue
+    const week = weekOfMonth(r.date)
+    const row = byWeek.get(week) ?? { late: 0, shortage: 0, notag: 0, total: 0 }
+    for (const cat of flagToAnomalyCategories(r.flag)) row[cat]++
+    row.total++
+    byWeek.set(week, row)
+  }
+  const maxWeek = Math.max(1, ...[...byWeek.keys()])
+  const points: WeeklyAnomalyPoint[] = []
+  for (let w = 1; w <= maxWeek; w++) {
+    const row = byWeek.get(w) ?? { late: 0, shortage: 0, notag: 0, total: 0 }
+    points.push({ week: w, label: `${w}주차`, ...row })
+  }
+  return points
+}
+
 export function buildMasterDiscrepancyRollup(
   masterActive: { rawId: string; name: string; division: string }[],
   /** 최근 N일 CAPS 레코드에 등장한 사원번호 집합 — 비어있으면 "미태깅" 판정을 안 한다 */
