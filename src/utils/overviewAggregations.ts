@@ -99,6 +99,34 @@ export function buildLeaveUsageRollup(
   return [...map.values()].sort((a, b) => b.days - a.days)
 }
 
+// 종합현황 Zone2 division 카드의 "휴가" 배지를 연차/반차/반반차로 쪼개 보여주기 위한 분류.
+// isPaidLeaveRecord와 동일한 "휴가로 치는" 기준을 그대로 쓰고, 그 안에서 leaveType만 나눈다.
+export interface DivisionLeaveBreakdown {
+  division: string
+  annual:   number  // 연차
+  half:     number  // 오전반차/오후반차
+  quarter:  number  // 오전반반차/오후반반차
+  other:    number  // 그 외(출장/재택근무 등 erpLeaveAmount>0인 나머지)
+}
+
+export function buildDivisionLeaveBreakdown(
+  records: ProcessedRecord[],
+  empMap:  Map<string, Employee>,
+): DivisionLeaveBreakdown[] {
+  const map = new Map<string, DivisionLeaveBreakdown>()
+  for (const r of records) {
+    if (!isPaidLeaveRecord(r)) continue
+    const div = empMap.get(r.employeeId)?.division ?? '—'
+    const row = map.get(div) ?? { division: div, annual: 0, half: 0, quarter: 0, other: 0 }
+    if (r.leaveType === '연차') row.annual++
+    else if (r.leaveType === '오전반차' || r.leaveType === '오후반차') row.half++
+    else if (r.leaveType === '오전반반차' || r.leaveType === '오후반반차') row.quarter++
+    else row.other++
+    map.set(div, row)
+  }
+  return [...map.values()]
+}
+
 export interface TodayLeaveEntry {
   employeeId: string
   name:       string

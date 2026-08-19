@@ -26,6 +26,7 @@ import {
   buildOffsiteRollup, buildTodayOffsiteList,
   computeOverLimitEmployees, computeWeeklyRiskBuckets,
   buildDivisionNormalRateRollup, buildWeeklyAnomalySeries,
+  buildDivisionLeaveBreakdown,
   buildMasterDiscrepancyRollup,
 } from '@/utils/overviewAggregations'
 import { DIVISION_ORDER } from '@/data/orgChart'
@@ -226,6 +227,10 @@ export default function OverviewPage() {
   const empLeave  = useMemo(() => buildLeaveUsageRollup(scopedRecords, empMap, 'employee'),  [scopedRecords, empMap])
   const todayLeave = useMemo(() => buildTodayLeaveList(scopedRecords, empMap, todayForView), [scopedRecords, empMap, todayForView])
   const totalLeaveDays = useMemo(() => divLeave.reduce((s, r) => s + r.days, 0), [divLeave])
+  // Zone2 조직도 카드의 "휴가" 배지를 연차/반차/반반차로 쪼개 보여주기 위한 분류 + 외근은
+  // 휴가와 별개 범주라 division 단위로 따로 집계(개인 단위 empOffsite는 위에 이미 있음).
+  const divLeaveBreakdown = useMemo(() => buildDivisionLeaveBreakdown(scopedRecords, empMap), [scopedRecords, empMap])
+  const divOffsite = useMemo(() => buildOffsiteRollup(scopedRecords, empMap, 'division'), [scopedRecords, empMap])
 
   // ── 초과근무 — 일=오늘 진행/발생 인원, 주=52h 초과자, 월=209h 초과자 ──────────
   const dailyOt = useMemo(() => buildDailyOvertimeSeries(scopedRecords, period.from, period.to), [scopedRecords, period.from, period.to])
@@ -449,13 +454,16 @@ export default function OverviewPage() {
           <DivisionSummaryCardGrid
             divisions={metrics}
             divAnomaly={divAnomaly}
-            divLeave={divLeave}
+            empAnomaly={empAnomaly}
+            divLeaveBreakdown={divLeaveBreakdown}
+            divOffsite={divOffsite}
             divHoliday={divHoliday}
             showHolidayBadge={period.granularity !== 'day' || isHolidayToday}
           />
         ) : (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
             <AnomalyPersonTable
+              pageSize={15}
               rows={empAnomaly.map(r => ({ key: r.key, name: r.label, division: r.division, late: r.late, shortage: r.shortage, notag: r.notag, total: r.total }))}
               showDivisionCol
             />
