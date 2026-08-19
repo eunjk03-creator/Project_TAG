@@ -14,8 +14,9 @@ import { usePeriodRange } from '@/hooks/usePeriodRange'
 import { PeriodSelector } from '@/components/admin/PeriodSelector'
 import { AnomalyMetricBadges } from '@/components/admin/AnomalyMetricBadges'
 import { KpiTile } from '@/components/admin/KpiTile'
-import { DivisionSummaryCardGrid } from '@/components/admin/DivisionSummaryCardGrid'
+import { DivisionSummaryCardGrid, type DivisionCardVM, type CardSeverity } from '@/components/admin/DivisionSummaryCardGrid'
 import { DivisionTeamGrid } from '@/components/admin/DivisionTeamGrid'
+import { HeroCard, DistributionPanel } from '@/components/admin/OverviewHeroPanel'
 import { useOrgMasterHeadcount } from '@/hooks/useOrgMasterHeadcount'
 import { useMasterActiveRoster } from '@/hooks/useMasterActiveRoster'
 import {
@@ -24,7 +25,7 @@ import {
   buildDailyOvertimeSeries, buildTodayOvertimeList,
   buildHolidayWorkRollup, buildTodayHolidayList,
   buildOffsiteRollup, buildTodayOffsiteList,
-  computeOverLimitEmployees, computeWeeklyRiskBuckets,
+  computeOverLimitEmployees, computeWeeklyRiskBuckets, buildEmployeeRecognizedHours,
   buildDivisionNormalRateRollup, buildWeeklyAnomalySeries,
   buildDivisionLeaveBreakdown,
   buildMasterDiscrepancyRollup,
@@ -56,44 +57,6 @@ function Box({ className = '', children }: { className?: string; children: React
 
 function EmptyNote({ text }: { text: string }) {
   return <p className="text-xs text-gray-400 text-center py-6">{text}</p>
-}
-
-/** Zone1 맨 위 히어로 줄 한 칸 — 출근율/위험군/초과자(슬롯1) + 지각·미달·미태깅을
- *  전부 같은 카드 안에 나란히 놓아서(구 슬롯1+슬롯2 통합) 여러 카드에 흩어져 보이지
- *  않고 한 줄에서 바로 비교되게 한다. */
-function HeroMetricCol({
-  label, value, unit, sub, color, onClick,
-}: { label: string; value: string | number; unit?: string; sub?: string; color: string; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="text-left px-4 py-3.5 first:pl-0 hover:bg-gray-50/70 rounded-lg transition-colors"
-    >
-      <p className="text-xs font-semibold text-gray-400">{label}</p>
-      <p className="text-2xl font-extrabold tabular-nums mt-1 leading-tight" style={{ color }}>
-        {value}{unit && <span className="text-xs font-semibold text-gray-300 ml-1">{unit}</span>}
-      </p>
-      {sub && <p className="text-[11px] text-gray-400 mt-1 truncate">{sub}</p>}
-    </button>
-  )
-}
-
-/** 슬롯1(출근율/위험군/초과자) + 지각/미달/미태깅 4칸을 한 줄 전체폭 카드로. */
-function AnomalyHeroRow({
-  first, late, shortage, notag, onAnomalyClick,
-}: {
-  first: { label: string; value: string | number; unit?: string; sub?: string; color: string; onClick: () => void }
-  late: number; shortage: number; notag: number
-  onAnomalyClick: () => void
-}) {
-  return (
-    <div className="bg-white border border-gray-100 rounded-2xl shadow-sm px-4 grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-gray-100">
-      <HeroMetricCol {...first} />
-      <HeroMetricCol label="지각" value={late} unit="명" color="#b4650a" onClick={onAnomalyClick} />
-      <HeroMetricCol label="근무시간 미달" value={shortage} unit="명" color="#c4291f" onClick={onAnomalyClick} />
-      <HeroMetricCol label="미태깅" value={notag} unit="명" color="#c4291f" onClick={onAnomalyClick} />
-    </div>
-  )
 }
 
 /** 접이식 상세 섹션 — 탭 없이 필요한 것만 펼쳐서 스크롤 부담을 줄인다. */
@@ -335,27 +298,122 @@ export default function OverviewPage() {
     return [...m.entries()].map(([division, count]) => ({ division, count })).sort((a, b) => b.count - a.count)
   }, [weeklyRisk])
 
-  // ── 월간 Zone2 전용 — 본부별 정상출근율 정합성표 + 주차별 이상치 추이 ────────────
+  // ── 본부별 정상출근율 — 월간 Zone2 정합성표뿐 아니라 이상치 카드 그리드의 day-view
+  // 심각도 판정(출근율 기준)·모든 granularity의 캡션에도 쓰여서 이제 항상 계산한다. ────
   const divNormalRate = useMemo(
-    () => period.granularity === 'month' ? buildDivisionNormalRateRollup(scopedRecords, empMap) : [],
-    [scopedRecords, empMap, period.granularity],
+    () => buildDivisionNormalRateRollup(scopedRecords, empMap),
+    [scopedRecords, empMap],
   )
   const weeklyAnomalySeries = useMemo(
     () => period.granularity === 'month' ? buildWeeklyAnomalySeries(scopedRecords, period.from, period.to) : [],
     [scopedRecords, period.from, period.to, period.granularity],
   )
 
-  // ── Zone2 뷰 토글 — 이상치(기본) / 조직도. 이상치 탭의 division별 명단 펼침은
-  // 여기서 관리해서 "전체 펼치기/접기"를 한 번에 제어할 수 있게 한다. ──────────────
+  // ── 이상치 카드 그리드의 "인원 목록" 근로시간 컬럼용 — computeOverLimitEmployees와
+  // 동일한 인정시간 공식(§4)을 한도초과 여부와 무관하게 전원에게 적용. ─────────────────
+  const employeeHoursMap = useMemo(
+    () => buildEmployeeRecognizedHours(scopedRecords, scopedEmployees, finalAttrMap),
+    [scopedRecords, scopedEmployees, finalAttrMap],
+  )
+
+  // ── Zone2 뷰 토글 — 이상치(기본) / 조직도. ──────────────────────────────────
   const [viewMode, setViewMode] = useState<'chart' | 'anomaly'>('anomaly')
-  const [expandedDivisions, setExpandedDivisions] = useState<Set<string>>(new Set())
-  function toggleDivisionList(name: string) {
-    setExpandedDivisions(prev => {
-      const next = new Set(prev)
-      if (next.has(name)) next.delete(name); else next.add(name)
-      return next
-    })
-  }
+
+  // ── 이상치 카드 그리드(디자인 핸드오프 turn 7a/7b/7c) — 심각도는 "절대건수가 아니라
+  // 인원 대비 비율"로 판정해야 한다는 스펙 경고를 그대로 따른다: 일=출근율 임계값,
+  // 주·월=한도초과 인원>0 우선, 아니면 부서 이상치율이 전사 평균의 1.15배를 넘는지. ──────
+  const companyAnomalyRate = total.headcount > 0 ? anomalyTotals.total / total.headcount : 0
+  const monthLabel = `${new Date(period.from + 'T12:00').getMonth() + 1}월`
+
+  const cardData = useMemo<DivisionCardVM[]>(() => metrics.map(m => {
+    const anomaly = divAnomaly.find(a => a.label === m.division) ?? { late: 0, shortage: 0, notag: 0, total: 0 }
+    const rateRow = divNormalRate.find(r => r.division === m.division)
+    const divRate = rateRow?.pct ?? 0
+    const avgHours = m.headcount > 0 ? m.totalHours / m.headcount : 0
+    const overLimitCount = overLimitByDivision.get(m.division) ?? 0
+
+    let severity: CardSeverity
+    let bigValue: string
+    let bigUnit: string | undefined
+    let progressPct: number
+    let captionLeft: string
+    let captionRight: string
+
+    if (period.granularity === 'day') {
+      severity = divRate < 82 ? 'action' : divRate < 90 ? 'warning' : 'normal'
+      bigValue = divRate.toFixed(1)
+      bigUnit = '%'
+      progressPct = divRate
+      const divTodayOtCount = todayOt.filter(e => e.division === m.division).length
+      captionLeft = `초과 인원 ${divTodayOtCount}명 · ${fmtH(m.otHours)}`
+      captionRight = `전사 평균 ${normalRate.pct.toFixed(1)}%`
+    } else {
+      const perHeadAnomalyRate = m.headcount > 0 ? anomaly.total / m.headcount : 0
+      severity = overLimitCount > 0 ? 'action' : perHeadAnomalyRate > companyAnomalyRate * 1.15 ? 'warning' : 'normal'
+      bigValue = fmtH(avgHours)
+      bigUnit = undefined
+      progressPct = overLimitHours > 0 ? (avgHours / overLimitHours) * 100 : 0
+      captionLeft = `출근율 ${divRate.toFixed(1)}%`
+      captionRight = `${period.granularity === 'week' ? '주 52시간' : `월 ${overLimitHours}시간`} 한도`
+    }
+
+    // 인원 목록 — 이상치 건수 내림차순. budget(=division 총계)을 앞에서부터 차감해 채워서
+    // "나열 인원 건수 합 ≤ 부서 이상치 총계"를 보장한다(핸드오프 "인원 목록 제약" 절).
+    const people = empAnomaly
+      .filter(r => r.division === m.division)
+      .map(r => ({ employeeId: r.key, name: r.label, count: r.total, hours: employeeHoursMap.get(r.key) ?? 0 }))
+      .sort((a, b) => b.count - a.count)
+    let budget = anomaly.total
+    const budgeted: typeof people = []
+    for (const p of people) {
+      if (budget <= 0) break
+      budgeted.push(p)
+      budget -= p.count
+    }
+
+    const leave = divLeaveBreakdown.find(l => l.division === m.division)
+    const offsiteCount = divOffsite.find(o => o.label === m.division)?.count ?? 0
+    const leaveParts: string[] = []
+    if (leave?.annual)  leaveParts.push(`연차 ${leave.annual}`)
+    if (leave?.half)    leaveParts.push(`반차 ${leave.half}`)
+    if (leave?.quarter) leaveParts.push(`반반차 ${leave.quarter}`)
+    if (offsiteCount)   leaveParts.push(`외근 ${offsiteCount}`)
+    const holidayCount = divHoliday.find(h => h.label === m.division)?.count ?? 0
+    const showHolidayNote = (period.granularity !== 'day' || isHolidayToday) && holidayCount > 0
+
+    return {
+      division: m.division, headcount: m.headcount, severity,
+      bigValue, bigUnit, progressPct, captionLeft, captionRight,
+      late: anomaly.late, shortage: anomaly.shortage, notag: anomaly.notag, totalAnomaly: anomaly.total,
+      people: budgeted,
+      leaveNote: leaveParts.length > 0 ? leaveParts.join(' · ') : undefined,
+      holidayNote: showHolidayNote ? `휴일근무 ${holidayCount}명` : undefined,
+    }
+  }), [
+    metrics, divAnomaly, divNormalRate, overLimitByDivision, empAnomaly, employeeHoursMap, todayOt,
+    period.granularity, normalRate.pct, companyAnomalyRate, overLimitHours, divLeaveBreakdown, divOffsite,
+    divHoliday, isHolidayToday,
+  ])
+
+  const distributionRows = useMemo(() => divAnomaly.map(r => ({ label: r.label, value: r.total })), [divAnomaly])
+
+  const heroData = period.granularity === 'day'
+    ? {
+        label: '전사 정상출근율', value: normalRate.pct.toFixed(1), unit: '%',
+        sub: `${normalRate.normal} / ${normalRate.total}명 · 목표 85%`,
+        footerLabel: '오늘 이상치',
+      }
+    : period.granularity === 'week'
+    ? {
+        label: '전사 초과근무 합계', value: Math.round(totalOtH).toLocaleString(), unit: 'h',
+        sub: `주 평균 ${fmtH(total.headcount > 0 ? total.totalHours / total.headcount : 0)} · 52h초과 ${overLimitRows.length}명`,
+        footerLabel: '이번 주 이상치',
+      }
+    : {
+        label: '전사 초과근무 합계', value: Math.round(totalOtH).toLocaleString(), unit: 'h',
+        sub: `월 평균 ${fmtH(total.headcount > 0 ? total.totalHours / total.headcount : 0)} · ${overLimitHours}h초과 ${overLimitRows.length}명`,
+        footerLabel: `${monthLabel} 이상치`,
+      }
 
   if (!isLiveData) {
     return (
@@ -401,23 +459,17 @@ export default function OverviewPage() {
         <span className="text-[10.5px] text-gray-300 ml-1">선택한 본부 기준으로 아래 숫자·그래프가 전부 바뀝니다</span>
       </div>
 
-      {/* ── Zone1: 일/주/월 전환해도 레이아웃 틀(히어로 1줄 + 타일 2칸)은 고정, 안의 지표만 바뀐다 ──
-           출근율/위험군/초과자(구 슬롯1)과 지각·미달·미태깅(구 슬롯2)을 4칸짜리 히어로 한 줄로
-           합쳐서, 서로 다른 세 정보가 좁은 카드 한 칸에 뭉쳐 보이던 것을 넓게 펼쳤다. ── */}
-      <AnomalyHeroRow
-        first={
-          period.granularity === 'day'
-            ? { label: '오늘 정상출근율', value: normalRate.pct.toFixed(1), unit: '%', color: '#2f6fed',
-                sub: `(${normalRate.normal}/${normalRate.total})`, onClick: () => openAndScroll('anomaly') }
-            : period.granularity === 'week'
-            ? { label: '주 52시간 위험군', value: weeklyRisk.danger, unit: '명', color: '#c4291f',
-                sub: `주의 ${weeklyRisk.caution} · 경고 ${weeklyRisk.warning} · 위험 ${weeklyRisk.danger}`, onClick: () => openAndScroll('ot') }
-            : { label: '월 209시간 초과자', value: overLimitRows.length, unit: '명', color: '#c4291f',
-                sub: `기준 ${overLimitHours}h`, onClick: () => openAndScroll('ot') }
-        }
-        late={anomalyTotals.late} shortage={anomalyTotals.shortage} notag={anomalyTotals.notag}
-        onAnomalyClick={() => openAndScroll('anomaly')}
-      />
+      {/* ── 전사 요약: 히어로 카드(일=출근율/주·월=초과근무 합계) + 부서 분산 패널 ──
+           디자인 핸드오프(turn 7a/7b/7c) 기준 — 분산 패널은 반드시 아래 카드 그리드와
+           같은 소스(divAnomaly)에서 계산해서 합계가 서로 어긋나지 않게 한다. ── */}
+      <div className="flex flex-col sm:flex-row gap-3 items-stretch">
+        <HeroCard
+          label={heroData.label} value={heroData.value} unit={heroData.unit} sub={heroData.sub}
+          footerLabel={heroData.footerLabel} footerValue={anomalyTotals.total}
+          onFooterClick={() => openAndScroll('anomaly')}
+        />
+        <DistributionPanel rows={distributionRows} />
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {/* 슬롯3 — 근무시간/수당 */}
@@ -455,60 +507,35 @@ export default function OverviewPage() {
         )}
       </div>
 
-      {/* ── Zone2: 이상치(기본) / 조직도 탭 ── */}
+      {/* ── Zone2: 이상치(기본) / 조직도 탭 — "10개 부문 전체 · 이상치 많은 순 · 카드 클릭 시 상세" ── */}
       <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <p className="text-xs font-semibold text-gray-400">부서별 현황</p>
-          <div className="flex items-center gap-2">
-            <div className="flex bg-gray-100 rounded-lg p-0.5">
-              <button
-                onClick={() => setViewMode('anomaly')}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  viewMode === 'anomaly' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                이상치
-              </button>
-              <button
-                onClick={() => setViewMode('chart')}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  viewMode === 'chart' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                조직도
-              </button>
-            </div>
-            {viewMode === 'anomaly' && (
-              <>
-                <button
-                  onClick={() => setExpandedDivisions(new Set(metrics.map(m => m.division)))}
-                  className="px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
-                >
-                  전체 펼치기
-                </button>
-                <button
-                  onClick={() => setExpandedDivisions(new Set())}
-                  className="px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
-                >
-                  전체 접기
-                </button>
-              </>
-            )}
+          <div>
+            <p className="text-sm font-bold text-gray-800">부서별 현황</p>
+            <p className="text-[11px] text-gray-300">{cardData.length}개 부문 전체 · 이상치 많은 순</p>
+          </div>
+          <div className="flex bg-gray-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setViewMode('anomaly')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                viewMode === 'anomaly' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              이상치
+            </button>
+            <button
+              onClick={() => setViewMode('chart')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                viewMode === 'chart' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              조직도
+            </button>
           </div>
         </div>
 
         {viewMode === 'anomaly' ? (
-          <DivisionSummaryCardGrid
-            divisions={metrics}
-            divAnomaly={divAnomaly}
-            empAnomaly={empAnomaly}
-            divLeaveBreakdown={divLeaveBreakdown}
-            divOffsite={divOffsite}
-            divHoliday={divHoliday}
-            showHolidayBadge={period.granularity !== 'day' || isHolidayToday}
-            expandedList={expandedDivisions}
-            onToggleList={toggleDivisionList}
-          />
+          <DivisionSummaryCardGrid cards={cardData} />
         ) : (
           <DivisionTeamGrid />
         )}

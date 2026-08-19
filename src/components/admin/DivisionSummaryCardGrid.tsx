@@ -1,119 +1,177 @@
 'use client'
-import { sortByDivisionOrder } from '@/data/orgChart'
-import { AnomalyMetricBadges, emptyDivisionAnomalyMetrics } from './AnomalyMetricBadges'
-import { AnomalyPersonTable, type AnomalyPersonRow } from './AnomalyPersonTable'
-import type { AnomalyRow, DivisionLeaveBreakdown, OffsiteRow, HolidayWorkRow } from '@/utils/overviewAggregations'
+import { useState } from 'react'
 
-interface DivisionHeadcount {
-  division: string
-  headcount: number
+export type CardSeverity = 'normal' | 'warning' | 'action'
+
+export interface DivisionCardPerson {
+  employeeId: string
+  name: string
+  count: number
+  hours: number
 }
 
-function LeaveDetailLine({ leave, offsiteCount }: { leave?: DivisionLeaveBreakdown; offsiteCount: number }) {
-  const parts: string[] = []
-  if (leave?.annual)  parts.push(`연차 ${leave.annual}`)
-  if (leave?.half)     parts.push(`반차 ${leave.half}`)
-  if (leave?.quarter)  parts.push(`반반차 ${leave.quarter}`)
-  if (leave?.other)    parts.push(`기타 ${leave.other}`)
-  if (offsiteCount)    parts.push(`외근 ${offsiteCount}`)
-  if (parts.length === 0) return null
-  return <p className="text-[10px] font-medium text-violet-500 mt-1.5">{parts.join(' · ')}</p>
+/** 카드 하나가 필요로 하는 값 전부 — 심각도/기준값 판정은 overview 페이지(page.tsx)가
+ *  이미 갖고 있는 다른 지표들(전사 평균, 한도값 등)과 같이 계산해서 넘긴다. 이 컴포넌트는
+ *  순수 표시만 담당(디자인 핸드오프 turn 7a/7b/7c 기준). */
+export interface DivisionCardVM {
+  division:     string
+  headcount:    number
+  severity:     CardSeverity
+  bigValue:     string   // 이미 포맷된 문자열 (예: "85.0", "46h 40m")
+  bigUnit?:     string   // day는 '%', week/month는 fmtH가 이미 단위를 포함해서 비움
+  progressPct:  number   // 0~100, 진행 막대 채움 비율
+  captionLeft:  string
+  captionRight: string
+  late: number; shortage: number; notag: number
+  totalAnomaly: number
+  people:       DivisionCardPerson[]  // 이상치 건수 내림차순, 이미 budget 적용됨
+  /** 기존 휴가 세부분류(연차/반차/반반차/외근) 한 줄 요약 — 새 카드에 자리가 좁아 한 줄로 축약. */
+  leaveNote?:   string
+  holidayNote?: string
 }
 
-function ChevronIcon({ open }: { open: boolean }) {
+const SEVERITY_BAND: Record<CardSeverity, string> = { normal: '#e2e8f0', warning: '#f59e0b', action: '#dc2626' }
+const SEVERITY_BIG:  Record<CardSeverity, string> = { normal: '#16a34a', warning: '#d97706', action: '#dc2626' }
+const SEVERITY_BADGE: Record<CardSeverity, { bg: string; fg: string; label: string }> = {
+  normal:  { bg: '#f1f5f9', fg: '#94a3b8', label: '정상' },
+  warning: { bg: '#fffbeb', fg: '#b45309', label: '주의' },
+  action:  { bg: '#fef2f6', fg: '#b91c1c', label: '조치 필요' },
+}
+
+const PAGE_SIZE = 3
+
+function ThreeWayCounter({ late, shortage, notag }: { late: number; shortage: number; notag: number }) {
+  const items = [
+    { label: '지각', value: late, color: '#d97706' },
+    { label: '미달', value: shortage, color: '#dc2626' },
+    { label: '미태깅', value: notag, color: '#7c3aed' },
+  ]
   return (
-    <svg
-      className={`w-4 h-4 text-gray-300 shrink-0 transition-transform duration-150 ${open ? 'rotate-180' : ''}`}
-      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+    <div className="grid grid-cols-3 gap-px bg-gray-100 rounded-md overflow-hidden">
+      {items.map(it => (
+        <div key={it.label} className="bg-white py-1.5 text-center">
+          <p className="text-[9px] text-gray-400">{it.label}</p>
+          <p className="text-[13px] font-extrabold tabular-nums" style={{ color: it.value > 0 ? it.color : '#e2e8f0' }}>
+            {it.value > 0 ? it.value : '—'}
+          </p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function PersonRows({ people, page }: { people: DivisionCardPerson[]; page: number }) {
+  const slice = people.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)
+  const rows: (DivisionCardPerson | null)[] = [...slice]
+  while (rows.length < PAGE_SIZE) rows.push(null)
+  return (
+    <div className="flex-1">
+      {rows.map((p, i) => (
+        <div key={p?.employeeId ?? `empty-${i}`} className="flex items-center justify-between px-3.5 py-1.5 border-b border-gray-50 last:border-b-0">
+          {p ? (
+            <>
+              <span className="text-[11px] font-semibold text-gray-700 truncate">{p.name} <span className="text-[10px] text-gray-400 font-normal">{p.count}건</span></span>
+              <span className="text-[10px] text-gray-500 tabular-nums shrink-0">{fmtHoursShort(p.hours)}</span>
+            </>
+          ) : (
+            <span className="text-[11px] text-gray-200">—</span>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function fmtHoursShort(hours: number): string {
+  if (!hours) return '0h'
+  const m = Math.round(hours * 60)
+  const hh = Math.floor(m / 60)
+  const mm = m % 60
+  return mm > 0 ? `${hh}h ${mm}m` : `${hh}h`
+}
+
+function DivisionCard({ vm }: { vm: DivisionCardVM }) {
+  const [page, setPage] = useState(0)
+  const totalPages = Math.max(1, Math.ceil(vm.people.length / PAGE_SIZE))
+  const clampedPage = Math.min(page, totalPages - 1)
+  const isEmpty = vm.totalAnomaly === 0
+  const badge = isEmpty ? SEVERITY_BADGE.normal : SEVERITY_BADGE[vm.severity]
+
+  return (
+    <section
+      className="bg-white border border-gray-100 rounded-xl overflow-hidden flex flex-col h-[255px] hover:border-gray-300 transition-colors"
+      style={{ opacity: isEmpty ? 0.5 : 1 }}
     >
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-    </svg>
+      <div className="h-[3px] shrink-0" style={{ background: isEmpty ? SEVERITY_BAND.normal : SEVERITY_BAND[vm.severity] }} />
+
+      <div className="px-3.5 pt-2.5 pb-2.5 shrink-0">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-xs font-extrabold text-gray-900 truncate">{vm.division}</span>
+          <span className="text-[10px] text-gray-400 shrink-0">{vm.headcount}명</span>
+        </div>
+        <div className="flex items-center justify-between mt-1">
+          <span className="text-xl font-extrabold tabular-nums leading-none" style={{ color: isEmpty ? '#94a3b8' : SEVERITY_BIG[vm.severity] }}>
+            {vm.bigValue}{vm.bigUnit && <span className="text-[11px] font-semibold ml-0.5">{vm.bigUnit}</span>}
+          </span>
+          <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded" style={{ background: badge.bg, color: badge.fg }}>{badge.label}</span>
+        </div>
+        <div className="h-[5px] rounded-full bg-[#eef2f6] mt-1.5 overflow-hidden">
+          <div className="h-full rounded-full" style={{ width: `${Math.min(100, vm.progressPct)}%`, background: isEmpty ? SEVERITY_BAND.normal : SEVERITY_BIG[vm.severity] }} />
+        </div>
+        <div className="flex items-center justify-between mt-1">
+          <span className="text-[9.5px] text-gray-400 truncate">{vm.captionLeft}</span>
+          <span className="text-[9.5px] text-gray-400 shrink-0">{vm.captionRight}</span>
+        </div>
+      </div>
+
+      <ThreeWayCounter late={vm.late} shortage={vm.shortage} notag={vm.notag} />
+
+      <PersonRows people={vm.people} page={clampedPage} />
+
+      <div className="flex items-center justify-between px-3.5 py-1.5 bg-gray-50/70 shrink-0">
+        <button
+          onClick={() => setPage(p => Math.max(0, p - 1))}
+          disabled={clampedPage === 0}
+          className="text-[10px] font-medium text-gray-400 disabled:text-gray-200 hover:text-gray-600 disabled:hover:text-gray-200"
+        >
+          ‹ 이전
+        </button>
+        <span className="text-[10px] text-gray-300 tabular-nums">{clampedPage + 1} / {totalPages}</span>
+        <button
+          onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+          disabled={clampedPage >= totalPages - 1}
+          className="text-[10px] font-medium text-gray-500 disabled:text-gray-200 hover:text-gray-700 disabled:hover:text-gray-200"
+        >
+          다음 ›
+        </button>
+      </div>
+
+      {(vm.leaveNote || vm.holidayNote) && (
+        <p className="px-3.5 py-1 text-[9.5px] text-violet-500 bg-violet-50/50 truncate shrink-0">
+          {[vm.leaveNote, vm.holidayNote].filter(Boolean).join(' · ')}
+        </p>
+      )}
+    </section>
   )
 }
 
 /**
- * 종합현황 Zone2 "이상치" 탭 — 조직도 페이지의 DivisionCard와 달리 roster(팀 트리) API에
- * 의존하지 않고, 종합현황이 이미 계산해 갖고 있는 division 롤업만으로 렌더링한다.
- * (roster를 그대로 가져다 쓰면 조회 전용이던 조직도가 종합현황과 강결합돼버리기 때문 —
- * 팀 단위 드릴다운이 필요하면 "조직도" 탭이나 조직도 페이지로 넘어가서 보면 된다.)
- *
- * 카드별 명단 펼침 여부(expandedList)는 부모가 들고 있다 — "전체 펼치기/접기"를
- * 페이지 레벨에서 한 번에 제어할 수 있게 하기 위해서.
+ * 종합현황 Zone2 "이상치" 탭 — 디자인 핸드오프(turn 7a/7b/7c) 기준 카드 그리드.
+ * 카드 높이 고정(255px) + 상위 인원 3행 고정 + 카드 내 페이저. 심각도/기준값 판정은
+ * overview 페이지가 이미 다른 전사 지표와 함께 계산해 DivisionCardVM으로 넘겨준다 —
+ * 이 컴포넌트는 그 값을 그대로 그리는 순수 표시 레이어.
  */
-export function DivisionSummaryCardGrid({
-  divisions, divAnomaly, empAnomaly, divLeaveBreakdown, divOffsite, divHoliday, showHolidayBadge,
-  expandedList, onToggleList,
-}: {
-  divisions:  DivisionHeadcount[]
-  divAnomaly: AnomalyRow[]
-  /** division 컬럼이 있는 flat 개인별 이상치 목록 — 카드별 명단 토글용으로 division 단위로 재그룹핑한다. */
-  empAnomaly: AnomalyRow[]
-  divLeaveBreakdown: DivisionLeaveBreakdown[]
-  divOffsite: OffsiteRow[]
-  divHoliday: HolidayWorkRow[]
-  /** 휴일근무 배지 표시 여부 — 일간뷰에선 그날이 휴일일 때만, 주/월간뷰에선 항상 표시. */
-  showHolidayBadge: boolean
-  /** 명단이 펼쳐진 division 이름 집합 — "전체 펼치기/접기"를 위해 부모(overview 페이지)가 관리. */
-  expandedList: Set<string>
-  onToggleList: (division: string) => void
-}) {
-  const anomalyByDiv = new Map(divAnomaly.map(r => [r.label, r]))
-  const leaveByDiv    = new Map(divLeaveBreakdown.map(r => [r.division, r]))
-  const offsiteByDiv  = new Map(divOffsite.map(r => [r.label, r.count]))
-  const holidayByDiv = new Map(divHoliday.map(r => [r.label, r]))
-  const byName = new Map(divisions.map(d => [d.division, d]))
-  const ordered = sortByDivisionOrder(divisions.map(d => d.division))
-
-  const personRowsByDiv = new Map<string, AnomalyPersonRow[]>()
-  for (const r of empAnomaly) {
-    const div = r.division ?? '—'
-    const list = personRowsByDiv.get(div) ?? []
-    list.push({ key: r.key, name: r.label, late: r.late, shortage: r.shortage, notag: r.notag, total: r.total })
-    personRowsByDiv.set(div, list)
-  }
+export function DivisionSummaryCardGrid({ cards }: { cards: DivisionCardVM[] }) {
+  // 핸드오프 스펙: "정렬 — 이상치 합계 내림차순" (조직도 순서가 아니라 문제 큰 부서가 먼저).
+  const ordered = [...cards].sort((a, b) => b.totalAnomaly - a.totalAnomaly)
 
   if (ordered.length === 0) {
     return <p className="text-xs text-gray-300 text-center py-6">데이터가 없습니다.</p>
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-      {ordered.map(name => {
-        const d = byName.get(name)
-        if (!d) return null
-        const a = anomalyByDiv.get(name)
-        const holidayCount = holidayByDiv.get(name)?.count ?? 0
-        const hasAnomaly = !!a && a.total > 0
-        const isExpanded = expandedList.has(name)
-        return (
-          <section key={name} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 bg-gray-800 text-white">
-              <span className="text-sm font-semibold truncate">{name}</span>
-              <span className="text-xs font-medium text-gray-300 tabular-nums shrink-0">{d.headcount}명</span>
-            </div>
-            <div className="px-4 py-2.5 bg-gray-50/60">
-              <AnomalyMetricBadges m={a ? { ...a, leave: 0 } : emptyDivisionAnomalyMetrics()} shortageLabel="미달" />
-              <LeaveDetailLine leave={leaveByDiv.get(name)} offsiteCount={offsiteByDiv.get(name) ?? 0} />
-              {showHolidayBadge && holidayCount > 0 && (
-                <p className="text-[10px] font-semibold text-purple-500 mt-1">휴일근무 {holidayCount}명</p>
-              )}
-            </div>
-            {hasAnomaly && (
-              <button
-                onClick={() => onToggleList(name)}
-                className="w-full flex items-center justify-center py-1 text-gray-300 hover:bg-gray-50"
-              >
-                <ChevronIcon open={isExpanded} />
-              </button>
-            )}
-            {hasAnomaly && isExpanded && (
-              <div className="px-3 py-2.5 border-t border-gray-100">
-                <AnomalyPersonTable rows={personRowsByDiv.get(name) ?? []} pageSize={5} />
-              </div>
-            )}
-          </section>
-        )
-      })}
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+      {ordered.map(vm => <DivisionCard key={vm.division} vm={vm} />)}
     </div>
   )
 }

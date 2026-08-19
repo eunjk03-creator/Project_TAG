@@ -312,6 +312,33 @@ export interface MasterDiscrepancy {
   detail: string
 }
 
+// ── 인원별 기간 인정근로시간 (division 카드의 "이상치 인원 목록" 근로시간 컬럼용) ─────
+// computeOverLimitEmployees/computeWeeklyRiskBuckets와 동일한 computeDailyRecognizedHours
+// 합산 공식 — 한도초과 여부와 무관하게 전원의 기간 내 인정시간을 반환한다.
+
+export function buildEmployeeRecognizedHours(
+  records:      ProcessedRecord[],
+  employees:    Employee[],
+  finalAttrMap: Map<string, EmployeeAttributeOverrides>,
+): Map<string, number> {
+  const empMap = new Map(employees.map(e => [e.id, e]))
+  const byEmp  = new Map<string, ProcessedRecord[]>()
+  for (const r of records) {
+    const bucket = byEmp.get(r.employeeId)
+    if (bucket) bucket.push(r)
+    else byEmp.set(r.employeeId, [r])
+  }
+  const hours = new Map<string, number>()
+  for (const [employeeId, recs] of byEmp) {
+    const emp   = empMap.get(employeeId)
+    const attrs = finalAttrMap.get(employeeId)
+    let h = 0
+    for (const r of recs) h += computeDailyRecognizedHours(r, isLeaderOnDate(attrs, emp, r.date))
+    hours.set(employeeId, h)
+  }
+  return hours
+}
+
 // ── 주 52h 위험군 버킷 (45~50h 주의 / 50~52h 경고 / 52h+ 위험) ────────────────
 // computeOverLimitEmployees와 동일한 인정시간 합산(computeDailyRecognizedHours)을 쓰되,
 // 단일 한도 초과자 목록이 아니라 3개 구간으로 나눠 인원수를 센다. 종합현황 Zone1의
