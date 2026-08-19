@@ -15,7 +15,7 @@ import { PeriodSelector } from '@/components/admin/PeriodSelector'
 import { AnomalyMetricBadges } from '@/components/admin/AnomalyMetricBadges'
 import { KpiTile } from '@/components/admin/KpiTile'
 import { DivisionSummaryCardGrid } from '@/components/admin/DivisionSummaryCardGrid'
-import { AnomalyPersonTable } from '@/components/admin/AnomalyPersonTable'
+import { DivisionTeamGrid } from '@/components/admin/DivisionTeamGrid'
 import { useOrgMasterHeadcount } from '@/hooks/useOrgMasterHeadcount'
 import { useMasterActiveRoster } from '@/hooks/useMasterActiveRoster'
 import {
@@ -345,8 +345,17 @@ export default function OverviewPage() {
     [scopedRecords, period.from, period.to, period.granularity],
   )
 
-  // ── Zone2 뷰 토글 — 🏢 조직도 카드 / 📋 이상치 목록 ──────────────────────────
-  const [viewMode, setViewMode] = useState<'chart' | 'anomaly'>('chart')
+  // ── Zone2 뷰 토글 — 이상치(기본) / 조직도. 이상치 탭의 division별 명단 펼침은
+  // 여기서 관리해서 "전체 펼치기/접기"를 한 번에 제어할 수 있게 한다. ──────────────
+  const [viewMode, setViewMode] = useState<'chart' | 'anomaly'>('anomaly')
+  const [expandedDivisions, setExpandedDivisions] = useState<Set<string>>(new Set())
+  function toggleDivisionList(name: string) {
+    setExpandedDivisions(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name); else next.add(name)
+      return next
+    })
+  }
 
   if (!isLiveData) {
     return (
@@ -446,31 +455,49 @@ export default function OverviewPage() {
         )}
       </div>
 
-      {/* ── Zone2: 🏢 조직도 카드 뷰 / 📋 이상치 목록 뷰 토글 ── */}
+      {/* ── Zone2: 이상치(기본) / 조직도 탭 ── */}
       <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <p className="text-xs font-semibold text-gray-400">부서별 현황</p>
-          <div className="flex bg-gray-100 rounded-lg p-0.5">
-            <button
-              onClick={() => setViewMode('chart')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                viewMode === 'chart' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              🏢 조직도 카드
-            </button>
-            <button
-              onClick={() => setViewMode('anomaly')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                viewMode === 'anomaly' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              📋 이상치 목록
-            </button>
+          <div className="flex items-center gap-2">
+            <div className="flex bg-gray-100 rounded-lg p-0.5">
+              <button
+                onClick={() => setViewMode('anomaly')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  viewMode === 'anomaly' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                이상치
+              </button>
+              <button
+                onClick={() => setViewMode('chart')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  viewMode === 'chart' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                조직도
+              </button>
+            </div>
+            {viewMode === 'anomaly' && (
+              <>
+                <button
+                  onClick={() => setExpandedDivisions(new Set(metrics.map(m => m.division)))}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
+                >
+                  전체 펼치기
+                </button>
+                <button
+                  onClick={() => setExpandedDivisions(new Set())}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
+                >
+                  전체 접기
+                </button>
+              </>
+            )}
           </div>
         </div>
 
-        {viewMode === 'chart' ? (
+        {viewMode === 'anomaly' ? (
           <DivisionSummaryCardGrid
             divisions={metrics}
             divAnomaly={divAnomaly}
@@ -479,15 +506,11 @@ export default function OverviewPage() {
             divOffsite={divOffsite}
             divHoliday={divHoliday}
             showHolidayBadge={period.granularity !== 'day' || isHolidayToday}
+            expandedList={expandedDivisions}
+            onToggleList={toggleDivisionList}
           />
         ) : (
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
-            <AnomalyPersonTable
-              pageSize={15}
-              rows={empAnomaly.map(r => ({ key: r.key, name: r.label, division: r.division, late: r.late, shortage: r.shortage, notag: r.notag, total: r.total }))}
-              showDivisionCol
-            />
-          </div>
+          <DivisionTeamGrid />
         )}
 
         {period.granularity === 'week' && (
