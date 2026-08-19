@@ -185,12 +185,18 @@ function LeaveBadge({ count }: { count: number }) {
 }
 
 function DivisionCard({
-  division, isOpen, onToggle, metrics, teamAnomalies, viewMode, personAnomalies,
+  division, isOpen, onToggle, metrics, teamAnomalies, viewMode, personAnomalies, showList, onToggleList,
 }: {
   division: DivisionGroup; isOpen: boolean; onToggle: () => void
   metrics: DivisionAnomalyMetrics; teamAnomalies: Map<string, number>
   viewMode: ViewMode; personAnomalies: PersonAnomalyRow[]
+  /** "조직도" 뷰를 유지한 채로 이 카드만 이상치 명단을 펼쳐보는 로컬 토글 —
+   *  페이지 전체를 "이상치 목록" 모드로 바꾸지 않아도 요약 줄에서 바로 확인 가능. */
+  showList: boolean; onToggleList: () => void
 }) {
+  const anomalyRows = personAnomalies.map(p => (
+    { key: p.rawId, name: p.name, team: p.team, late: p.late, shortage: p.shortage, notag: p.notag, total: p.total }
+  ))
   return (
     <section id={`div-${division.name}`} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
       <button
@@ -203,18 +209,31 @@ function DivisionCard({
           <span className="text-xs font-medium text-gray-300 tabular-nums">{division.headcount}명</span>
         </span>
       </button>
-      <div className="px-4 py-2.5 border-b border-gray-50 bg-gray-50/60">
+      <div className="px-4 py-2.5 border-b border-gray-50 bg-gray-50/60 flex items-center justify-between gap-2">
         <AnomalyMetricBadges m={metrics} shortageLabel="미달" />
+        {viewMode === 'chart' && metrics.late + metrics.shortage + metrics.notag > 0 && (
+          <button
+            onClick={onToggleList}
+            className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${
+              showList ? 'bg-red-50 border-red-200 text-red-600' : 'border-gray-200 text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            명단 {showList ? '숨기기' : '보기'}
+          </button>
+        )}
       </div>
+      {viewMode === 'chart' && showList && (
+        <div className="px-3 py-2.5 border-b border-gray-50">
+          <AnomalyPersonTable rows={anomalyRows} pageSize={5} />
+        </div>
+      )}
       <button onClick={onToggle} className="w-full flex items-center justify-center py-1 text-gray-300 hover:bg-gray-50">
         <ChevronIcon open={isOpen} />
       </button>
       {isOpen && (
         <div className="p-3 max-h-[480px] overflow-y-auto">
           {viewMode === 'anomaly' ? (
-            <AnomalyPersonTable
-              rows={personAnomalies.map(p => ({ key: p.rawId, name: p.name, team: p.team, late: p.late, shortage: p.shortage, notag: p.notag, total: p.total }))}
-            />
+            <AnomalyPersonTable rows={anomalyRows} pageSize={8} />
           ) : (
             <table className="w-full">
               <thead>
@@ -248,6 +267,7 @@ export default function OrgChartPage() {
   const [error, setError] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [viewMode, setViewMode] = useState<ViewMode>('chart')
+  const [expandedList, setExpandedList] = useState<Set<string>>(new Set())
   const period = usePeriodRange()
 
   useEffect(() => {
@@ -393,6 +413,13 @@ export default function OrgChartPage() {
     setViewMode(mode)
     setCollapsed(new Set()) // 모드 바꾸면 전부 펼쳐서 바로 보이게
   }
+  function toggleList(name: string) {
+    setExpandedList(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name); else next.add(name)
+      return next
+    })
+  }
 
   if (isLoading) return <div className="p-8 text-sm text-gray-400">불러오는 중…</div>
   if (error) return <div className="p-8 text-sm text-red-600">{error}</div>
@@ -481,6 +508,7 @@ export default function OrgChartPage() {
               metrics={metricsByDivision.get(execDivision.name) ?? emptyDivisionAnomalyMetrics()}
               teamAnomalies={teamStatsByDivision.get(execDivision.name) ?? new Map()}
               viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(execDivision.name) ?? []}
+              showList={expandedList.has(execDivision.name)} onToggleList={() => toggleList(execDivision.name)}
             />
           </div>
         </div>
@@ -496,6 +524,7 @@ export default function OrgChartPage() {
                 metrics={metricsByDivision.get(division.name) ?? emptyDivisionAnomalyMetrics()}
                 teamAnomalies={teamStatsByDivision.get(division.name) ?? new Map()}
                 viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(division.name) ?? []}
+                showList={expandedList.has(division.name)} onToggleList={() => toggleList(division.name)}
               />
             ))}
           </div>
@@ -512,6 +541,7 @@ export default function OrgChartPage() {
                 metrics={metricsByDivision.get(division.name) ?? emptyDivisionAnomalyMetrics()}
                 teamAnomalies={teamStatsByDivision.get(division.name) ?? new Map()}
                 viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(division.name) ?? []}
+                showList={expandedList.has(division.name)} onToggleList={() => toggleList(division.name)}
               />
             ))}
           </div>
@@ -528,6 +558,7 @@ export default function OrgChartPage() {
                 metrics={metricsByDivision.get(division.name) ?? emptyDivisionAnomalyMetrics()}
                 teamAnomalies={teamStatsByDivision.get(division.name) ?? new Map()}
                 viewMode={viewMode} personAnomalies={personAnomaliesByDivision.get(division.name) ?? []}
+                showList={expandedList.has(division.name)} onToggleList={() => toggleList(division.name)}
               />
             ))}
           </div>
