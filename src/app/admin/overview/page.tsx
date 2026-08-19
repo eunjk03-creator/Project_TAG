@@ -41,6 +41,11 @@ function todayStr(): string {
 
 const PIE_COLORS = ['#3b82f6', '#e5e7eb'] // 정상(blue) / 이상(gray)
 
+// Zone1/Zone2 레이아웃 재설계 범위에서 "조직 정합성(마스터 정원 대비 CAPS 대조)"은 아직
+// 고려 대상이 아니라고 명시적으로 합의됨 — 계산 로직은 그대로 두고 노출만 끈다.
+// 이후 이 섹션을 다시 다룰 때 이 상수만 true로 되돌리면 됨.
+const SHOW_ORG_INTEGRITY = false
+
 type SectionKey = 'anomaly' | 'holiday' | 'ot' | 'leave' | 'orgIntegrity'
 
 // ── Small shared UI bits ────────────────────────────────────────────────────
@@ -525,8 +530,8 @@ export default function OverviewPage() {
         )}
       </div>
 
-      {/* ── 조직 정합성: 인력 마스터가 아직 연동 전이면(재직자 0명) 자동으로 숨김 ── */}
-      {masterActive.length > 0 && (
+      {/* ── 조직 정합성: 인력 마스터가 아직 연동 전이면(재직자 0명) 자동으로 숨김 + 지금은 SHOW_ORG_INTEGRITY로 전체 비활성 ── */}
+      {SHOW_ORG_INTEGRITY && masterActive.length > 0 && (
         <div className="grid grid-cols-2 gap-3">
           <KpiTile label="마스터 정원" value={masterActive.length} unit="명" color="#0f766e"
             sub="조직도 시트 기준 재직자 수"
@@ -857,7 +862,7 @@ export default function OverviewPage() {
           )}
         </AccordionSection>
 
-        {masterActive.length > 0 && (
+        {SHOW_ORG_INTEGRITY && masterActive.length > 0 && (
           <AccordionSection
             innerRef={el => { sectionRefs.current.orgIntegrity = el }}
             icon="🗂️" title="조직 정합성" subtitle="조직도 시트 인력 마스터 vs CAPS 업로드 대조"
