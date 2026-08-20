@@ -457,6 +457,7 @@ export function computeRealHoursOtForRecord(r: {
   dayType:           DayType
   clockIn?:          string | null
   clockOut?:         string | null
+  effectiveClockIn?: string | null
   leaveType?:        ErpLeaveType | null
   erpLeaveAmount?:   number | null
   isUnpaidLeave?:    boolean | null
@@ -466,8 +467,13 @@ export function computeRealHoursOtForRecord(r: {
 }, isLeader = false): RealHoursOtResult {
   const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
   const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
+  // r.clockIn 우선 — 이 함수는 "조기보정 없는 실제 출근시각"이 기준이라, processRecord.ts가
+  // 일반 근무일에도 채워두는 effectiveClockIn(반차 등 정책상 스냅 포함)을 그냥 쓰면 안 된다.
+  // 다만 외근(직출·직퇴)은 CAPS 입실 태그 자체가 없어 clockIn이 null인 게 정상인 케이스라,
+  // 그때만 applyOffsiteEntry가 계산해 둔 effectiveClockIn(보정 출근시각)으로 대체한다 —
+  // 안 그러면 태그가 없다는 이유로 실근무/승인근무 등이 전부 0(화면엔 "—")으로 빈다.
   const base = computeRealHoursOt({
-    clockIn: r.clockIn, clockOut: r.clockOut, leaveType: r.leaveType,
+    clockIn: r.clockIn ?? r.effectiveClockIn, clockOut: r.clockOut, leaveType: r.leaveType,
     erpLeaveAmount: r.erpLeaveAmount, isUnpaidLeave: r.isUnpaidLeave,
     isErpLeaveApproved, erpOtApplied: r.erpOtApplied, isLeader,
   })
