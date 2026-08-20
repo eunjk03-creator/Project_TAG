@@ -361,7 +361,13 @@ function buildLeaveMap(
     }
   }
 
-  // ── Pass 2: accumulation with type inference ──────────────────────────
+  // ── Pass 2a: resolve entries (code → effective type + amount) ──────────
+  type ResolvedEntry = {
+    compositeKey: string; startDate: string; endDate: string
+    effectiveType: ErpLeaveType; code: string; status: string; submitDate: string
+  }
+  const resolved: ResolvedEntry[] = []
+
   for (const { compositeKey, row: r } of dedupMap.values()) {
     // NFKC 정규화: 전각괄호（）→ 반각() 등 fullwidth 문자 변환
     const code = String(r['근태코드'] ?? '').normalize('NFKC').trim()
@@ -397,13 +403,6 @@ function buildLeaveMap(
         ? (iljuRaw >= 0.5 ? '오전반차' : '오전반반차')
         : baseType
 
-    // Amount per weekday: always use LEAVE_AMOUNT (exact constant — 1.0, 0.5, or 0.25).
-    // Multi-day requests divide iljuRaw by calendar days → floating-point error; ignore it.
-    // Each WEEKDAY in the range gets the exact semantic amount for this leave type.
-    const perDayAmount = LEAVE_AMOUNT[effectiveType] ?? 0
-
-    const isUnpaid = code.includes('무급')
-
     // 다일 연차(2일 이상)인 경우 프로덕션에서도 로그 출력
     if (typeof window !== 'undefined' && startDate !== endDate) {
       console.log(
@@ -411,6 +410,59 @@ function buildLeaveMap(
         `일수=${iljuRaw} type="${effectiveType}" compositeKey="${compositeKey}"`,
       )
     }
+
+    const submitKey  = Object.keys(r).find(k => k.replace(/\s+/g, '') === '신청일') ?? '신청일'
+    const submitDate = normalizeDate(r[submitKey] ?? '') || startDate
+
+    resolved.push({
+      compositeKey, startDate, endDate, effectiveType, code,
+      status: String(r['승인상태'] ?? '').trim(), submitDate,
+    })
+  }
+
+  // ── Pass 2b: same-half-day-period conflict resolution ──────────────────
+  // A single-day 오전/오후 반차·반반차 request can be *replaced* by a later
+  // correction in a different granularity (e.g. 오전반차 0.5 신청 → 다음날 오전반반차
+  // 0.25로 재신청/승인). Both rows pass Pass 1 dedup because their 근태코드 differs,
+  // so naive summing double-counts the same half-day as 0.75/1.25일 등. Only entries
+  // in the SAME half (오전 vs 오후) on the SAME day conflict this way — 오전+오후
+  // combos (e.g. 오전반차+오후반차 = 하루 종일) are genuinely additive and must still
+  // sum, so grouping is scoped to (compositeKey, date, half).
+  const half = (t: ErpLeaveType): 'AM' | 'PM' | null =>
+    t === '오전반차' || t === '오전반반차' ? 'AM' :
+    t === '오후반차' || t === '오후반반차' ? 'PM' :
+    null
+
+  const halfGroups = new Map<string, ResolvedEntry[]>()
+  const passthrough: ResolvedEntry[] = []
+  for (const e of resolved) {
+    const h = (e.startDate === e.endDate) ? half(e.effectiveType) : null
+    if (!h) { passthrough.push(e); continue }
+    const gk = `${e.compositeKey}||${e.startDate}||${h}`
+    const arr = halfGroups.get(gk) ?? []
+    arr.push(e)
+    halfGroups.set(gk, arr)
+  }
+
+  const survivors: ResolvedEntry[] = [...passthrough]
+  for (const group of halfGroups.values()) {
+    if (group.length === 1) { survivors.push(group[0]); continue }
+    // 승인 > 신청 > 상신 우선, 동순위면 더 늦게 신청된(정정본) 쪽을 최종으로 채택
+    const winner = group.reduce((best, cur) => {
+      const bp = leavePriority(best.status), cp = leavePriority(cur.status)
+      if (cp !== bp) return cp > bp ? cur : best
+      return cur.submitDate >= best.submitDate ? cur : best
+    })
+    survivors.push(winner)
+  }
+
+  // ── Pass 2c: accumulation ───────────────────────────────────────────────
+  for (const { compositeKey, startDate, endDate, effectiveType, code } of survivors) {
+    // Amount per weekday: always use LEAVE_AMOUNT (exact constant — 1.0, 0.5, or 0.25).
+    // Multi-day requests divide iljuRaw by calendar days → floating-point error; ignore it.
+    // Each WEEKDAY in the range gets the exact semantic amount for this leave type.
+    const perDayAmount = LEAVE_AMOUNT[effectiveType] ?? 0
+    const isUnpaid = code.includes('무급')
 
     let cur = startDate
     while (cur <= endDate) {

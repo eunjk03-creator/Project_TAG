@@ -7,7 +7,7 @@ import type {
   EmployeeAttributeOverrides,
   ErpLeaveType,
 } from '@/types/tag'
-import { normalizeLeaveType, computeDisplayBreakMins, computeVirtualInMins, compute4141BreakMins } from '@/utils/attendanceCalc'
+import { normalizeLeaveType, computeDisplayBreakMins, computeVirtualInMins, compute4141BreakMins, erpLeaveTypeToAmount } from '@/utils/attendanceCalc'
 
 export function parseTime(hhmm: string): number {
   const isNext = hhmm.startsWith('+')
@@ -220,16 +220,24 @@ export function processRecord(
     const cleanedNotes   = (r.verificationNote ?? []).filter(n =>
       n !== '출근기록없음' && n !== '퇴근기록없음',
     )
+    // r.leaveType/r.erpLeaveAmount — 반차 Slack 정정(applySingleSlackEntry, 오전/오후 반차 leave 항목)이
+    // 외근 항목보다 먼저 적용되므로(applySlack의 leaveEntries → offsiteEntries 순서) 여기서는 바깥 스코프의
+    // effectiveLeaveType/effectiveLeaveAmount(최초 ERP 기준 스냅샷) 대신 r의 최신 값을 써야 한다 —
+    // 안 그러면 ERP=연차인데 Slack이 오전반차로 정정한 날, 외근 보정이 여전히 "연차(하루 종일 휴가)"
+    // 기준으로 계산돼 필요근무시간이 0으로 잡히고 실근무 전체가 연장근로로 잘못 집계된다.
+    const curLeaveType   = r.leaveType ?? null
+    const curLeaveAmount = r.erpLeaveAmount ?? 0
+
     // AM/PM 반차 여부 — 외근 보정 범위를 제한하는 데 사용
     // '반차' = 오전반반차+오후반반차 합산 → AM+PM 모두 해당
-    const isAMLeave = effectiveLeaveType === '오전반차' || effectiveLeaveType === '오전반반차' || effectiveLeaveType === '반차'
-    const isPMLeave = effectiveLeaveType === '오후반차' || effectiveLeaveType === '오후반반차' || effectiveLeaveType === '반차'
+    const isAMLeave = curLeaveType === '오전반차' || curLeaveType === '오전반반차' || curLeaveType === '반차'
+    const isPMLeave = curLeaveType === '오후반차' || curLeaveType === '오후반반차' || curLeaveType === '반차'
 
     // AM 반차 기준 출근 시각: 반반차/반차 → 11:00, 오전반차 → 14:00
     const amLeaveThresholdMins =
-      effectiveLeaveType === '오전반반차' ? parseTime('11:00') :
-      effectiveLeaveType === '반차'       ? parseTime('11:00') :
-      effectiveLeaveType === '오전반차'   ? parseTime('14:00') :
+      curLeaveType === '오전반반차' ? parseTime('11:00') :
+      curLeaveType === '반차'       ? parseTime('11:00') :
+      curLeaveType === '오전반차'   ? parseTime('14:00') :
       flexEndMins
 
     // 출근 시각 결정
@@ -256,7 +264,7 @@ export function processRecord(
         // 점심 구간(12:30~13:30)이 근무 범위에 걸리는 만큼만 휴게로 추가
         // 오후반차(4h): naiveOut=13:00 ≤ lunchEnd(13:30) → +30분 → 13:30
         // 오후반반차(6h): naiveOut=15:00 > lunchEnd → +60분 → 16:00
-        const workMinsReq = Math.round((1 - effectiveLeaveAmount) * 8 * 60)
+        const workMinsReq = Math.round((1 - curLeaveAmount) * 8 * 60)
         const naiveOut    = effInMins + workMinsReq
         const lunchInSpan = effInMins < lunchStartMins
         const breakEst    = !lunchInSpan                  ? 0
@@ -269,7 +277,7 @@ export function processRecord(
     const effOutStr = fmtMins(effOutMins)
 
     const rawStay  = effOutMins - effInMins
-    const brk      = computeDisplayBreakMins(rawStay, effInMins, effOutMins, effectiveLeaveType)
+    const brk      = computeDisplayBreakMins(rawStay, effInMins, effOutMins, curLeaveType)
     const net      = Math.max(0, rawStay - brk)
     const lunchDed = effOutMins > lunchEndMins && effInMins < lunchStartMins
 
@@ -281,8 +289,8 @@ export function processRecord(
     const lunchDuration = lunchEndMins - lunchStartMins
     // 반차 있을 때 외근 기준 소정시간 = 실근무 필요시간 (leaveAmount 반영)
     // 없으면 정책 소정시간 그대로
-    const offsiteEffStdH = effectiveLeaveAmount > 0
-      ? (1 - effectiveLeaveAmount) * effectiveStdH
+    const offsiteEffStdH = curLeaveAmount > 0
+      ? (1 - curLeaveAmount) * effectiveStdH
       : effectiveStdH
     const offsiteStdOut  = effInMins + offsiteEffStdH * 60 + (lunchDed ? lunchDuration : 0)
     const dinnerEndMins_ = offsiteStdOut + policy.dinnerGraceMinutes
@@ -296,7 +304,7 @@ export function processRecord(
 
     // PM 반차 + 미태깅인 경우 추정 퇴근 시각을 note에 명시
     const pmEstimateNote = (isPMLeave && actualOutMins === null)
-      ? ` / ${effectiveLeaveType} 기준 퇴근 추정: ${effOutStr} (태그 보완 필요)`
+      ? ` / ${curLeaveType} 기준 퇴근 추정: ${effOutStr} (태그 보완 필요)`
       : ''
 
     return {
@@ -400,6 +408,7 @@ export function processRecord(
       const updated: ProcessedRecord = {
         ...r,
         leaveType:        leaveTypeFromNote,
+        erpLeaveAmount:   erpLeaveTypeToAmount(leaveTypeFromNote),
         flag:             null,
         verificationNote: [...cleanedNotes, slackMemo],
       }
@@ -418,10 +427,13 @@ export function processRecord(
             finalStatus: computeFinalStatus(r),
           }
         } else {
-          // ERP와 Slack leaveType 불일치 → Slack 기준으로 정정
+          // ERP와 Slack leaveType 불일치 → Slack 기준으로 정정 (일수도 새 유형에 맞게 재계산 — 그대로 두면
+          // 예: ERP=연차(1.0) → Slack=오전반차인데 erpLeaveAmount가 1.0으로 남아 "오전반차(1일)"처럼
+          // 라벨과 일수가 서로 다른 값을 가리키는 표시 버그 + 외근 보정 시간 계산 오류로 이어짐)
           const updated: ProcessedRecord = {
             ...r,
-            leaveType: leaveTypeFromNote as typeof r.leaveType,
+            leaveType:      leaveTypeFromNote as typeof r.leaveType,
+            erpLeaveAmount: erpLeaveTypeToAmount(leaveTypeFromNote),
             verificationNote: [
               ...cleanedNotes,
               `슬랙 ${leaveTypeFromNote} 확인 / ERP 방향 불일치(${record.leaveType}) → 슬랙 기준 정정 (조기퇴근)${dupSuffix}`,
@@ -434,6 +446,7 @@ export function processRecord(
       const updated: ProcessedRecord = {
         ...r,
         leaveType:        leaveTypeFromNote,
+        erpLeaveAmount:   erpLeaveTypeToAmount(leaveTypeFromNote),
         verificationNote: [...cleanedNotes, slackMemo],
       }
       return { ...updated, finalStatus: computeFinalStatus(updated) }
@@ -462,7 +475,9 @@ export function processRecord(
 
     const updated: ProcessedRecord = {
       ...r,
-      ...(leaveTypeFromNote !== undefined ? { leaveType: leaveTypeFromNote } : {}),
+      ...(leaveTypeFromNote !== undefined
+        ? { leaveType: leaveTypeFromNote, erpLeaveAmount: erpLeaveTypeToAmount(leaveTypeFromNote) }
+        : {}),
       flag: newFlag,
       verificationNote: [
         ...(r.verificationNote ?? []).filter(n =>
