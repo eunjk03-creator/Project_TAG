@@ -77,7 +77,7 @@ function isValidEmpId(rawId: string): boolean {
  * Returns 'YYYY-MM-DD' or null when the format doesn't match.
  * Example: 'E26060101' → '2026-06-01'
  */
-function hireDateFromRawId(rawId: string): string | null {
+export function hireDateFromRawId(rawId: string): string | null {
   const m = rawId.match(/^E(\d{2})(\d{2})(\d{2})\d+$/)
   if (!m) return null
   const [, yy, mm, dd] = m

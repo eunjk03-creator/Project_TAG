@@ -14,24 +14,30 @@ import { usePeriodRange } from '@/hooks/usePeriodRange'
 import { PeriodSelector } from '@/components/admin/PeriodSelector'
 import { AnomalyMetricBadges } from '@/components/admin/AnomalyMetricBadges'
 import { KpiTile } from '@/components/admin/KpiTile'
-import { DivisionSummaryCardGrid, type DivisionCardVM, type CardSeverity } from '@/components/admin/DivisionSummaryCardGrid'
 import { DivisionTeamGrid } from '@/components/admin/DivisionTeamGrid'
-import { HeroCard, DistributionPanel } from '@/components/admin/OverviewHeroPanel'
+import { KpiTileRow, type KpiTileVM } from '@/components/admin/overview/KpiTileRow'
+import { DeptSection, type DeptSectionSummaryItem } from '@/components/admin/overview/DeptSection'
+import type { DeptCardVM, DeptCardPersonRow } from '@/components/admin/overview/DeptCard'
+import { LeaveTrendChart, type MonthlyLeavePoint } from '@/components/admin/overview/LeaveTrendChart'
 import { useOrgMasterHeadcount } from '@/hooks/useOrgMasterHeadcount'
 import { useMasterActiveRoster } from '@/hooks/useMasterActiveRoster'
 import {
   buildDivisionAnomalyRollup, buildEmployeeAnomalyRollup, computeNormalRate,
   buildLeaveUsageRollup, buildTodayLeaveList,
   buildDailyOvertimeSeries, buildTodayOvertimeList,
-  buildHolidayWorkRollup, buildTodayHolidayList,
+  buildHolidayWorkRollup, buildTodayHolidayList, buildHolidayWorkDetails,
   buildOffsiteRollup, buildTodayOffsiteList,
   computeOverLimitEmployees, computeWeeklyRiskBuckets, buildEmployeeRecognizedHours,
-  buildDivisionNormalRateRollup, buildWeeklyAnomalySeries,
-  buildDivisionLeaveBreakdown,
+  buildDivisionNormalRateRollup, buildDivisionRiskBands,
+  buildEmployeeLeaveUsage, buildDivisionLeaveUsage,
   buildMasterDiscrepancyRollup,
+  OVERVIEW_POLICY, LEAVE_BENCHMARK, MONTHLY_ALLOCATION,
 } from '@/utils/overviewAggregations'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee } from '@/types/tag'
+
+const BUSINESS_DIVISIONS = DIVISION_ORDER.slice(0, 5)
+const SUPPORT_DIVISIONS  = DIVISION_ORDER.slice(5)
 
 function todayStrFrom(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -217,9 +223,6 @@ export default function OverviewPage() {
   const empLeave  = useMemo(() => buildLeaveUsageRollup(scopedRecords, empMap, 'employee'),  [scopedRecords, empMap])
   const todayLeave = useMemo(() => buildTodayLeaveList(scopedRecords, empMap, todayForView), [scopedRecords, empMap, todayForView])
   const totalLeaveDays = useMemo(() => divLeave.reduce((s, r) => s + r.days, 0), [divLeave])
-  // Zone2 조직도 카드의 "휴가" 배지를 연차/반차/반반차로 쪼개 보여주기 위한 분류 + 외근은
-  // 휴가와 별개 범주라 division 단위로 따로 집계(개인 단위 empOffsite는 위에 이미 있음).
-  const divLeaveBreakdown = useMemo(() => buildDivisionLeaveBreakdown(scopedRecords, empMap), [scopedRecords, empMap])
   const divOffsite = useMemo(() => buildOffsiteRollup(scopedRecords, empMap, 'division'), [scopedRecords, empMap])
 
   // ── 초과근무 — 일=오늘 진행/발생 인원, 주=52h 초과자, 월=209h 초과자 ──────────
@@ -292,21 +295,10 @@ export default function OverviewPage() {
     () => period.granularity === 'week' ? computeWeeklyRiskBuckets(scopedRecords, scopedEmployees, finalAttrMap) : { caution: 0, warning: 0, danger: 0, rows: [] },
     [scopedRecords, scopedEmployees, finalAttrMap, period.granularity],
   )
-  const weeklyRiskByDivision = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const r of weeklyRisk.rows) m.set(r.division, (m.get(r.division) ?? 0) + 1)
-    return [...m.entries()].map(([division, count]) => ({ division, count })).sort((a, b) => b.count - a.count)
-  }, [weeklyRisk])
-
-  // ── 본부별 정상출근율 — 월간 Zone2 정합성표뿐 아니라 이상치 카드 그리드의 day-view
-  // 심각도 판정(출근율 기준)·모든 granularity의 캡션에도 쓰여서 이제 항상 계산한다. ────
+  // ── 본부별 정상출근율 — day 카드 심각도 판정(출근율 기준) + 구획 헤더 요약에 쓰임. ────
   const divNormalRate = useMemo(
     () => buildDivisionNormalRateRollup(scopedRecords, empMap),
     [scopedRecords, empMap],
-  )
-  const weeklyAnomalySeries = useMemo(
-    () => period.granularity === 'month' ? buildWeeklyAnomalySeries(scopedRecords, period.from, period.to) : [],
-    [scopedRecords, period.from, period.to, period.granularity],
   )
 
   // ── 이상치 카드 그리드의 "인원 목록" 근로시간 컬럼용 — computeOverLimitEmployees와
@@ -318,102 +310,444 @@ export default function OverviewPage() {
 
   // ── Zone2 뷰 토글 — 이상치(기본) / 조직도. ──────────────────────────────────
   const [viewMode, setViewMode] = useState<'chart' | 'anomaly'>('anomaly')
+  // v9 핸드오프 — 주간 하위탭(연장/휴일), 월간 하위탭(누적/단월). KPI 3열은 이 탭들을
+  // 바꿔도 그대로 고정되고(핵심 규칙), 부서 카드·차트만 바뀐다.
+  const [weekTab, setWeekTab] = useState<'overtime' | 'holiday'>('overtime')
+  const [monthBasis, setMonthBasis] = useState<'cumulative' | 'single'>('cumulative')
 
-  // ── 이상치 카드 그리드(디자인 핸드오프 turn 7a/7b/7c) — 심각도는 "절대건수가 아니라
-  // 인원 대비 비율"로 판정해야 한다는 스펙 경고를 그대로 따른다: 일=출근율 임계값,
-  // 주·월=한도초과 인원>0 우선, 아니면 부서 이상치율이 전사 평균의 1.15배를 넘는지. ──────
-  const companyAnomalyRate = total.headcount > 0 ? anomalyTotals.total / total.headcount : 0
   const monthLabel = `${new Date(period.from + 'T12:00').getMonth() + 1}월`
+  const totalDivisionsCount = metrics.length
 
-  const cardData = useMemo<DivisionCardVM[]>(() => metrics.map(m => {
-    const anomaly = divAnomaly.find(a => a.label === m.division) ?? { late: 0, shortage: 0, notag: 0, total: 0 }
-    const rateRow = divNormalRate.find(r => r.division === m.division)
-    const divRate = rateRow?.pct ?? 0
-    const avgHours = m.headcount > 0 ? m.totalHours / m.headcount : 0
-    const overLimitCount = overLimitByDivision.get(m.division) ?? 0
+  // ── 연차 누적 사용률용 연간(1/1~기준일) 데이터 — usePeriodRange가 잡아주는 단일 월
+  // 범위만으로는 "올해 들어 지금까지 쓴 비율"을 계산할 수 없어서 별도로 더 넓게 fetch한다.
+  // month가 아닐 땐 어차피 안 쓰이므로 범위를 period와 동일하게 둬서 낭비하지 않는다.
+  const yearStart = `${period.to.slice(0, 4)}-01-01`
+  const ytdFrom = period.granularity === 'month' ? yearStart : period.from
+  const { records: ytdRawRecords, employees: ytdRawEmployees, globalExclusionIds: ytdGlobalExclusionIds } =
+    useProcessedAttendance(ytdFrom, period.to)
+  const ytdVisibleEmployees = useMemo(
+    () => ytdRawEmployees.filter(e => !ytdGlobalExclusionIds.has(e.id)),
+    [ytdRawEmployees, ytdGlobalExclusionIds],
+  )
+  const ytdScopedEmployees = useMemo(
+    () => selectedDivision ? ytdVisibleEmployees.filter(e => e.division === selectedDivision) : ytdVisibleEmployees,
+    [ytdVisibleEmployees, selectedDivision],
+  )
+  const ytdScopedIds = useMemo(() => new Set(ytdScopedEmployees.map(e => e.id)), [ytdScopedEmployees])
+  const ytdScopedRecords = useMemo(
+    () => ytdRawRecords.filter(r => ytdScopedIds.has(r.employeeId)),
+    [ytdRawRecords, ytdScopedIds],
+  )
 
-    let severity: CardSeverity
-    let bigValue: string
-    let bigUnit: string | undefined
-    let progressPct: number
-    let captionLeft: string
-    let captionRight: string
+  // ── 연차 발생일수(부여일수) 기반 사용률 — 누적(1/1~기준일) / 단월(선택된 달) 두 기준.
+  // ⚠️ 발생일수는 근로기준법 제60조 법정 최소 기준 근사치다(overviewAggregations.computeGrantedDays
+  // 주석 참고) — 회사 실제 연차 규정과 다를 수 있어 확정 필요.
+  const employeeLeaveCumulative = useMemo(
+    () => period.granularity === 'month' ? buildEmployeeLeaveUsage(ytdScopedRecords, ytdScopedEmployees, period.to) : [],
+    [period.granularity, ytdScopedRecords, ytdScopedEmployees, period.to],
+  )
+  const employeeLeaveSingle = useMemo(
+    () => period.granularity === 'month' ? buildEmployeeLeaveUsage(scopedRecords, scopedEmployees, period.to) : [],
+    [period.granularity, scopedRecords, scopedEmployees, period.to],
+  )
+  const divisionLeaveCumulative = useMemo(() => buildDivisionLeaveUsage(employeeLeaveCumulative), [employeeLeaveCumulative])
+  const divisionLeaveSingle = useMemo(() => buildDivisionLeaveUsage(employeeLeaveSingle), [employeeLeaveSingle])
 
-    if (period.granularity === 'day') {
-      severity = divRate < 82 ? 'action' : divRate < 90 ? 'warning' : 'normal'
-      bigValue = divRate.toFixed(1)
-      bigUnit = '%'
-      progressPct = divRate
-      const divTodayOtCount = todayOt.filter(e => e.division === m.division).length
-      captionLeft = `초과 인원 ${divTodayOtCount}명 · ${fmtH(m.otHours)}`
-      captionRight = `전사 평균 ${normalRate.pct.toFixed(1)}%`
-    } else {
-      const perHeadAnomalyRate = m.headcount > 0 ? anomaly.total / m.headcount : 0
-      severity = overLimitCount > 0 ? 'action' : perHeadAnomalyRate > companyAnomalyRate * 1.15 ? 'warning' : 'normal'
-      bigValue = fmtH(avgHours)
-      bigUnit = undefined
-      progressPct = overLimitHours > 0 ? (avgHours / overLimitHours) * 100 : 0
-      captionLeft = `출근율 ${divRate.toFixed(1)}%`
-      captionRight = `${period.granularity === 'week' ? '주 52시간' : `월 ${overLimitHours}시간`} 한도`
+  const currentMonthNum = Number(period.to.slice(5, 7))
+  const cumulativeBenchmarkPct = LEAVE_BENCHMARK[currentMonthNum - 1] ?? 100
+
+  const leaveTotals = useMemo(() => {
+    const cg = employeeLeaveCumulative.reduce((s, r) => s + r.grantedDays, 0)
+    const cu = employeeLeaveCumulative.reduce((s, r) => s + r.usedDays, 0)
+    const sg = employeeLeaveSingle.reduce((s, r) => s + r.grantedDays, 0)
+    const su = employeeLeaveSingle.reduce((s, r) => s + r.usedDays, 0)
+    return {
+      cumulativePct: cg > 0 ? (cu / cg) * 100 : 0,
+      singlePct: sg > 0 ? (su / sg) * 100 : 0,
+      singleUsedDays: su,
+      usersWithSingleUsage: employeeLeaveSingle.filter(r => r.usedDays > 0).length,
     }
+  }, [employeeLeaveCumulative, employeeLeaveSingle])
 
-    // 인원 목록 — 이상치 건수 내림차순. budget(=division 총계)을 앞에서부터 차감해 채워서
-    // "나열 인원 건수 합 ≤ 부서 이상치 총계"를 보장한다(핸드오프 "인원 목록 제약" 절).
-    const people = empAnomaly
-      .filter(r => r.division === m.division)
-      .map(r => ({ employeeId: r.key, name: r.label, count: r.total, hours: employeeHoursMap.get(r.key) ?? 0 }))
-      .sort((a, b) => b.count - a.count)
+  // ── 연차 추이 차트용 월별(1~12월) 포인트 — ytdScopedRecords가 이미 1/1~기준일 전체를
+  // 갖고 있으므로 추가 fetch 없이 달마다 슬라이스해서 누적/단월 비율을 계산한다. ────────
+  const monthlyLeavePoints = useMemo<MonthlyLeavePoint[]>(() => {
+    if (period.granularity !== 'month') return []
+    const year = period.to.slice(0, 4)
+    const points: MonthlyLeavePoint[] = []
+    for (let m = 1; m <= 12; m++) {
+      const mm = String(m).padStart(2, '0')
+      const lastDay = new Date(Number(year), m, 0).getDate()
+      const from = `${year}-${mm}-01`
+      const to = `${year}-${mm}-${String(lastDay).padStart(2, '0')}`
+      let cumulativePct: number | null = null
+      let singlePct: number | null = null
+      if (m <= currentMonthNum) {
+        const cumUsage = buildEmployeeLeaveUsage(ytdScopedRecords.filter(r => r.date <= to), ytdScopedEmployees, to)
+        const cg = cumUsage.reduce((s, r) => s + r.grantedDays, 0)
+        const cu = cumUsage.reduce((s, r) => s + r.usedDays, 0)
+        cumulativePct = cg > 0 ? (cu / cg) * 100 : 0
+
+        const singleUsage = buildEmployeeLeaveUsage(ytdScopedRecords.filter(r => r.date >= from && r.date <= to), ytdScopedEmployees, to)
+        const sg = singleUsage.reduce((s, r) => s + r.grantedDays, 0)
+        const su = singleUsage.reduce((s, r) => s + r.usedDays, 0)
+        singlePct = sg > 0 ? (su / sg) * 100 : 0
+      }
+      points.push({ month: m, label: `${m}월`, cumulativePct, singlePct, benchmarkPct: LEAVE_BENCHMARK[m - 1] })
+    }
+    return points
+  }, [period.granularity, period.to, ytdScopedRecords, ytdScopedEmployees, currentMonthNum])
+
+  // ── 주 52h 위험군 — division 단위 밴드(주의/경고/초과) 롤업. ─────────────────────
+  const headcountByDivision = useMemo(() => new Map(metrics.map(m => [m.division, m.headcount])), [metrics])
+  const divisionRiskBands = useMemo(
+    () => period.granularity === 'week' ? buildDivisionRiskBands(weeklyRisk.rows, headcountByDivision) : [],
+    [period.granularity, weeklyRisk, headcountByDivision],
+  )
+
+  // ── 휴일근로 사원별 날짜 상세 — 주·휴일 탭 카드 목록용. ─────────────────────────
+  const holidayWorkDetails = useMemo(
+    () => period.granularity === 'week' ? buildHolidayWorkDetails(scopedRecords, empMap) : [],
+    [period.granularity, scopedRecords, empMap],
+  )
+
+  // ── 고정 3열 KPI(v9 핵심 규칙: 탭을 바꿔도 이 3칸의 틀은 그대로) ──────────────────
+  const kpiTiles = useMemo<KpiTileVM[]>(() => {
+    if (period.granularity === 'day') {
+      const delta = normalRate.pct - OVERVIEW_POLICY.attendanceTargetPct
+      const divsWithAnomaly = divAnomaly.filter(d => d.total > 0).length
+      return [
+        {
+          key: 'main', label: '출근율', isMain: true, value: normalRate.pct.toFixed(1), unit: '%',
+          subRows: [
+            { key: '기준 대비', value: `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%p`, tone: delta >= 0 ? 'positive' : 'negative' },
+            { key: '정상출근', value: `${normalRate.normal}명` },
+            { key: '이상치 발생 부문', value: `${divsWithAnomaly} / ${totalDivisionsCount}개` },
+          ],
+          onClick: () => openAndScroll('anomaly'),
+        },
+        {
+          key: 'urgent', label: '당일 긴급 이상치', value: `${anomalyTotals.total}`, unit: '건',
+          breakdown3: [
+            { label: '지각', value: `${anomalyTotals.late}`, color: '#d97706' },
+            { label: '근무미달', value: `${anomalyTotals.shortage}`, color: '#dc2626' },
+            { label: '미태깅', value: `${anomalyTotals.notag}`, color: '#7c3aed' },
+          ],
+          onClick: () => openAndScroll('anomaly'),
+        },
+        {
+          key: 'absence', label: '당일 현장 부재', value: `${todayLeave.length + todayOffsite.length}`, unit: '명',
+          subRows: [
+            { key: '휴가', value: `${todayLeave.length}명` },
+            { key: '외근', value: `${todayOffsite.length}명` },
+          ],
+          onClick: () => openAndScroll('leave'),
+        },
+      ]
+    }
+    if (period.granularity === 'week') {
+      const divsWithRisk = divisionRiskBands.filter(b => b.caution + b.warning + b.danger > 0).length
+      const otEligible = metrics.filter(m => m.otHours > 0).length
+      const totalHolidayCount = divHoliday.reduce((s, r) => s + r.count, 0)
+      const divsWithHoliday = divHoliday.filter(d => d.count > 0).length
+      return [
+        {
+          key: 'main', label: '주 52시간 초과 위험군', isMain: true, value: `${weeklyRisk.danger}`, unit: '명',
+          subRows: [
+            { key: '주의 45–50h', value: `${weeklyRisk.caution}명` },
+            { key: '경고 50–52h', value: `${weeklyRisk.warning}명` },
+            { key: '발생 부문', value: `${divsWithRisk} / ${totalDivisionsCount}개` },
+          ],
+          onClick: () => openAndScroll('ot'),
+        },
+        {
+          key: 'overtime', label: '연장근로', value: fmtH(total.headcount > 0 ? total.otHours / total.headcount : 0),
+          footnote: '주당 평균',
+          subRows: [
+            { key: '총 연장', value: fmtH(total.otHours) },
+            { key: '대상 인원', value: `${otEligible}명` },
+          ],
+          onClick: () => openAndScroll('ot'),
+        },
+        {
+          key: 'holiday', label: '휴일근로', value: `${totalHolidayCount}`, unit: '건',
+          subRows: [
+            { key: '총 시간', value: fmtH(totalHolidayH) },
+            { key: '1건 평균', value: totalHolidayCount > 0 ? fmtH(totalHolidayH / totalHolidayCount) : '0h' },
+            { key: '발생 부문', value: `${divsWithHoliday} / ${totalDivisionsCount}개` },
+          ],
+          onClick: () => openAndScroll('holiday'),
+        },
+      ]
+    }
+    // month
+    const belowTargetDivCount = divisionLeaveCumulative.filter(d => d.ratePct < cumulativeBenchmarkPct).length
+    if (monthBasis === 'cumulative') {
+      const delta = leaveTotals.cumulativePct - cumulativeBenchmarkPct
+      return [
+        {
+          key: 'main', label: '월간 전사 연차 사용률 (누적)', isMain: true, value: leaveTotals.cumulativePct.toFixed(1), unit: '%',
+          subRows: [
+            { key: '목표 대비', value: `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%p`, tone: delta >= 0 ? 'positive' : 'negative' },
+            { key: '단독 사용', value: `${leaveTotals.singlePct.toFixed(1)}%` },
+            { key: '기준 미달 부문', value: `${belowTargetDivCount} / ${totalDivisionsCount}개` },
+          ],
+          onClick: () => openAndScroll('leave'),
+        },
+        {
+          // ⚠️ 급여 시급 데이터 소스가 없어 금액을 지어내지 않음 — 값 자체를 "준비중"으로 표시.
+          key: 'allowance', label: '연말 예상 연차 수당 (현금 지출)', value: '준비중',
+          footnote: '급여 시급 데이터 연동 필요',
+          onClick: () => openAndScroll('leave'),
+        },
+        {
+          key: 'over209', label: '월간 209시간 초과 인원', value: `${overLimitRows.length}`, unit: '명',
+          subRows: [
+            { key: '사업부', value: `${overLimitRows.filter(r => (BUSINESS_DIVISIONS as string[]).includes(r.division)).length}명` },
+            { key: '지원부', value: `${overLimitRows.filter(r => (SUPPORT_DIVISIONS as string[]).includes(r.division)).length}명` },
+          ],
+          onClick: () => openAndScroll('ot'),
+        },
+      ]
+    }
+    const deltaAlloc = leaveTotals.singlePct - MONTHLY_ALLOCATION
+    return [
+      {
+        key: 'main', label: `${monthLabel} 단독 연차 사용률`, isMain: true, value: leaveTotals.singlePct.toFixed(1), unit: '%',
+        subRows: [
+          { key: '배분 대비', value: `${deltaAlloc >= 0 ? '+' : ''}${deltaAlloc.toFixed(1)}%p`, tone: deltaAlloc >= 0 ? 'positive' : 'negative' },
+          { key: '누적 사용률', value: `${leaveTotals.cumulativePct.toFixed(1)}%` },
+        ],
+        onClick: () => openAndScroll('leave'),
+      },
+      {
+        key: 'users', label: `${monthLabel} 연차 사용 인원`, value: `${leaveTotals.usersWithSingleUsage}`, unit: '명',
+        subRows: [
+          { key: '1인 평균', value: `${fmtDays(leaveTotals.usersWithSingleUsage > 0 ? leaveTotals.singleUsedDays / leaveTotals.usersWithSingleUsage : 0)}일` },
+          { key: '미사용', value: `${employeeLeaveSingle.filter(r => r.usedDays === 0).length}명` },
+        ],
+        onClick: () => openAndScroll('leave'),
+      },
+      {
+        key: 'allowance', label: '연말 예상 연차 수당 (현금 지출)', value: '준비중',
+        footnote: '급여 시급 데이터 연동 필요',
+        subRows: [{ key: '209h 초과', value: `${overLimitRows.length}명` }],
+        onClick: () => openAndScroll('leave'),
+      },
+    ]
+  }, [
+    period.granularity, monthBasis, normalRate, divAnomaly, anomalyTotals, todayLeave, todayOffsite,
+    weeklyRisk, divisionRiskBands, metrics, divHoliday, totalHolidayH, total, totalDivisionsCount,
+    divisionLeaveCumulative, cumulativeBenchmarkPct, leaveTotals, overLimitRows, employeeLeaveSingle, monthLabel,
+  ])
+
+  // ── 부서 카드(division → DeptCardVM) — 상태(일/주연장/주휴일/월누적/월단월)별로 콘텐츠가
+  // 완전히 다르다. 심각도 임계값은 전부 OVERVIEW_POLICY 상수 참조(하드코딩 매직넘버 금지). ──
+  function buildDayCard(m: (typeof metrics)[number]): DeptCardVM {
+    const anomaly = divAnomaly.find(a => a.label === m.division) ?? { late: 0, shortage: 0, notag: 0, total: 0 }
+    const rate = divNormalRate.find(r => r.division === m.division)?.pct ?? 0
+    const delta = rate - OVERVIEW_POLICY.attendanceTargetPct
+    const severity = delta >= 0 ? 'normal' : delta >= OVERVIEW_POLICY.attendanceWarnDeltaPp ? 'warning' : 'action'
+    const divOtCount = todayOt.filter(e => e.division === m.division).length
+    const leaveCount = divLeave.find(l => l.label === m.division)?.count ?? 0
+    const offsiteCount = divOffsite.find(o => o.label === m.division)?.count ?? 0
+
+    const people = empAnomaly.filter(r => r.division === m.division)
     let budget = anomaly.total
-    const budgeted: typeof people = []
+    const rows: DeptCardPersonRow[] = []
     for (const p of people) {
       if (budget <= 0) break
-      budgeted.push(p)
-      budget -= p.count
+      rows.push({ key: p.key, name: p.label, cols: [p.late || '—', p.shortage || '—', p.notag || '—'] })
+      budget -= p.total
     }
-
-    const leave = divLeaveBreakdown.find(l => l.division === m.division)
-    const offsiteCount = divOffsite.find(o => o.label === m.division)?.count ?? 0
-    const leaveParts: string[] = []
-    if (leave?.annual)  leaveParts.push(`연차 ${leave.annual}`)
-    if (leave?.half)    leaveParts.push(`반차 ${leave.half}`)
-    if (leave?.quarter) leaveParts.push(`반반차 ${leave.quarter}`)
-    if (offsiteCount)   leaveParts.push(`외근 ${offsiteCount}`)
-    const holidayCount = divHoliday.find(h => h.label === m.division)?.count ?? 0
-    const showHolidayNote = (period.granularity !== 'day' || isHolidayToday) && holidayCount > 0
 
     return {
       division: m.division, headcount: m.headcount, severity,
-      bigValue, bigUnit, progressPct, captionLeft, captionRight,
-      late: anomaly.late, shortage: anomaly.shortage, notag: anomaly.notag, totalAnomaly: anomaly.total,
-      people: budgeted,
-      leaveNote: leaveParts.length > 0 ? leaveParts.join(' · ') : undefined,
-      holidayNote: showHolidayNote ? `휴일근무 ${holidayCount}명` : undefined,
+      mainValue: rate.toFixed(1), mainUnit: '%',
+      progressPct: rate, progressMarkerPct: OVERVIEW_POLICY.attendanceTargetPct,
+      captionLeft: `초과 인원 ${divOtCount}명`, captionRight: `기준 ${OVERVIEW_POLICY.attendanceTargetPct}%`,
+      cells: [
+        { label: '지각', value: anomaly.late ? `${anomaly.late}` : '—', color: '#d97706' },
+        { label: '미달', value: anomaly.shortage ? `${anomaly.shortage}` : '—', color: '#dc2626' },
+        { label: '미태깅', value: anomaly.notag ? `${anomaly.notag}` : '—', color: '#7c3aed' },
+      ],
+      listHeaderLabel: `이상치 사원 ${rows.length}명`, listSortLabel: '건수 많은 순',
+      listColumnHeaders: ['사원', '지각', '미달', '미태'],
+      rows,
+      footerLabel: '현장 부재', footerValue: `${leaveCount + offsiteCount}명`,
     }
-  }), [
-    metrics, divAnomaly, divNormalRate, overLimitByDivision, empAnomaly, employeeHoursMap, todayOt,
-    period.granularity, normalRate.pct, companyAnomalyRate, overLimitHours, divLeaveBreakdown, divOffsite,
-    divHoliday, isHolidayToday,
-  ])
+  }
 
-  const distributionRows = useMemo(() => divAnomaly.map(r => ({ label: r.label, value: r.total })), [divAnomaly])
+  function buildWeekOvertimeCard(m: (typeof metrics)[number]): DeptCardVM {
+    const band = divisionRiskBands.find(b => b.division === m.division) ?? { caution: 0, warning: 0, danger: 0, avgHours: 0 }
+    const weeklyOtAvg = m.headcount > 0 ? m.otHours / m.headcount : 0
+    const riskCount = band.caution + band.warning + band.danger
+    const severity =
+      band.danger > 0 || weeklyOtAvg >= OVERVIEW_POLICY.weeklyOtActionH ? 'action'
+      : band.caution + band.warning > 0 || weeklyOtAvg >= OVERVIEW_POLICY.weeklyOtWarningH ? 'warning' : 'normal'
 
-  const heroData = period.granularity === 'day'
-    ? {
-        label: '전사 정상출근율', value: normalRate.pct.toFixed(1), unit: '%',
-        sub: `${normalRate.normal} / ${normalRate.total}명 · 목표 85%`,
-        footerLabel: '오늘 이상치',
+    const people = weeklyRisk.rows.filter(r => r.division === m.division).sort((a, b) => b.hours - a.hours)
+    const rows: DeptCardPersonRow[] = people.slice(0, 6).map(p => ({
+      key: p.employeeId, name: p.name,
+      tag: p.bucket === 'danger' ? { text: '초과', bg: '#fee2e2', fg: '#991b1b' }
+        : p.bucket === 'warning' ? { text: '경고', bg: '#fef2f2', fg: '#b91c1c' }
+        : { text: '주의', bg: '#fffbeb', fg: '#b45309' },
+      value: fmtH(p.hours), valueRed: p.hours >= 50,
+    }))
+
+    return {
+      division: m.division, headcount: m.headcount, severity,
+      mainValue: `${riskCount}`, mainUnit: '명',
+      progressPct: (weeklyOtAvg / 20) * 100, progressMarkerPct: (OVERVIEW_POLICY.weeklyOtActionH / 20) * 100,
+      captionLeft: `주당 평균 ${fmtH(weeklyOtAvg)}`, captionRight: `기준 ${OVERVIEW_POLICY.weeklyOtActionH}h`,
+      cells: [
+        { label: '주의 45-50h', value: band.caution ? `${band.caution}` : '—' },
+        { label: '경고 50-52h', value: band.warning ? `${band.warning}` : '—' },
+        { label: '초과 52h+', value: band.danger ? `${band.danger}` : '—', color: '#dc2626' },
+      ],
+      listHeaderLabel: `위험군 사원 ${rows.length}명`, listSortLabel: '근로시간 많은 순',
+      rows,
+      footerLabel: '부서 평균 연장', footerValue: fmtH(weeklyOtAvg),
+    }
+  }
+
+  function buildWeekHolidayCard(m: (typeof metrics)[number]): DeptCardVM {
+    const row = divHoliday.find(h => h.label === m.division) ?? { count: 0, hours: 0 }
+    const severity =
+      row.count >= OVERVIEW_POLICY.holidayActionCount ? 'action'
+      : row.count >= OVERVIEW_POLICY.holidayWarningCount ? 'warning' : 'normal'
+    const details = holidayWorkDetails.filter(d => d.division === m.division).sort((a, b) => b.hours - a.hours)
+    const rows: DeptCardPersonRow[] = details.slice(0, 6).map(d => ({
+      key: `${d.employeeId}_${d.date}`, name: d.name,
+      tag: { text: d.date.slice(5).replace('-', '/'), bg: '#f5f7ff', fg: '#2563eb' },
+      value: fmtH(d.hours), valueRed: d.hours >= 6,
+    }))
+    return {
+      division: m.division, headcount: m.headcount, severity,
+      mainValue: `${row.count}`, mainUnit: '건',
+      progressPct: (row.count / 5) * 100,
+      captionLeft: `총 ${fmtH(row.hours)}`, captionRight: '전사 평균 참고',
+      cells: [
+        { label: '건수', value: `${row.count}`, color: '#1d4ed8' },
+        { label: '시간', value: row.hours ? fmtH(row.hours) : '—' },
+      ],
+      listHeaderLabel: `휴일근로 ${rows.length}건`, listSortLabel: '시간 많은 순',
+      rows,
+      footerLabel: '부서 휴일근로', footerValue: `${row.count}건 · ${fmtH(row.hours)}`,
+    }
+  }
+
+  function buildMonthCumulativeCard(m: (typeof metrics)[number]): DeptCardVM {
+    const row = divisionLeaveCumulative.find(d => d.division === m.division) ?? { ratePct: 0, usedDays: 0, grantedDays: 0, headcount: m.headcount, division: m.division }
+    const delta = row.ratePct - cumulativeBenchmarkPct
+    const severity = delta >= 0 ? 'normal' : delta >= OVERVIEW_POLICY.leaveTargetWarnDeltaPp ? 'warning' : 'action'
+    const remain = Math.max(0, row.grantedDays - row.usedDays)
+    const people = employeeLeaveCumulative.filter(r => r.division === m.division)
+    const rows: DeptCardPersonRow[] = people.slice(0, 6).map(p => ({
+      key: p.employeeId, name: p.name,
+      tag: { text: `${p.hireYear ?? '—'}년 입사 · ${p.grantedDays}일`, bg: '#f1f5f9', fg: '#475569' },
+      value: `${fmtDays(p.usedDays)}/${p.grantedDays}일 · ${p.ratePct.toFixed(0)}%`,
+      valueRed: p.ratePct < 45,
+    }))
+    return {
+      division: m.division, headcount: m.headcount, severity,
+      mainValue: row.ratePct.toFixed(1), mainUnit: '%',
+      progressPct: row.ratePct, progressMarkerPct: cumulativeBenchmarkPct,
+      captionLeft: `사용 ${fmtDays(row.usedDays)}일`, captionRight: `목표 ${cumulativeBenchmarkPct}%`,
+      cells: [
+        { label: '사용', value: `${fmtDays(row.usedDays)}일` },
+        { label: '잔여', value: `${fmtDays(remain)}일`, color: remain > 8 ? '#dc2626' : undefined },
+      ],
+      listHeaderLabel: `사원 ${rows.length}명`, listSortLabel: '사용률 낮은 순',
+      rows,
+      footerLabel: '209h 초과', footerValue: `${overLimitByDivision.get(m.division) ?? 0}명`,
+    }
+  }
+
+  function buildMonthSingleCard(m: (typeof metrics)[number]): DeptCardVM {
+    const row = divisionLeaveSingle.find(d => d.division === m.division) ?? { ratePct: 0, usedDays: 0, grantedDays: 0 }
+    const cumRow = divisionLeaveCumulative.find(d => d.division === m.division)
+    const delta = row.ratePct - MONTHLY_ALLOCATION
+    const severity = delta >= 0 ? 'normal' : delta >= OVERVIEW_POLICY.monthlyAllocationWarnDeltaPp ? 'warning' : 'action'
+    const people = employeeLeaveSingle.filter(r => r.division === m.division && r.usedDays > 0).sort((a, b) => b.usedDays - a.usedDays)
+    const rows: DeptCardPersonRow[] = people.slice(0, 6).map(p => ({
+      key: p.employeeId, name: p.name,
+      value: `${fmtDays(p.usedDays)}일 · ${p.grantedDays > 0 ? ((p.usedDays / p.grantedDays) * 100).toFixed(1) : '0'}%`,
+    }))
+    return {
+      division: m.division, headcount: m.headcount, severity,
+      mainValue: row.ratePct.toFixed(1), mainUnit: '%',
+      progressPct: (row.ratePct / 15) * 100, progressMarkerPct: (MONTHLY_ALLOCATION / 15) * 100,
+      captionLeft: `${monthLabel} 사용 ${fmtDays(row.usedDays)}일`, captionRight: `배분 ${MONTHLY_ALLOCATION.toFixed(1)}%`,
+      cells: [
+        { label: `${monthLabel} 사용`, value: `${fmtDays(row.usedDays)}일` },
+        { label: '잔여', value: cumRow ? `${fmtDays(Math.max(0, cumRow.grantedDays - cumRow.usedDays))}일` : '—' },
+      ],
+      listHeaderLabel: `사용 인원 ${rows.length}명`, listSortLabel: '사용일수 많은 순',
+      rows,
+      footerLabel: '누적 목표차', footerValue: `${cumRow ? (cumRow.ratePct - cumulativeBenchmarkPct).toFixed(1) : '0.0'}%p`,
+    }
+  }
+
+  const cardBuilder =
+    period.granularity === 'day' ? buildDayCard
+    : period.granularity === 'week' ? (weekTab === 'overtime' ? buildWeekOvertimeCard : buildWeekHolidayCard)
+    : (monthBasis === 'cumulative' ? buildMonthCumulativeCard : buildMonthSingleCard)
+  const metricsByDivision = new Map(metrics.map(m => [m.division, m]))
+  const businessCards = BUSINESS_DIVISIONS.map(d => metricsByDivision.get(d)).filter((m): m is (typeof metrics)[number] => !!m).map(cardBuilder)
+  const supportCards  = SUPPORT_DIVISIONS.map(d => metricsByDivision.get(d)).filter((m): m is (typeof metrics)[number] => !!m).map(cardBuilder)
+
+  /** 구획(사업부/지원부) 헤더 우측 요약 3항목 — 카드 그리드와 같은 소스에서 그 구획 divisions만 다시 롤업. */
+  function summaryForGroup(divisions: readonly string[]): DeptSectionSummaryItem[] {
+    if (period.granularity === 'day') {
+      const rateRows = divNormalRate.filter(r => divisions.includes(r.division))
+      const normalSum = rateRows.reduce((s, r) => s + r.normal, 0)
+      const totalSum = rateRows.reduce((s, r) => s + r.total, 0)
+      const pct = totalSum > 0 ? (normalSum / totalSum) * 100 : 0
+      const anomalyTotal = divAnomaly.filter(a => divisions.includes(a.label)).reduce((s, a) => s + a.total, 0)
+      const absence = divisions.reduce((s, d) => s + (divLeave.find(l => l.label === d)?.count ?? 0) + (divOffsite.find(o => o.label === d)?.count ?? 0), 0)
+      return [{ label: '출근율', value: `${pct.toFixed(1)}%` }, { label: '이상치', value: `${anomalyTotal}건` }, { label: '부재', value: `${absence}명` }]
+    }
+    if (period.granularity === 'week') {
+      const groupMetrics = metrics.filter(m => divisions.includes(m.division))
+      const groupHeadcount = groupMetrics.reduce((s, m) => s + m.headcount, 0)
+      if (weekTab === 'overtime') {
+        const riskCount = divisionRiskBands.filter(b => divisions.includes(b.division)).reduce((s, b) => s + b.caution + b.warning + b.danger, 0)
+        const groupOt = groupMetrics.reduce((s, m) => s + m.otHours, 0)
+        const avgOt = groupHeadcount > 0 ? groupOt / groupHeadcount : 0
+        return [{ label: '위험군', value: `${riskCount}명` }, { label: '주당 평균 연장', value: fmtH(avgOt) }, { label: '대상 인원', value: `${groupMetrics.filter(m => m.otHours > 0).length}명` }]
       }
-    : period.granularity === 'week'
-    ? {
-        label: '전사 초과근무 합계', value: Math.round(totalOtH).toLocaleString(), unit: 'h',
-        sub: `주 평균 ${fmtH(total.headcount > 0 ? total.totalHours / total.headcount : 0)} · 52h초과 ${overLimitRows.length}명`,
-        footerLabel: '이번 주 이상치',
-      }
-    : {
-        label: '전사 초과근무 합계', value: Math.round(totalOtH).toLocaleString(), unit: 'h',
-        sub: `월 평균 ${fmtH(total.headcount > 0 ? total.totalHours / total.headcount : 0)} · ${overLimitHours}h초과 ${overLimitRows.length}명`,
-        footerLabel: `${monthLabel} 이상치`,
-      }
+      const groupHoliday = divHoliday.filter(h => divisions.includes(h.label))
+      const count = groupHoliday.reduce((s, h) => s + h.count, 0)
+      const hours = groupHoliday.reduce((s, h) => s + h.hours, 0)
+      return [{ label: '휴일근로', value: `${count}건` }, { label: '시간', value: fmtH(hours) }, { label: '발생 부문', value: `${groupHoliday.filter(h => h.count > 0).length} / ${divisions.length}개` }]
+    }
+    const groupLeave = (monthBasis === 'cumulative' ? divisionLeaveCumulative : divisionLeaveSingle).filter(d => divisions.includes(d.division))
+    const g = groupLeave.reduce((s, d) => s + d.grantedDays, 0)
+    const u = groupLeave.reduce((s, d) => s + d.usedDays, 0)
+    const pct = g > 0 ? (u / g) * 100 : 0
+    if (monthBasis === 'cumulative') {
+      const over209 = overLimitRows.filter(r => divisions.includes(r.division)).length
+      return [{ label: '연차 사용률', value: `${pct.toFixed(1)}%` }, { label: '목표차', value: `${(pct - cumulativeBenchmarkPct).toFixed(1)}%p` }, { label: '209h 초과', value: `${over209}명` }]
+    }
+    return [{ label: `${monthLabel} 단독 사용률`, value: `${pct.toFixed(1)}%` }, { label: '배분 대비', value: `${(pct - MONTHLY_ALLOCATION).toFixed(1)}%p` }, { label: `${monthLabel} 사용`, value: `${fmtDays(u)}일` }]
+  }
+  const businessSummary = summaryForGroup(BUSINESS_DIVISIONS)
+  const supportSummary  = summaryForGroup(SUPPORT_DIVISIONS)
+
+  const deptSectionSubtitle =
+    period.granularity === 'day' ? '사업부 5개 → 지원부 5개 지정 순서 · 상세는 사원별 지각·미달·미태깅'
+    : period.granularity === 'week' ? (weekTab === 'overtime' ? '연장근로만 표시 · 초과·위험 사원의 주 근로시간' : '휴일근로만 표시 · 근로일자·시간')
+    : monthBasis === 'cumulative' ? `누적 기준 · 회계연도 발생 연차 대비 지금까지 쓴 비율 · 목표 ${cumulativeBenchmarkPct}%`
+    : `단월 기준 · ${monthLabel}에 새로 쓴 연차만 · 월 배분 ${MONTHLY_ALLOCATION.toFixed(1)}% 대비`
+
+  const overallSeverity: 'action' | 'warning' | 'normal' =
+    [...businessCards, ...supportCards].some(c => c.severity === 'action') ? 'action'
+    : [...businessCards, ...supportCards].some(c => c.severity === 'warning') ? 'warning' : 'normal'
+  const headerSubtitle =
+    period.granularity === 'day' ? '하루 단위에서는 누가 제자리에 있었는가가 핵심입니다'
+    : period.granularity === 'week' ? '주 단위에서는 52시간 한도와 연장수당 / 휴일근로와 휴일수당이 핵심입니다'
+    : '월 단위에서는 연차가 계획대로 소진되는가가 핵심입니다'
 
   if (!isLiveData) {
     return (
@@ -459,61 +793,20 @@ export default function OverviewPage() {
         <span className="text-[10.5px] text-gray-300 ml-1">선택한 본부 기준으로 아래 숫자·그래프가 전부 바뀝니다</span>
       </div>
 
-      {/* ── 전사 요약: 히어로 카드(일=출근율/주·월=초과근무 합계) + 부서 분산 패널 ──
-           디자인 핸드오프(turn 7a/7b/7c) 기준 — 분산 패널은 반드시 아래 카드 그리드와
-           같은 소스(divAnomaly)에서 계산해서 합계가 서로 어긋나지 않게 한다. ── */}
-      <div className="flex flex-col sm:flex-row gap-3 items-stretch">
-        <HeroCard
-          label={heroData.label} value={heroData.value} unit={heroData.unit} sub={heroData.sub}
-          footerLabel={heroData.footerLabel} footerValue={anomalyTotals.total}
-          onFooterClick={() => openAndScroll('anomaly')}
-        />
-        <DistributionPanel rows={distributionRows} />
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {/* 슬롯3 — 근무시간/수당 */}
-        {period.granularity === 'day' && (
-          <KpiTile label="오늘 초과근무" value={todayOt.length} unit="명" color="#2f6fed"
-            sub={`기간 합계 ${fmtH(totalOtH)}`}
-            onClick={() => openAndScroll('ot')} />
-        )}
-        {period.granularity === 'week' && (
-          <KpiTile label="주간 평균 실근무시간" value={fmtH(total.headcount > 0 ? total.totalHours / total.headcount : 0)} color="#2f6fed"
-            sub={`전체 ${total.headcount}명 기준`}
-            onClick={() => openAndScroll('ot')} />
-        )}
-        {period.granularity === 'month' && (
-          <KpiTile label="월간 총 초과근로시간" value={fmtH(totalOtH)} color="#2f6fed"
-            sub="전사 누적 합계"
-            onClick={() => openAndScroll('ot')} />
-        )}
-
-        {/* 슬롯4 — 부재/휴가 (월간 "소진율"은 부여일수 데이터가 없어 1차는 누적사용일수만 표시) */}
-        {period.granularity === 'day' && (
-          <KpiTile label="오늘의 부재현황" value={todayLeave.length + todayOffsite.length} unit="명" color="#6d3fd1"
-            sub={`휴가 ${todayLeave.length} · 외근 ${todayOffsite.length}`}
-            onClick={() => openAndScroll('leave')} />
-        )}
-        {period.granularity === 'week' && (
-          <KpiTile label="주간 휴가·부재 현황" value={empLeave.length} unit="명" color="#6d3fd1"
-            sub={`휴가 ${empLeave.length}명 · 외근 ${totalOffsiteCount}건`}
-            onClick={() => openAndScroll('leave')} />
-        )}
-        {period.granularity === 'month' && (
-          <KpiTile label="연차 소진율" value={fmtDays(totalLeaveDays)} unit="일" color="#6d3fd1"
-            sub="누적 사용일수 · 소진율(%) 계산은 준비중"
-            onClick={() => openAndScroll('leave')} />
-        )}
-      </div>
-
-      {/* ── Zone2: 이상치(기본) / 조직도 탭 — "10개 부문 전체 · 이상치 많은 순 · 카드 클릭 시 상세" ── */}
+      {/* ── v9 디자인 핸드오프: 근태 이상치 헤더 + (이상치/조직도 상위 탭은 기존 그대로 유지) ── */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <p className="text-sm font-bold text-gray-800">부서별 현황</p>
-            <p className="text-[11px] text-gray-300">{cardData.length}개 부문 전체 · 이상치 많은 순</p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-[19px] font-extrabold text-gray-900 tracking-tight">근태 이상치</h2>
+            <span
+              className="text-[11.5px] font-extrabold text-white px-[11px] py-1 rounded-[7px]"
+              style={{ background: overallSeverity === 'action' ? '#dc2626' : overallSeverity === 'warning' ? '#f59e0b' : '#16a34a' }}
+            >
+              {overallSeverity === 'action' ? '비정상' : overallSeverity === 'warning' ? '주의' : '정상'}
+            </span>
           </div>
+          <p className="text-[11.5px] text-gray-400">{headerSubtitle}</p>
+          <span className="flex-1" />
           <div className="flex bg-gray-100 rounded-lg p-0.5">
             <button
               onClick={() => setViewMode('anomaly')}
@@ -534,63 +827,71 @@ export default function OverviewPage() {
           </div>
         </div>
 
-        {viewMode === 'anomaly' ? (
-          <DivisionSummaryCardGrid cards={cardData} />
-        ) : (
+        {viewMode === 'chart' ? (
           <DivisionTeamGrid />
-        )}
+        ) : (
+          <div className="space-y-3">
+            {/* 1. 고정 3열 KPI — 탭을 바꿔도 이 틀은 그대로(v9 핵심 규칙) */}
+            <KpiTileRow tiles={kpiTiles} />
 
-        {period.granularity === 'week' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <DivisionCompareChart
-              title="본부별 주간 평균 근로시간" color="#2f6fed" unit="h"
-              data={metrics.map(m => ({ label: m.division, value: m.headcount > 0 ? Math.round((m.totalHours / m.headcount) * 10) / 10 : 0 })).filter(r => r.value > 0)}
-            />
-            <Box>
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">주 52h 위험군 랭킹</p>
-              {weeklyRiskByDivision.length === 0 ? <p className="text-xs text-gray-300">위험군 없음</p> : (
-                <ul className="space-y-1">
-                  {weeklyRiskByDivision.map(r => (
-                    <li key={r.division} className="flex items-center justify-between text-xs">
-                      <span className="text-gray-600 truncate">{r.division}</span>
-                      <span className="font-semibold text-red-600 tabular-nums">{r.count}명</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Box>
-          </div>
-        )}
+            {/* 2. 연차 추이 차트 — 월 단위에서만 */}
+            {period.granularity === 'month' && (
+              <LeaveTrendChart
+                mode={monthBasis} onModeChange={setMonthBasis}
+                points={monthlyLeavePoints}
+                legend={monthBasis === 'cumulative' ? [
+                  { label: `${monthLabel} 누적 목표`, value: `${cumulativeBenchmarkPct}%` },
+                  { label: `${monthLabel} 누적 실적`, value: `${leaveTotals.cumulativePct.toFixed(1)}%` },
+                  { label: '격차', value: `${(leaveTotals.cumulativePct - cumulativeBenchmarkPct).toFixed(1)}%p` },
+                  { label: '연말 예상 수당', value: '준비중' },
+                ] : [
+                  { label: '월 배분 목표', value: `${MONTHLY_ALLOCATION.toFixed(1)}%` },
+                  { label: `${monthLabel} 단독 실적`, value: `${leaveTotals.singlePct.toFixed(1)}%` },
+                  { label: '배분 대비', value: `${(leaveTotals.singlePct - MONTHLY_ALLOCATION).toFixed(1)}%p` },
+                  { label: '누적 사용률', value: `${leaveTotals.cumulativePct.toFixed(1)}%` },
+                ]}
+                footnote={monthBasis === 'cumulative'
+                  ? '누적 기준은 회계연도 발생 연차 대비 지금까지 쓴 비율을 그 달의 누적 목표와 비교합니다.'
+                  : '단월 기준은 그 달에 새로 쓴 연차만 월 배분 목표와 비교합니다.'}
+                stripTitle={monthBasis === 'cumulative' ? `${monthLabel} 한 달만 보면` : '누적으로 보면'}
+                stripItems={monthBasis === 'cumulative' ? [
+                  { label: `${monthLabel} 단독 사용률`, value: `${leaveTotals.singlePct.toFixed(1)}%` },
+                  { label: '배분 대비', value: `${(leaveTotals.singlePct - MONTHLY_ALLOCATION).toFixed(1)}%p` },
+                  { label: '209h 초과', value: `${overLimitRows.length}명` },
+                ] : [
+                  { label: `${monthLabel} 누적 사용률`, value: `${leaveTotals.cumulativePct.toFixed(1)}%` },
+                  { label: '누적 목표', value: `${cumulativeBenchmarkPct}%` },
+                  { label: '목표 대비', value: `${(leaveTotals.cumulativePct - cumulativeBenchmarkPct).toFixed(1)}%p` },
+                ]}
+              />
+            )}
 
-        {period.granularity === 'month' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Box>
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">본부별 정상출근율 · 이상치</p>
-              {divNormalRate.length === 0 ? <p className="text-xs text-gray-300">데이터 없음</p> : (
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-gray-100 text-gray-400">
-                      <th className="text-left py-1.5 font-medium">부서</th>
-                      <th className="text-right py-1.5 font-medium">정상출근율</th>
-                      <th className="text-right py-1.5 font-medium">이상치 합계</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {divNormalRate.map(r => (
-                      <tr key={r.division} className="hover:bg-gray-50/70">
-                        <td className="py-1.5 text-gray-700 font-medium">{r.division}</td>
-                        <td className="py-1.5 text-right tabular-nums">{r.pct.toFixed(1)}%</td>
-                        <td className="py-1.5 text-right tabular-nums">{divAnomaly.find(a => a.label === r.division)?.total ?? 0}건</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {/* 3. 부서별 현황 — 사업부/지원부 두 구획, 주간에는 연장/휴일 하위탭 추가 */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <p className="text-[14.5px] font-bold text-gray-800">부서별 현황</p>
+                <p className="text-[11px] text-gray-400">{deptSectionSubtitle}</p>
+              </div>
+              {period.granularity === 'week' && (
+                <div className="flex bg-gray-100 rounded-lg p-0.5">
+                  <button
+                    onClick={() => setWeekTab('overtime')}
+                    className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${weekTab === 'overtime' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}
+                  >
+                    연장근로
+                  </button>
+                  <button
+                    onClick={() => setWeekTab('holiday')}
+                    className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${weekTab === 'holiday' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}
+                  >
+                    휴일근로
+                  </button>
+                </div>
               )}
-            </Box>
-            <DivisionCompareChart
-              title="주차별 이상치 추이" color="#c4291f" unit="건"
-              data={weeklyAnomalySeries.map(w => ({ label: w.label, value: w.total }))}
-            />
+            </div>
+
+            <DeptSection label="사업부" accent="#dc2626" cards={businessCards} summary={businessSummary} />
+            <DeptSection label="지원부" accent="#2563eb" cards={supportCards} summary={supportSummary} />
           </div>
         )}
       </div>
