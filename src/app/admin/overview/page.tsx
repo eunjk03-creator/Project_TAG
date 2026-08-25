@@ -27,7 +27,7 @@ import {
   buildDailyOvertimeSeries, buildTodayOvertimeList,
   buildHolidayWorkRollup, buildTodayHolidayList, buildHolidayWorkDetails,
   buildOffsiteRollup, buildTodayOffsiteList,
-  computeOverLimitEmployees, computeWeeklyRiskBuckets, buildEmployeeRecognizedHours,
+  computeOverLimitEmployees, computeWeeklyRiskBuckets, buildEmployeeRecognizedHours, buildDivisionRecognizedOt,
   buildDivisionNormalRateRollup, buildDivisionRiskBands,
   buildEmployeeLeaveUsage, buildDivisionLeaveUsage,
   buildMasterDiscrepancyRollup,
@@ -301,6 +301,15 @@ export default function OverviewPage() {
     [scopedRecords, empMap],
   )
 
+  // ── division별 "정산용" 연장근로시간(§4 확정 공식, 30분 절삭+ERP 가드 포함) — 주간
+  // KPI/카드의 "연장근로" 표시는 반드시 이걸 써야 한다. useManagementMetrics의 otHours는
+  // 별개(구식) 계산이라 여기 쓰면 안 됨(정산 결과와 어긋남).
+  const divisionRecognizedOt = useMemo(
+    () => period.granularity === 'week' ? buildDivisionRecognizedOt(scopedRecords, scopedEmployees, finalAttrMap) : [],
+    [scopedRecords, scopedEmployees, finalAttrMap, period.granularity],
+  )
+  const otByDivision = useMemo(() => new Map(divisionRecognizedOt.map(d => [d.division, d])), [divisionRecognizedOt])
+
   // ── 이상치 카드 그리드의 "인원 목록" 근로시간 컬럼용 — computeOverLimitEmployees와
   // 동일한 인정시간 공식(§4)을 한도초과 여부와 무관하게 전원에게 적용. ─────────────────
   const employeeHoursMap = useMemo(
@@ -447,7 +456,8 @@ export default function OverviewPage() {
     }
     if (period.granularity === 'week') {
       const divsWithRisk = divisionRiskBands.filter(b => b.caution + b.warning + b.danger > 0).length
-      const otEligible = metrics.filter(m => m.otHours > 0).length
+      const totalRecognizedOt = divisionRecognizedOt.reduce((s, d) => s + d.otHours, 0)
+      const otEligible = divisionRecognizedOt.reduce((s, d) => s + d.eligible, 0)
       const totalHolidayCount = divHoliday.reduce((s, r) => s + r.count, 0)
       const divsWithHoliday = divHoliday.filter(d => d.count > 0).length
       return [
@@ -461,10 +471,10 @@ export default function OverviewPage() {
           onClick: () => openAndScroll('ot'),
         },
         {
-          key: 'overtime', label: '연장근로', value: fmtH(total.headcount > 0 ? total.otHours / total.headcount : 0),
+          key: 'overtime', label: '연장근로', value: fmtH(total.headcount > 0 ? totalRecognizedOt / total.headcount : 0),
           footnote: '주당 평균',
           subRows: [
-            { key: '총 연장', value: fmtH(total.otHours) },
+            { key: '총 연장', value: fmtH(totalRecognizedOt) },
             { key: '대상 인원', value: `${otEligible}명` },
           ],
           onClick: () => openAndScroll('ot'),
@@ -580,7 +590,7 @@ export default function OverviewPage() {
 
   function buildWeekOvertimeCard(m: (typeof metrics)[number]): DeptCardVM {
     const band = divisionRiskBands.find(b => b.division === m.division) ?? { caution: 0, warning: 0, danger: 0, avgHours: 0 }
-    const weeklyOtAvg = m.headcount > 0 ? m.otHours / m.headcount : 0
+    const weeklyOtAvg = m.headcount > 0 ? (otByDivision.get(m.division)?.otHours ?? 0) / m.headcount : 0
     const riskCount = band.caution + band.warning + band.danger
     const severity =
       band.danger > 0 || weeklyOtAvg >= OVERVIEW_POLICY.weeklyOtActionH ? 'action'
@@ -713,9 +723,11 @@ export default function OverviewPage() {
       const groupHeadcount = groupMetrics.reduce((s, m) => s + m.headcount, 0)
       if (weekTab === 'overtime') {
         const riskCount = divisionRiskBands.filter(b => divisions.includes(b.division)).reduce((s, b) => s + b.caution + b.warning + b.danger, 0)
-        const groupOt = groupMetrics.reduce((s, m) => s + m.otHours, 0)
+        const groupOtRows = divisionRecognizedOt.filter(d => divisions.includes(d.division))
+        const groupOt = groupOtRows.reduce((s, d) => s + d.otHours, 0)
+        const groupOtEligible = groupOtRows.reduce((s, d) => s + d.eligible, 0)
         const avgOt = groupHeadcount > 0 ? groupOt / groupHeadcount : 0
-        return [{ label: '위험군', value: `${riskCount}명` }, { label: '주당 평균 연장', value: fmtH(avgOt) }, { label: '대상 인원', value: `${groupMetrics.filter(m => m.otHours > 0).length}명` }]
+        return [{ label: '위험군', value: `${riskCount}명` }, { label: '주당 평균 연장', value: fmtH(avgOt) }, { label: '대상 인원', value: `${groupOtEligible}명` }]
       }
       const groupHoliday = divHoliday.filter(h => divisions.includes(h.label))
       const count = groupHoliday.reduce((s, h) => s + h.count, 0)

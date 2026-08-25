@@ -5,7 +5,7 @@
  * 52h 초과 필터와 동일 공식·기준으로 계산됨을 보장).
  */
 import type { ProcessedRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
-import { flagToAnomalyCategories, computeDailyRecognizedHours, isLeaderOnDate } from './attendanceCalc'
+import { flagToAnomalyCategories, computeDailyRecognizedHours, computeDailyRecognizedOtHours, isLeaderOnDate } from './attendanceCalc'
 import { hireDateFromRawId } from './dataParser'
 
 const DOW_KR = ['일', '월', '화', '수', '목', '금', '토']
@@ -338,6 +338,43 @@ export function buildEmployeeRecognizedHours(
     hours.set(employeeId, h)
   }
   return hours
+}
+
+// ── division별 "정산용" 연장근로시간 — §4 확정 공식(computeDailyRecognizedHours)에서
+// 8h 표준분을 뺀 순수 초과분(computeDailyRecognizedOtHours)만 합산한다. useManagementMetrics
+// 의 otHours는 30분 절삭·ERP 승인게이트가 없는 별개(구식) 계산이라 종합현황 이상치 탭의
+// "연장근로" 표시엔 쓰면 안 됨 — 반드시 이 함수를 통해서만 집계한다.
+export interface DivisionRecognizedOt {
+  division:  string
+  otHours:   number  // division 합계
+  eligible:  number  // 연장 발생(otHours>0) 인원 수
+}
+
+export function buildDivisionRecognizedOt(
+  records:      ProcessedRecord[],
+  employees:    Employee[],
+  finalAttrMap: Map<string, EmployeeAttributeOverrides>,
+): DivisionRecognizedOt[] {
+  const empMap = new Map(employees.map(e => [e.id, e]))
+  const byEmp  = new Map<string, ProcessedRecord[]>()
+  for (const r of records) {
+    const bucket = byEmp.get(r.employeeId)
+    if (bucket) bucket.push(r)
+    else byEmp.set(r.employeeId, [r])
+  }
+  const byDivision = new Map<string, { otHours: number; eligible: number }>()
+  for (const [employeeId, recs] of byEmp) {
+    const emp   = empMap.get(employeeId)
+    const attrs = finalAttrMap.get(employeeId)
+    const div   = emp?.division ?? '—'
+    let h = 0
+    for (const r of recs) h += computeDailyRecognizedOtHours(r, isLeaderOnDate(attrs, emp, r.date))
+    const row = byDivision.get(div) ?? { otHours: 0, eligible: 0 }
+    row.otHours += h
+    if (h > 0) row.eligible++
+    byDivision.set(div, row)
+  }
+  return [...byDivision.entries()].map(([division, row]) => ({ division, ...row }))
 }
 
 // ── 주 52h 위험군 버킷 (45~50h 주의 / 50~52h 경고 / 52h+ 위험) ────────────────
