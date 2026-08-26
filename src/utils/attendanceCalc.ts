@@ -530,6 +530,28 @@ export function computeDailyRecognizedHours(r: ProcessedRecord, isLeaderToday: b
   return approvedOt > 0 ? (8 + approvedOt) : (Math.min(netRecH, 8) + credit)
 }
 
+/**
+ * §4 공식에서 "연장(초과)근로" 부분만 분리한 값 — computeDailyRecognizedHours()의 정산용
+ * 총시간(8h+연장 또는 min(netRecH,8)+credit)에서 8h 표준분을 뺀 순수 초과분이다.
+ *   비직책자: 미승인이면 0 (총시간 계산에서도 OT를 안 더하는 것과 동일 기준) —
+ *             승인이면 r.overtimeHours 그대로(이미 30분 절삭 + ERP 가드 적용됨)
+ *   직책자:   netRecH(uncapped) - 8, 음수면 0 (절삭 없음)
+ *   휴일근무/비근무일: 0 — 휴일근로는 별도 지표(holidayHours)로 집계한다.
+ */
+export function computeDailyRecognizedOtHours(r: ProcessedRecord, isLeaderToday: boolean): number {
+  if (r.dayType !== 'WEEKDAY') return 0
+  if (isLeaderToday) {
+    const effClockInStr = r.effectiveClockIn ?? r.clockIn
+    const ciEff = effClockInStr ? parseTimeToMins(effClockInStr) : null
+    const co    = r.clockOut ? parseTimeToMins(r.clockOut) : null
+    if (ciEff === null || co === null) return 0
+    const elapsed = Math.max(0, co - ciEff)
+    const netRecH = Math.max(0, elapsed - compute4141BreakMins(elapsed)) / 60
+    return Math.max(0, netRecH - 8)
+  }
+  return r.erpOtApplied ? (r.overtimeHours ?? 0) : 0
+}
+
 // ── GAS pipeline utilities (leave-last model) ────────────────────────────
 // Break is computed on raw Work-A before leave credit, matching the GAS
 // leave-last formula used in Col 10 (근로A) and Col 12 (근로B).

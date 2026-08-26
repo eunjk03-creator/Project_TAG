@@ -223,6 +223,9 @@ function styleDetailSubHeader(ws: XLSX.WorkSheet, r: number, c: number) {
 function buildDetailSheet(
   activeCols: DetailColDef[],
   detailRows: unknown[][],
+  /** ERP 미신청 야간/연장 감사 대상 행 표시 — 소정외/법정연장/야간(실계산 원본) 컬럼만 옅은 red로 하이라이트.
+   *  경영진 KPI에는 올리지 않기로 한 지표라 상세 시트에서만 눈에 띄게 한다. */
+  auditFlags?: boolean[],
 ): XLSX.WorkSheet {
   const paySpan = findGroupSpan(activeCols, PAY_GROUP_IDS)
   const rawSpan = findGroupSpan(activeCols, RAW_GROUP_IDS)
@@ -300,6 +303,20 @@ function buildDetailSheet(
     alignment: { vertical: 'center' },
   }))
 
+  // ERP 미신청 감사 대상 — 실계산(원본) 소정외/법정연장/야간 칸만 옅은 red로 덮어써서 눈에 띄게 한다.
+  if (auditFlags && rawSpan) {
+    for (let i = 0; i < detailRows.length; i++) {
+      if (!auditFlags[i]) continue
+      for (let c = rawSpan.start; c <= rawSpan.end; c++) {
+        cs(wsDetail, i + 2, c, {
+          fill:      { patternType: 'solid', fgColor: { rgb: 'FDE2E1' } },
+          font:      { sz: 9, color: { rgb: '333333' } },
+          alignment: { vertical: 'center' },
+        })
+      }
+    }
+  }
+
   return wsDetail
 }
 
@@ -354,6 +371,11 @@ function buildDetailRowData(
   const isLeaveDay = !!(r.leaveType && ['연차','오전반차','오후반차','오전반반차','오후반반차','출장','재택근무'].includes(r.leaveType))
   if (normalTags.length === 0 && !isLeaveDay && r.dayType === 'WEEKDAY') normalTags.push('일반')
 
+  // AttendanceResultTable.tsx의 auditFlag와 동일 기준 — 급여용 값이 있는데 ERP 미신청인
+  // 감사 대상. DETAIL_COL_DEFS에는 없는 필드라 시트 컬럼으로는 안 나가고, exportXlsx가
+  // 행별 하이라이트 판단에만 별도로 뽑아 쓴다.
+  const auditFlag = !isHoliday && !isLeader && (otherH > 0 || otH > 0 || nightH > 0) && r.erpOtApplied !== true
+
   return {
     division:      emp?.division ?? '',
     empId:         emp?.rawId ?? r.employeeId.split('_')[0],
@@ -384,6 +406,7 @@ function buildDetailRowData(
       r.erpOtApplied ? '신청' :
       otH > 0        ? '미신청' :
       '—',
+    auditFlag,
   }
 }
 
@@ -427,14 +450,16 @@ export function exportXlsx(
     ? DETAIL_COL_DEFS.filter(c => visibleColIds.has(c.id))
     : DETAIL_COL_DEFS
 
+  const auditFlags: boolean[] = []
   const detailRows = sorted.map(r => {
     const emp     = empMap.get(r.employeeId)
     const attrs   = finalAttrMap?.get(r.employeeId)
     const rowData = buildDetailRowData(r, emp, attrs)
+    auditFlags.push(rowData.auditFlag === true)
     return activeCols.map(c => rowData[c.id] ?? null)
   })
 
-  const wsDetail = buildDetailSheet(activeCols, detailRows)
+  const wsDetail = buildDetailSheet(activeCols, detailRows, auditFlags)
 
   // ── Sheet 2: 요약 ──────────────────────────────────────────────────────
 
@@ -683,8 +708,9 @@ export function exportTableXlsx(
     }
     return activeCols.map(c => rowData[c.id] ?? null)
   })
+  const auditFlags = sortedRows.map(row => row.auditFlag === true)
 
-  const wsDetail = buildDetailSheet(activeCols, detailRows)
+  const wsDetail = buildDetailSheet(activeCols, detailRows, auditFlags)
 
   // ── Sheet 2: 요약 (exportXlsx와 동일 로직 — ProcessedRecord 기준 카테고리 집계) ──
 
