@@ -56,7 +56,7 @@ export function DeptCard({ vm }: { vm: DeptCardVM }) {
   const badge = BADGE[vm.severity]
 
   return (
-    <section className="bg-white border border-gray-100 rounded-[13px] overflow-hidden flex flex-col hover:border-gray-300 transition-colors">
+    <section className="bg-white border border-gray-100 rounded-[13px] overflow-hidden flex flex-col h-[400px] hover:border-gray-300 transition-colors">
       <div className="h-[3px] shrink-0" style={{ background: BAND[vm.severity] }} />
 
       <div className="px-[15px] pt-[13px] pb-3 shrink-0">
@@ -106,7 +106,7 @@ export function DeptCard({ vm }: { vm: DeptCardVM }) {
       </button>
 
       {open && (
-        <div className="max-h-[190px] overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-y-auto">
           {vm.listColumnHeaders && (
             <div className="sticky top-0 flex items-center px-[15px] py-1 bg-white text-[9.5px] text-gray-400">
               <span className="flex-1">{vm.listColumnHeaders[0]}</span>
@@ -136,7 +136,7 @@ export function DeptCard({ vm }: { vm: DeptCardVM }) {
         </div>
       )}
 
-      <div className="flex items-center justify-between px-[15px] py-2 bg-[#fafbfc] border-t border-[#f1f5f9] shrink-0">
+      <div className="mt-auto flex items-center justify-between px-[15px] py-2 bg-[#fafbfc] border-t border-[#f1f5f9] shrink-0">
         <span className="text-[10px] text-gray-400">{vm.footerLabel}</span>
         <span className="text-[10.5px] font-extrabold text-gray-700">{vm.footerValue}</span>
       </div>
