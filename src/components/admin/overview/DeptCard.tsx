@@ -106,9 +106,9 @@ export function DeptCard({ vm }: { vm: DeptCardVM }) {
       </button>
 
       {open && (
-        <div className="flex-1">
+        <div className="max-h-[190px] overflow-y-auto">
           {vm.listColumnHeaders && (
-            <div className="flex items-center px-[15px] py-1 bg-white text-[9.5px] text-gray-400">
+            <div className="sticky top-0 flex items-center px-[15px] py-1 bg-white text-[9.5px] text-gray-400">
               <span className="flex-1">{vm.listColumnHeaders[0]}</span>
               {vm.listColumnHeaders.slice(1).map((h, i) => <span key={i} className="w-[26px] text-center">{h}</span>)}
             </div>
