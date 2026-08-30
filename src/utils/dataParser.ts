@@ -68,7 +68,7 @@ const EXCLUDED_DEPTS = new Set(['임원', '장애인 고용', '임시출입(근�
  * Rejects pure-numeric IDs, very short IDs, and non-E-prefixed entries
  * (e.g. visitor codes, contractor numbers) that occasionally appear in CAPS.
  */
-function isValidEmpId(rawId: string): boolean {
+export function isValidEmpId(rawId: string): boolean {
   return /^E\d{8,}$/.test(rawId)
 }
 

@@ -18,7 +18,7 @@ import { processRecord } from '@/lib/processRecord'
 import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
 import { buildRecordSet } from '@/lib/buildRecordSet'
 import { upsertAttendanceRows } from '@/lib/upsertAttendanceRows'
-import { parseAttendanceData, type ParseResult } from '@/utils/dataParser'
+import { parseAttendanceData, isValidEmpId, type ParseResult } from '@/utils/dataParser'
 import { DEFAULT_POLICY } from '@/types/tag'
 import type { CapsRow, ErpUnifiedRow } from '@/types/tag'
 
@@ -39,18 +39,31 @@ async function ensureEmployeeMasterStubs(rows: { rawId: string; name: string }[]
   const names  = [...uniq.values()]
   const sources = rawIds.map(() => 'caps_auto')
 
+  // updated_at은 DB 기본값이 없다(Prisma @updatedAt은 Prisma Client 경유 쓰기에만 적용) —
+  // raw SQL로 직접 넣을 땐 명시적으로 채워야 NOT NULL 제약을 통과한다.
   await prisma.$executeRaw(Prisma.sql`
-    INSERT INTO employee_master (raw_id, name, source)
-    SELECT * FROM unnest(${rawIds}::text[], ${names}::text[], ${sources}::text[])
+    INSERT INTO employee_master (raw_id, name, source, updated_at)
+    SELECT *, now() FROM unnest(${rawIds}::text[], ${names}::text[], ${sources}::text[])
     ON CONFLICT (raw_id) DO NOTHING
   `)
 }
 
 /** insertedCount/updatedCount는 RETURNING (xmax = 0)으로 판별 — 같은 트랜잭션 내 신규 INSERT면
  *  xmax가 0, ON CONFLICT DO UPDATE로 기존 행을 갱신한 경우면 0이 아니다. */
-async function upsertCapsRows(rows: CapsRow[]): Promise<UpsertCounts> {
-  if (rows.length === 0) return { insertedCount: 0, updatedCount: 0 }
-  await ensureEmployeeMasterStubs(rows.map(r => ({ rawId: String(r.사원번호 ?? '').trim(), name: String(r.이름 ?? '').trim() })))
+async function upsertCapsRows(rowsInRaw: CapsRow[]): Promise<UpsertCounts> {
+  // 사원번호가 'E' + 8자리 이상 숫자 형식이 아니면 dataParser.parseAttendanceData()도 항상
+  // 무시하는 행이다(방문자/도급사 코드 등) — 여기서 미리 안 걸러내면 employee_master에
+  // 매칭되는 stub이 없어서(빈 사원번호는 stub 자체를 안 만듦) FK 위반으로 INSERT가 통째로 실패한다.
+  const rowsIn = rowsInRaw.filter(r => isValidEmpId(String(r.사원번호 ?? '').trim()))
+  if (rowsIn.length === 0) return { insertedCount: 0, updatedCount: 0 }
+  await ensureEmployeeMasterStubs(rowsIn.map(r => ({ rawId: String(r.사원번호 ?? '').trim(), name: String(r.이름 ?? '').trim() })))
+
+  // ON CONFLICT DO UPDATE는 "같은 INSERT 문 안에서" 같은 (employee_id, work_date)가
+  // 두 번 나오면 에러가 난다(Postgres 21000) — 같은 배치 안의 중복은 미리 걸러서 마지막
+  // 것만 남긴다(기존 mergeCapsRows의 "새 로우가 덮어씀" 규칙과 동일).
+  const dedupMap = new Map<string, CapsRow>()
+  for (const r of rowsIn) dedupMap.set(`${String(r.사원번호 ?? '').trim()}_${r.근무일자}`, r)
+  const rows = [...dedupMap.values()]
 
   const employeeIds = rows.map(r => String(r.사원번호 ?? '').trim())
   const names       = rows.map(r => String(r.이름 ?? '').trim())
@@ -79,13 +92,25 @@ async function upsertCapsRows(rows: CapsRow[]): Promise<UpsertCounts> {
   return { insertedCount, updatedCount: result.length - insertedCount }
 }
 
-async function upsertErpRows(rows: ErpUnifiedRow[]): Promise<UpsertCounts> {
-  if (rows.length === 0) return { insertedCount: 0, updatedCount: 0 }
-  await ensureEmployeeMasterStubs(rows.map(r => ({ rawId: String(r.사원번호 ?? '').trim(), name: String(r.성명 ?? '').trim() })))
+async function upsertErpRows(rowsInRaw: ErpUnifiedRow[]): Promise<UpsertCounts> {
+  const rowsIn = rowsInRaw.filter(r => isValidEmpId(String(r.사원번호 ?? '').trim()))
+  if (rowsIn.length === 0) return { insertedCount: 0, updatedCount: 0 }
+  await ensureEmployeeMasterStubs(rowsIn.map(r => ({ rawId: String(r.사원번호 ?? '').trim(), name: String(r.성명 ?? '').trim() })))
 
-  const loose = rows as unknown as Record<string, string>[]
+  const looseIn = rowsIn as unknown as Record<string, string>[]
   const findKey = (r: Record<string, string>, name: string) =>
     Object.keys(r).find(k => k.replace(/\s+/g, '') === name) ?? name
+
+  // upsertCapsRows와 동일한 이유 — 같은 INSERT 문 안의 (employee_id, leave_type, start_date,
+  // start_time) 중복을 미리 제거(마지막 것만 유지).
+  const dedupMap = new Map<string, ErpUnifiedRow>()
+  for (let i = 0; i < rowsIn.length; i++) {
+    const r = rowsIn[i]
+    const startTime = String(looseIn[i][findKey(looseIn[i], '시작시간')] ?? '').trim()
+    dedupMap.set(`${String(r.사원번호 ?? '').trim()}_${r.근태코드}_${r.시작일}_${startTime}`, r)
+  }
+  const rows  = [...dedupMap.values()]
+  const loose = rows as unknown as Record<string, string>[]
 
   const employeeIds      = rows.map(r => String(r.사원번호 ?? '').trim())
   const names            = rows.map(r => String(r.성명 ?? '').trim())
