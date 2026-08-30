@@ -8,94 +8,56 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-// ─── 직원 ───────────────────────────────────────────
-model Employee {
-  id            String   @id @default(uuid())
-  employeeNo    String   @unique @map("employee_no")
-  name          String
-  department    String
-  role          String
-  userRole      UserRole @default(EMPLOYEE) @map("user_role")
-  flexStartTime String   @default("08:30") @map("flex_start_time")
-  managerId     String?  @map("manager_id")
-  createdAt     DateTime @default(now()) @map("created_at")
-
-  manager          Employee?         @relation("TeamMembers", fields: [managerId], references: [id])
-  teamMembers      Employee[]        @relation("TeamMembers")
-  capsLogs         RawCapsLog[]
-  leaveRecords     ErpLeaveRecord[]
-  slackLogs        SlackStatusLog[]
-
-  @@map("employees")
-}
-
-enum UserRole {
-  EMPLOYEE
-  MANAGER
-  HR
-  ADMIN
-}
-
-// ─── CAPS 원본 로그 ──────────────────────────────────
-model RawCapsLog {
+// ─── CAPS 일별 출퇴근 원본 (정규화, 실시간 upsert 대상) ──────────────
+// 실제 CAPS 익스포트 자체가 "직원×근무일자 1행(출근/퇴근)"이라 스캔 이벤트 단위로
+// 쪼갤 필요가 없음 — src/utils/dataParser.ts의 CapsRow와 1:1 매핑.
+// employeeId는 사원번호(rawId) 그대로 — employee_master.raw_id를 향한 진짜 FK.
+model CapsDailyLog {
   id         String   @id @default(uuid())
   employeeId String   @map("employee_id")
-  taggedAt   DateTime @map("tagged_at")
-  direction  String
-  deviceId   String   @map("device_id")
-  logDate    DateTime @map("log_date") @db.Date
+  name       String
+  workDate   String   @map("work_date")
+  clockIn    String?  @map("clock_in")
+  clockOut   String?  @map("clock_out")
+  rawDept    String?  @map("raw_dept")
+  jobTitle   String?  @map("job_title")
+  uploadedAt DateTime @default(now()) @map("uploaded_at")
 
-  employee Employee @relation(fields: [employeeId], references: [id])
+  employee EmployeeMaster @relation(fields: [employeeId], references: [rawId])
 
-  @@index([employeeId, logDate])
-  @@map("raw_caps_logs")
+  @@unique([employeeId, workDate])
+  @@index([workDate])
+  @@map("caps_daily_logs")
 }
 
-// ─── ERP 휴가·결재 ───────────────────────────────────
-model ErpLeaveRecord {
-  id         String    @id @default(uuid())
-  employeeId String    @map("employee_id")
-  leaveDate  DateTime  @map("leave_date") @db.Date
-  leaveType  LeaveType @map("leave_type")
-  status     String    @default("APPROVED")
-  syncedAt   DateTime  @default(now()) @map("synced_at")
+// ─── ERP 신청 원본 (휴가+연장, 정규화, 실시간 upsert 대상) ───────────
+// src/utils/dataParser.ts의 ErpUnifiedRow와 1:1 매핑. 신청 1건 = 1행(시작일~종료일로
+// 여러 날짜에 걸칠 수 있음) — 일 단위로 쪼개지 않는다(그건 processRecord 쪽 책임).
+model ErpApplication {
+  id              String    @id @default(uuid())
+  employeeId      String    @map("employee_id")
+  name            String
+  leaveType       String    @map("leave_type")     // 근태코드
+  approvalStatus  String    @map("approval_status") // 승인상태
+  startDate       String    @map("start_date")
+  // 빈 문자열 기본값(NULL 아님) — Postgres unique 제약에서 NULL은 서로 달라도 안 겹친 것으로
+  // 취급되어 dedup이 안 먹으므로, 기존 앱 로직(mergeErpRows의 `?? ''`)과 동일하게 맞춘다.
+  startTime       String    @default("") @map("start_time")
+  endDate         String?   @map("end_date")
+  endTime         String?   @map("end_time")
+  // 신청일 — buildOtMap의 연장근로 신청일 검증, buildLeaveMap Pass2b의 반차 정정 우선순위에 씀.
+  // dataParser.ts가 실제로 읽는 필드라 여기서 빠지면 그 로직이 조용히 느슨해진다(fail-open).
+  submitDate      String?   @map("submit_date")
+  recognizedTime  String?   @map("recognized_time") // 인정시간 (HH.MM)
+  leaveDays       String?   @map("leave_days")      // 일수
+  category        String?                            // 근태구분: 일/시간
+  syncedAt        DateTime  @default(now()) @map("synced_at")
 
-  employee Employee @relation(fields: [employeeId], references: [id])
+  employee EmployeeMaster @relation(fields: [employeeId], references: [rawId])
 
-  @@index([employeeId, leaveDate])
-  @@map("erp_leave_records")
-}
-
-enum LeaveType {
-  ANNUAL
-  HALF_AM
-  HALF_PM
-  SICK
-  BUSINESS_TRIP
-  SPECIAL
-}
-
-// ─── Slack 상태 로그 ─────────────────────────────────
-model SlackStatusLog {
-  id         String      @id @default(uuid())
-  employeeId String      @map("employee_id")
-  statusDate DateTime    @map("status_date") @db.Date
-  emoji      String?
-  labelType  SlackLabel? @map("label_type")
-  fetchedAt  DateTime    @default(now()) @map("fetched_at")
-
-  employee Employee @relation(fields: [employeeId], references: [id])
-
-  @@index([employeeId, statusDate])
-  @@map("slack_status_logs")
-}
-
-enum SlackLabel {
-  OUT_OF_OFFICE
-  BUSINESS_TRIP
-  REMOTE
-  VACATION
-  SICK
+  @@unique([employeeId, leaveType, startDate, startTime])
+  @@index([employeeId])
+  @@map("erp_applications")
 }
 
 // ─── 일별 근태 (Sieve 최종 결과) — src/types/tag.ts의 ProcessedRecord와 1:1 대응 ──────
@@ -131,58 +93,10 @@ model DailyAttendance {
   extra            Json     @default("{}")
   calculatedAt     DateTime @default(now()) @map("calculated_at")
 
-  anomalies AttendanceAnomaly[]
-
   @@unique([employeeId, workDate])
   @@index([employeeId, workDate])
   @@index([workDate])
   @@map("daily_attendance")
-}
-
-// ─── 이상치 ──────────────────────────────────────────
-model AttendanceAnomaly {
-  id               String           @id @default(uuid())
-  dailyAttendanceId String          @map("daily_attendance_id")
-  anomalyType      AnomalyType      @map("anomaly_type")
-  resolutionStatus ResolutionStatus @default(UNRESOLVED) @map("resolution_status")
-  resolvedBy       String?          @map("resolved_by")
-  hrNote           String?          @map("hr_note")
-  hrAction         String?          @map("hr_action")
-  flaggedAt        DateTime         @default(now()) @map("flagged_at")
-  resolvedAt       DateTime?        @map("resolved_at")
-
-  dailyAttendance DailyAttendance @relation(fields: [dailyAttendanceId], references: [id])
-  appeals         AnomalyAppeal[]
-
-  @@map("attendance_anomalies")
-}
-
-enum AnomalyType {
-  NO_TAG
-  LATE_CLOCK_IN
-  EARLY_CLOCK_OUT
-  NO_CLOCK_OUT
-  OVERTIME_EXCESS
-}
-
-enum ResolutionStatus {
-  UNRESOLVED
-  IN_REVIEW
-  RESOLVED
-  ESCALATED
-}
-
-// ─── 이상치 이의신청 ─────────────────────────────────
-model AnomalyAppeal {
-  id          String   @id @default(uuid())
-  anomalyId   String   @map("anomaly_id")
-  appealNote  String   @map("appeal_note")
-  hrAction    String?  @map("hr_action")
-  submittedAt DateTime @default(now()) @map("submitted_at")
-
-  anomaly AttendanceAnomaly @relation(fields: [anomalyId], references: [id])
-
-  @@map("anomaly_appeals")
 }
 
 // ─── 정책 설정 ───────────────────────────────────────
@@ -310,24 +224,24 @@ model ExceptionRule {
 }
 
 // ─── 조직도 마스터 (Google Sheet 동기화 대상) ─────────────
-// 시트의 "본부 > 팀/파트" 2단계 구조를 self-relation 트리로 표현.
+// 원래 "본부 > 팀/파트"를 self-relation 트리(parent_id)로 표현했었으나, 실제
+// syncOrgChart.ts는 level 0(본부)/level 1(팀) 두 단계만 만들고 그 이상 깊이를
+// 만드는 코드가 없음을 확인 — 항상 정확히 2단계 고정이라 재귀 트리는 불필요한
+// 일반화였음. division/team 두 컬럼의 flat 구조로 교체(2026-08-30).
 // aliases는 CAPS 부서텍스트 매칭 보조용 — orgChart.ts의 getOrganization()을
 // 대체하지 않고 별도 소스로 시작(블래스트 레이디어스 최소화).
 model Department {
   id        String   @id @default(uuid())
-  name      String
-  level     Int      @default(0)
-  parentId  String?  @map("parent_id")
+  division  String
+  team      String?
   aliases   String[] @default([])
   order     Int      @default(0)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  parent    Department?      @relation("DeptTree", fields: [parentId], references: [id])
-  children  Department[]     @relation("DeptTree")
   employees EmployeeMaster[]
 
-  @@index([parentId])
+  @@unique([division, team])
   @@map("departments")
 }
 
@@ -368,7 +282,9 @@ model EmployeeMaster {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  department Department? @relation(fields: [departmentId], references: [id])
+  department      Department?      @relation(fields: [departmentId], references: [id])
+  capsLogs        CapsDailyLog[]
+  erpApplications ErpApplication[]
 
   @@index([departmentId])
   @@index([status])

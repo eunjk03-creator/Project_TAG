@@ -1,4 +1,4 @@
-import { PrismaClient, UserRole, LeaveType, AnomalyType } from '@prisma/client'
+import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
@@ -33,70 +33,6 @@ async function main() {
   }
   console.log('✅ policy_config 시드 완료')
 
-  // 관리자 먼저 생성
-  const manager = await prisma.employee.upsert({
-    where: { employeeNo: 'EMP001' },
-    update: {},
-    create: {
-      employeeNo: 'EMP001',
-      name: '김팀장',
-      department: '개발팀',
-      role: '부장',
-      userRole: UserRole.MANAGER,
-      flexStartTime: '08:30',
-    },
-  })
-
-  // HR 담당자
-  const hr = await prisma.employee.upsert({
-    where: { employeeNo: 'EMP002' },
-    update: {},
-    create: {
-      employeeNo: 'EMP002',
-      name: '이인사',
-      department: '인사팀',
-      role: '과장',
-      userRole: UserRole.HR,
-      flexStartTime: '09:00',
-    },
-  })
-
-  // Admin
-  await prisma.employee.upsert({
-    where: { employeeNo: 'EMP003' },
-    update: {},
-    create: {
-      employeeNo: 'EMP003',
-      name: '박관리',
-      department: '경영지원팀',
-      role: '차장',
-      userRole: UserRole.ADMIN,
-      flexStartTime: '09:00',
-    },
-  })
-
-  // 일반 직원 4명
-  const employees = [
-    { employeeNo: 'EMP004', name: '강은정', role: '과장', flexStartTime: '08:30' },
-    { employeeNo: 'EMP005', name: '최개발', role: '대리', flexStartTime: '08:00' },
-    { employeeNo: 'EMP006', name: '정사원', role: '사원', flexStartTime: '09:00' },
-    { employeeNo: 'EMP007', name: '윤대리', role: '대리', flexStartTime: '08:30' },
-  ]
-
-  for (const emp of employees) {
-    await prisma.employee.upsert({
-      where: { employeeNo: emp.employeeNo },
-      update: {},
-      create: {
-        ...emp,
-        department: '개발팀',
-        userRole: UserRole.EMPLOYEE,
-        managerId: manager.id,
-      },
-    })
-  }
-  console.log('✅ 직원 7명 시드 완료')
-
   // 2026년 공휴일
   const holidays = [
     { date: new Date('2026-01-01'), name: '신정' },
@@ -118,43 +54,8 @@ async function main() {
     })
   }
   console.log('✅ 공휴일 시드 완료')
-
-  // 샘플 근태 데이터 (강은정, 이번 주)
-  const eunjung = await prisma.employee.findUnique({ where: { employeeNo: 'EMP004' } })
-  if (eunjung) {
-    const sampleAttendance = [
-      { workDate: '2026-04-28', dayType: 'WEEKDAY', clockIn: '08:47', clockOut: '18:22', regularHours: 8.0, overtimeHours: 0.5, finalStatus: '정상' },
-      { workDate: '2026-04-29', dayType: 'WEEKDAY', clockIn: '09:12', clockOut: '20:05', regularHours: 8.0, overtimeHours: 1.5, finalStatus: '근태이상', flag: 'LATE' },
-      { workDate: '2026-04-30', dayType: 'WEEKDAY', clockIn: null, clockOut: null, regularHours: 0, overtimeHours: 0, finalStatus: '연차' },
-    ]
-
-    for (const record of sampleAttendance) {
-      await prisma.dailyAttendance.upsert({
-        where: { employeeId_workDate: { employeeId: eunjung.id, workDate: record.workDate } },
-        update: {},
-        create: { employeeId: eunjung.id, ...record },
-      })
-    }
-
-    // 이상치 생성 (4/29 지각)
-    const lateRecord = await prisma.dailyAttendance.findUnique({
-      where: { employeeId_workDate: { employeeId: eunjung.id, workDate: '2026-04-29' } },
-    })
-    if (lateRecord) {
-      await prisma.attendanceAnomaly.upsert({
-        where: { id: 'seed-anomaly-001' },
-        update: {},
-        create: {
-          id: 'seed-anomaly-001',
-          dailyAttendanceId: lateRecord.id,
-          anomalyType: AnomalyType.LATE_CLOCK_IN,
-        },
-      })
-    }
-    console.log('✅ 샘플 근태 데이터 시드 완료')
-  }
 }
 
 main()
   .catch((e) => { console.error(e); process.exit(1) })
-  .finally(() => prisma.$disconnect())
+  .finally(async () => { await prisma.$disconnect() })

@@ -14,12 +14,9 @@
 import { prisma }            from '@/lib/prisma'
 import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
 import { getDayInfo }        from '@/utils/dataParser'
+import { buildEmployeesAndRawRecords } from '@/lib/recomputeFromNormalized'
 import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
 import type { DailyAttendance } from '@prisma/client'
-
-interface AttendanceMeta {
-  employees: Employee[]
-}
 
 interface AttendanceExtra {
   verificationNote?:   string[]
@@ -71,10 +68,10 @@ export async function getProcessedRecords(opts?: {
   from?: string
   to?:   string
 }): Promise<{ employees: Employee[]; records: ProcessedRecord[]; finalAttrMap: Map<string, EmployeeAttributeOverrides> }> {
-  // 1. 직원 목록 — 여전히 JSON(~400명, 병목 아님)
-  const metaRow = await prisma.sharedDataStore.findUnique({ where: { key: 'attendance_data' } })
-  const meta      = metaRow?.data as unknown as AttendanceMeta | undefined
-  const employees = meta?.employees ?? []
+  // 1. 직원 목록 — caps_daily_logs/erp_applications(정규화 테이블)에서 재구성.
+  // TODO(성능): 이 호출은 daily_attendance 조회에 필요 없는 rawRecords까지 함께 만든다 —
+  // employees만 뽑는 경량 경로(extractEmployees를 distinct 쿼리로 재사용)로 나중에 최적화 가능.
+  const { employees } = await buildEmployeesAndRawRecords()
   if (employees.length === 0) return { employees: [], records: [], finalAttrMap: new Map() }
 
   // 2. 예외규칙 + 직책자 맵

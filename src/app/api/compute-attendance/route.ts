@@ -4,19 +4,14 @@ import { processRecord } from '@/lib/processRecord'
 import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
 import { buildRecordSet } from '@/lib/buildRecordSet'
 import { upsertAttendanceRows } from '@/lib/upsertAttendanceRows'
+import { buildEmployeesAndRawRecords } from '@/lib/recomputeFromNormalized'
 import { DEFAULT_POLICY } from '@/types/tag'
-import type { PolicySettings, RawRecord, Employee, EmployeeAttributeOverrides } from '@/types/tag'
+import type { PolicySettings, RawRecord, EmployeeAttributeOverrides } from '@/types/tag'
 
 // 한 페이지(offset/limit 슬라이스) 처리 + DB 왕복은 몇 초 내로 끝나야 하므로 여유를 넉넉히
 // 잡아둔다. 페이지네이션이 도입된 뒤로는 이 값에 걸리는 일이 없어야 정상 — 계속 걸린다면
 // RECOMPUTE_PAGE_SIZE(AttendanceSourceContext.tsx)를 줄여야 한다는 신호.
 export const maxDuration = 300
-
-interface StoredAttendance {
-  employees:   Employee[]
-  rawRecords?: RawRecord[]  // legacy: all records in one row
-  chunkCount?: number        // new: records split across attendance_records_N keys
-}
 
 // raw 원본 fetch + override/Slack 병합 + 정렬은 원래 페이지당 1회씩(총 ~28회) 반복되던
 // 부분이었다 — 정작 페이지마다 달라지는 건 마지막에 슬라이스하는 processRecord() 호출뿐인데,
@@ -119,34 +114,8 @@ export async function POST(req: NextRequest) {
       otExemptIds  = new Set(cachedMeta.otExemptIds)
       slackNoteMap = new Map(cachedMeta.slackNoteMap)
     } else {
-      // 1. Load raw attendance data
-      const rawStore = await prisma.sharedDataStore.findUnique({
-        where: { key: 'attendance_data' },
-      })
-      if (!rawStore?.data) {
-        return NextResponse.json({ error: 'no attendance data found' }, { status: 404 })
-      }
-
-      const stored = rawStore.data as unknown as StoredAttendance
-      const employees: Employee[] = stored.employees ?? []
-
-      // Support both legacy (rawRecords in one row) and new chunked format
-      let rawRecords: RawRecord[] = []
-      if (stored.rawRecords?.length) {
-        rawRecords = stored.rawRecords
-      } else if (stored.chunkCount != null && stored.chunkCount > 0) {
-        const chunkRows = await Promise.all(
-          Array.from({ length: stored.chunkCount }, (_, i) =>
-            prisma.sharedDataStore.findUnique({ where: { key: `attendance_records_${i}` } })
-              .then(r => {
-                const d = r?.data as unknown as { records?: RawRecord[] } | null
-                return d?.records ?? []
-              })
-              .catch(() => [] as RawRecord[]),
-          ),
-        )
-        rawRecords = chunkRows.flat()
-      }
+      // 1. Load raw attendance data — caps_daily_logs/erp_applications(정규화 테이블) 전체
+      const { employees, rawRecords } = await buildEmployeesAndRawRecords()
 
       if (!rawRecords.length) {
         return NextResponse.json({ ok: true, count: 0, totalCount: 0, offset: 0, done: true, processed: [], processedAt: new Date().toISOString() })

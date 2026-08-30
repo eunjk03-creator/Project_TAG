@@ -1,8 +1,9 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { buildEmployeesAndRawRecords } from '@/lib/recomputeFromNormalized'
 import type { OrgChartTab } from './readOrgChartExcel'
 import { parseOrgChartSheet, type SheetPersonRow } from './parseOrgChartSheet'
-import { matchEmployees, findPossiblyResigned, type CapsEmployeeLite, type MatchedRow } from './matchEmployees'
+import { matchEmployees, findPossiblyResigned, type MatchedRow } from './matchEmployees'
 
 export interface SyncResult {
   snapshotId: string
@@ -18,20 +19,22 @@ export interface SyncResult {
  *  "시트엔 있지만 아직 CAPS/마스터에 없는 사람"까지 전부 보여주고, 미매칭자만 흐리게 구분한다. */
 export type EnrichedSheetPersonRow = SheetPersonRow & { rawId: string | null }
 
-const deptCache = new Map<string, string>() // `${parentId ?? 'root'}::${name}` → Department.id
+const deptCache = new Map<string, string>() // `${division}::${team ?? ''}` → Department.id
 
-async function upsertDepartment(name: string, parentId: string | null, level: number, order: number): Promise<string> {
-  const cacheKey = `${parentId ?? 'root'}::${name}`
+// division/team 구조가 항상 정확히 2단계(본부 → 팀)라 self-relation 트리 대신 flat
+// (division, team) 컬럼으로 표현 — team === division(하위팀 없는 본부)이면 team=null 행 하나로.
+async function upsertDepartment(division: string, team: string | null, order: number): Promise<string> {
+  const cacheKey = `${division}::${team ?? ''}`
   const cached = deptCache.get(cacheKey)
   if (cached) return cached
 
-  const existing = await prisma.department.findFirst({ where: { name, parentId } })
-  const dept = existing ?? await prisma.department.create({ data: { name, parentId, level, order } })
+  const existing = await prisma.department.findFirst({ where: { division, team } })
+  const dept = existing ?? await prisma.department.create({ data: { division, team, order } })
   deptCache.set(cacheKey, dept.id)
   return dept.id
 }
 
-/** division/team 구조를 Department 트리로 반영하고, team → departmentId 맵을 반환한다. */
+/** division/team 구조를 Department 테이블에 반영하고, team → departmentId 맵을 반환한다. */
 async function syncDepartments(rows: SheetPersonRow[]): Promise<Map<string, string>> {
   deptCache.clear()
   const teamDeptId = new Map<string, string>() // `${division}::${team}` → departmentId
@@ -39,14 +42,14 @@ async function syncDepartments(rows: SheetPersonRow[]): Promise<Map<string, stri
   const divisions = [...new Set(rows.map(r => r.division))]
   for (let i = 0; i < divisions.length; i++) {
     const division = divisions[i]
-    const divisionDeptId = await upsertDepartment(division, null, 0, i)
+    const divisionDeptId = await upsertDepartment(division, null, i)
 
     const teams = [...new Set(rows.filter(r => r.division === division).map(r => r.team))]
     for (let j = 0; j < teams.length; j++) {
       const team = teams[j]
       const deptId = team === division
         ? divisionDeptId
-        : await upsertDepartment(team, divisionDeptId, 1, j)
+        : await upsertDepartment(division, team, j)
       teamDeptId.set(`${division}::${team}`, deptId)
     }
   }
@@ -90,8 +93,10 @@ export async function syncOrgChart(tab: OrgChartTab): Promise<SyncResult> {
   const now = new Date()
   const parsed = parseOrgChartSheet(tab.values, tab.tabName)
 
-  const attendanceData = await prisma.sharedDataStore.findUnique({ where: { key: 'attendance_data' } })
-  const capsEmployees = ((attendanceData?.data as { employees?: CapsEmployeeLite[] } | null)?.employees) ?? []
+  const { employees: capsEmployeesFull } = await buildEmployeesAndRawRecords()
+  const capsEmployees = capsEmployeesFull.map(e => ({
+    rawId: e.rawId ?? e.id.split('_')[0], name: e.name, rawDept: e.rawDept, division: e.division, team: e.team,
+  }))
 
   const resolutions = await prisma.sheetNameResolution.findMany()
   const matchResult = matchEmployees(

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { buildEmployeesAndRawRecords } from '@/lib/recomputeFromNormalized'
 import type { OrgChartTab } from '@/lib/orgSheet/readOrgChartExcel'
 import { parseOrgChartSheet } from '@/lib/orgSheet/parseOrgChartSheet'
-import { matchEmployees, findPossiblyResigned, type CapsEmployeeLite } from '@/lib/orgSheet/matchEmployees'
+import { matchEmployees, findPossiblyResigned } from '@/lib/orgSheet/matchEmployees'
 
 /**
  * DB에 아무것도 쓰지 않는 미리보기 엔드포인트 — 관리자가 커밋 전에 sanity check/동명이인
@@ -17,8 +18,10 @@ export async function POST(req: NextRequest) {
     const tab = await req.json() as OrgChartTab
     const parsed = parseOrgChartSheet(tab.values, tab.tabName)
 
-    const attendanceData = await prisma.sharedDataStore.findUnique({ where: { key: 'attendance_data' } })
-    const capsEmployees = ((attendanceData?.data as { employees?: CapsEmployeeLite[] } | null)?.employees) ?? []
+    const { employees } = await buildEmployeesAndRawRecords()
+    const capsEmployees = employees.map(e => ({
+      rawId: e.rawId ?? e.id.split('_')[0], name: e.name, rawDept: e.rawDept, division: e.division, team: e.team,
+    }))
 
     const resolutions = await prisma.sheetNameResolution.findMany()
     const result = matchEmployees(

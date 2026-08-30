@@ -1,35 +1,20 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { buildEmployeesAndRawRecords } from '@/lib/recomputeFromNormalized'
 
 const TEN_AM_RAW_IDS = new Set([
   'E25081103', 'E25120104', 'E26010511', 'E25021702',
   'E25011501', 'E22121901', 'E25110301',
 ])
 
-interface StoredEmployee {
-  id:        string
-  rawId?:    string
-  name:      string
-  jobTitle?: string
-  division?: string
-  team?:     string
-}
-
-interface AttendanceDataMeta {
-  employees: StoredEmployee[]
-}
-
 /** One-time migration: insert ten_am_starter exception rules for hard-coded employees.
  *  Safe to call multiple times — skips employees already in exception_rules. */
 export async function GET() {
   try {
-    const stored = await prisma.sharedDataStore.findUnique({ where: { key: 'attendance_data' } })
-    if (!stored) {
-      return NextResponse.json({ error: 'attendance_data not found. Upload CAPS data first.' }, { status: 404 })
+    const { employees } = await buildEmployeesAndRawRecords()
+    if (employees.length === 0) {
+      return NextResponse.json({ error: 'No employees found. Upload CAPS data first.' }, { status: 404 })
     }
-
-    const meta = stored.data as unknown as AttendanceDataMeta
-    const employees: StoredEmployee[] = meta.employees ?? []
 
     const existing = await prisma.exceptionRule.findMany({ where: { ruleType: 'ten_am_starter' } })
     const existingEmpIds = new Set(existing.map(r => r.employeeId))
