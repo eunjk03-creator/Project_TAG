@@ -8,6 +8,33 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// ─── 동일인 다중 사원번호 연결 (재입사/신분변경 등으로 사원번호가 바뀐 같은 사람) ──
+// 2026-08-11 실DB에 생성됐지만 schema.prisma엔 반영이 안 돼있던 걸 2026-08-30 발견
+// (정규화 마이그레이션 전 백업 스크립트로 전체 테이블을 훑다가 스키마 드리프트 확인) —
+// prisma migrate가 "스키마에 없는 테이블"로 보고 DROP하지 않도록 실제 DB 구조 그대로 반영.
+model PersonLink {
+  id          String   @id @default(uuid())
+  displayName String   @map("display_name")
+  note        String   @default("")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  members PersonLinkMember[]
+
+  @@map("person_links")
+}
+
+model PersonLinkMember {
+  id           String   @id @default(uuid())
+  personLinkId String   @map("person_link_id")
+  rawId        String   @map("raw_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  personLink PersonLink @relation(fields: [personLinkId], references: [id], onDelete: Cascade)
+
+  @@map("person_link_members")
+}
+
 // ─── CAPS 일별 출퇴근 원본 (정규화, 실시간 upsert 대상) ──────────────
 // 실제 CAPS 익스포트 자체가 "직원×근무일자 1행(출근/퇴근)"이라 스캔 이벤트 단위로
 // 쪼갤 필요가 없음 — src/utils/dataParser.ts의 CapsRow와 1:1 매핑.
