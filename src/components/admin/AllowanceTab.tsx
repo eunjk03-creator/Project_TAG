@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx-js-style'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useAttendanceData }   from '@/context/AttendanceDataContext'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
+import { useScopedProcessedRecords } from '@/hooks/useProcessedAttendance'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee, ProcessedRecord } from '@/types/tag'
 import { computeLeaderPayOtMins, isLeaderOnDate as isLeaderOnDateCore } from '@/utils/attendanceCalc'
@@ -272,7 +273,12 @@ const PAGE_SIZE = 50
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function AllowanceTab() {
-  const { processedRecords: serverProcessed, employees } = useAttendanceSource()
+  const { employees, dataVersion } = useAttendanceSource()
+  // 연간 전체가 필요한 화면이라(월별 집계) 그리드처럼 주간 단위로 좁힐 수 없다 — 대신
+  // 그리드/Overview와 달리 이 탭이 열렸을 때만 자기 범위(올해 전체)를 따로 받아온다.
+  // 데이터는 전부 한 해 안에 있다는 기존 가정(아래 dataYear fallback과 동일)을 그대로 씀.
+  const currentYear = new Date().getFullYear()
+  const serverProcessed = useScopedProcessedRecords(`${currentYear}-01-01`, `${currentYear}-12-31`, dataVersion)
   const { recordOverrides, deletedKeys }                 = useAttendanceData()
   const { employeeAttrMap } = useEmployeeExceptions()
 

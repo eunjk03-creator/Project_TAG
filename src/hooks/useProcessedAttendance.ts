@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAttendanceLogic } from '@/hooks/useAttendanceLogic'
 import { processRecord } from '@/lib/processRecord'
 import { usePolicy } from '@/context/PolicyContext'
@@ -9,6 +9,29 @@ import { useSlack } from '@/context/SlackContext'
 import { leaveTypeOverrideFields, synthesizeOverrideRecord } from '@/utils/attendanceCalc'
 import { getDayInfo } from '@/utils/dataParser'
 import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
+
+/** [from, to] 범위만 daily_attendance에서 직접 받아온다 — 예전엔 context가 들고 있던 연간
+ *  전체 processedRecords를 여기서 날짜로 다시 필터링했는데, 화면마다(그리드 주간/Overview
+ *  기간+YTD/수당집계 월별) 필요한 범위가 다 달라서 "일단 다 받고 나중에 자르기"가 매번
+ *  전체를 전송하는 낭비였다(2026-08-30 실측 — 초기 로딩 지연의 주 원인). from/to가 바뀌거나
+ *  dataVersion이 바뀌면(업로드/전체 재계산 완료) 다시 받아온다. */
+export function useScopedProcessedRecords(from: string, to: string, dataVersion: number): ProcessedRecord[] | null {
+  const [records, setRecords] = useState<ProcessedRecord[] | null>(null)
+  const reqIdRef = useRef(0)
+
+  useEffect(() => {
+    const reqId = ++reqIdRef.current
+    fetch(`/api/attendance-records?from=${from}&to=${to}`)
+      .then(res => res.ok ? res.json() as Promise<{ records: ProcessedRecord[] }> : null)
+      .then(json => {
+        if (reqIdRef.current !== reqId) return // 응답 도착 전에 from/to가 또 바뀜 — 낡은 응답 무시
+        setRecords(json?.records?.length ? json.records : null)
+      })
+      .catch(() => { if (reqIdRef.current === reqId) setRecords(null) })
+  }, [from, to, dataVersion])
+
+  return records
+}
 
 // 이 파일에 처음부터 있던 하드코딩 기본값 — admin/page.tsx의 것과 반드시 동일하게 유지할 것.
 // (Settings > 예외 규칙 미설정 상태에서도 항상 적용되는 전사 기본값)
@@ -43,10 +66,11 @@ export function useProcessedAttendance(from: string, to: string): ProcessedAtten
   const { excludeFromOtIds, employeeAttrMap, exceptionRules } = useEmployeeExceptions()
   const { recordOverrides, deletedKeys } = useAttendanceData()
   const {
-    employees: baseEmployees, rawRecords: baseRecords,
-    processedRecords: serverProcessed,
+    employees: baseEmployees, rawRecords: baseRecords, dataVersion,
   } = useAttendanceSource()
   const { slackNoteMap } = useSlack()
+
+  const serverProcessed = useScopedProcessedRecords(from, to, dataVersion)
 
   const companyHolsMap = useMemo(
     () => new Map((policy.companyHolidays ?? []).map(h => [h.date, h.label])),
@@ -146,7 +170,8 @@ export function useProcessedAttendance(from: string, to: string): ProcessedAtten
   const allProcessed = useMemo<ProcessedRecord[]>(() => {
     if (!serverProcessed) return clientProcessed
 
-    const dateFiltered = serverProcessed.filter(r => r.date >= from && r.date <= to)
+    // 서버 조회 자체가 이미 [from, to]로 스코프돼 있어(useScopedProcessedRecords) 재필터 불필요.
+    const dateFiltered = serverProcessed
 
     const compHolDates = new Set((policy.companyHolidays ?? []).map(h => h.date))
 

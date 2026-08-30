@@ -119,7 +119,7 @@ export default function AdminDashboard() {
   const { recordOverrides, setRecordOverrides, resolutions, setResolutions, saveOverride, deletedKeys, deleteRecord } = useAttendanceData()
   const {
     employees: baseEmployees, rawRecords: baseRecords, isLiveData,
-    processedRecords: serverProcessed, isProcessing: isServerProcessing,
+    isProcessing: isServerProcessing,
     recomputeProcessed, dbSaveError: recomputeError,
   } = useAttendanceSource()
   const { config: slackConfig } = useSlack()

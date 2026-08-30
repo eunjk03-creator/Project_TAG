@@ -7,14 +7,15 @@ import type { ParseResult } from '@/utils/dataParser'
 import { usePolicy } from '@/context/PolicyContext'
 
 // ── Context interface ─────────────────────────────────────────────────────
-// (변경 없음 — 내부 데이터 소스만 shared_data_store JSON 캐시에서 정규화 테이블
-// (caps_daily_logs/erp_applications/daily_attendance) 기반 API로 교체됐다.)
+// processedRecords(전체 연도)는 여기서 더 이상 들고 있지 않는다 — 각 화면이 자기가 보는
+// 기간만 useProcessedAttendance(from, to)로 직접 서버에서 받아온다(스캐폴딩은
+// src/hooks/useProcessedAttendance.ts 참고). dataVersion만 노출해서, 업로드/전체
+// 재계산이 끝났을 때 그 훅들이 자기 범위를 다시 받아오도록 신호를 준다.
 
 interface AttendanceSourceContextValue {
   employees:          Employee[]
   rawRecords:         RawRecord[]
-  processedRecords:   ProcessedRecord[] | null
-  processedAt:        string | null
+  dataVersion:        number
   isLiveData:         boolean
   isLoading:          boolean
   isProcessing:       boolean
@@ -28,24 +29,16 @@ interface AttendanceSourceContextValue {
 
 const AttendanceSourceContext = createContext<AttendanceSourceContextValue | null>(null)
 
-// ── localStorage helpers (그대로) ───────────────────────────────────────────
+// ── localStorage helpers (raw records만 — processed는 각 화면이 직접 캐싱하지 않음) ──
 interface StoredAttendance {
   employees:  Employee[]
   rawRecords: RawRecord[]
 }
-interface StoredProcessed {
-  processed:   ProcessedRecord[]
-  processedAt: string
-}
 interface CacheEntry extends StoredAttendance {
   updatedAt: string
 }
-interface ProcessedCacheEntry extends StoredProcessed {
-  cachedAt: string
-}
 
-const LS_KEY           = 'tag_attendance_v1'
-const LS_PROCESSED_KEY = 'tag_processed_v1'
+const LS_KEY = 'tag_attendance_v1'
 
 function lsLoad(): CacheEntry | null {
   if (typeof window === 'undefined') return null
@@ -57,24 +50,12 @@ function lsLoad(): CacheEntry | null {
 function lsSave(entry: CacheEntry) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(entry)) } catch {}
 }
-function lsLoadProcessed(): ProcessedCacheEntry | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const s = localStorage.getItem(LS_PROCESSED_KEY)
-    return s ? (JSON.parse(s) as ProcessedCacheEntry) : null
-  } catch { return null }
-}
-function lsSaveProcessed(entry: ProcessedCacheEntry) {
-  try { localStorage.setItem(LS_PROCESSED_KEY, JSON.stringify(entry)) } catch {}
-}
 
 function normalizeDivisions(employees: Employee[]): Employee[] {
   return employees.map(e => e.division === '기타' ? { ...e, division: '신사업본부' } : e)
 }
 
 // ── 서버 API 헬퍼 ────────────────────────────────────────────────────────────
-// caps_data/erp_data/attendance_data/processed_data(shared_data_store JSON 청크)는 전부
-// 은퇴 — caps_daily_logs/erp_applications/daily_attendance(정규화 테이블) 기반 API로 교체.
 
 async function fetchRawRecords(): Promise<{ data: StoredAttendance | null; updatedAt: string | null }> {
   try {
@@ -83,18 +64,6 @@ async function fetchRawRecords(): Promise<{ data: StoredAttendance | null; updat
     const json = await res.json() as { employees: Employee[]; rawRecords: RawRecord[]; fetchedAt: string }
     if (!json.employees?.length) return { data: null, updatedAt: null }
     return { data: { employees: json.employees, rawRecords: json.rawRecords }, updatedAt: json.fetchedAt }
-  } catch {
-    return { data: null, updatedAt: null }
-  }
-}
-
-async function fetchProcessedRecords(): Promise<{ data: StoredProcessed | null; updatedAt: string | null }> {
-  try {
-    const res = await fetch('/api/attendance-records')
-    if (!res.ok) return { data: null, updatedAt: null }
-    const json = await res.json() as { employees: Employee[]; records: ProcessedRecord[]; fetchedAt: string }
-    if (!json.records?.length) return { data: null, updatedAt: null }
-    return { data: { processed: json.records, processedAt: json.fetchedAt }, updatedAt: json.fetchedAt }
   } catch {
     return { data: null, updatedAt: null }
   }
@@ -163,7 +132,8 @@ async function fetchComputePage(
 
 /** offset/limit 페이지네이션으로 compute-attendance를 반복 호출해 전체 레코드를 처리한다.
  *  각 페이지가 daily_attendance를 이미 upsert하므로(route.ts 참고), 여기선 끝까지 도는 것만
- *  책임진다 — 예전처럼 클라이언트에서 전체 결과를 누적해 JSON 캐시에 다시 쓰는 단계는 없다. */
+ *  책임진다 — 클라이언트에서 전체 결과를 누적해 들고 있지 않는다(각 화면이 자기 범위만
+ *  useProcessedAttendance로 따로 받아간다). */
 async function apiRecomputeAll(policy: PolicySettings): Promise<{ error: string | null }> {
   let offset = 0
   for (;;) {
@@ -182,8 +152,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
 
   const [liveEmployees,    setLiveEmployees]    = useState<Employee[] | null>(null)
   const [liveRecords,      setLiveRecords]      = useState<RawRecord[] | null>(null)
-  const [processedRecords, setProcessedRecords] = useState<ProcessedRecord[] | null>(null)
-  const [processedAt,      setProcessedAt]      = useState<string | null>(null)
+  const [dataVersion,      setDataVersion]      = useState(0)
   const [isLoading,        setIsLoading]        = useState(true)
   const [isProcessing,     setIsProcessing]     = useState(false)
   const [lastUploadedAt,   setLastUploadedAt]   = useState<string | null>(null)
@@ -191,24 +160,15 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
 
   const isLiveData = liveEmployees !== null
 
-  // ── 서버에서 employees/rawRecords + processedRecords 새로고침 ──────────
+  // ── 서버에서 employees/rawRecords 새로고침 (processedRecords는 각 화면이 직접 받아감) ──
   const refreshFromServer = useCallback(async () => {
-    const [rawResult, pdResult] = await Promise.all([fetchRawRecords(), fetchProcessedRecords()])
-
-    const { data, updatedAt } = rawResult
+    const { data, updatedAt } = await fetchRawRecords()
     if (data?.employees?.length) {
       const normalized = normalizeDivisions(data.employees)
       setLiveEmployees(normalized)
       setLiveRecords(data.rawRecords)
       setLastUploadedAt(updatedAt)
       if (updatedAt) lsSave({ employees: normalized, rawRecords: data.rawRecords, updatedAt })
-    }
-
-    const { data: pd, updatedAt: pdTs } = pdResult
-    if (pd?.processed?.length) {
-      setProcessedRecords(pd.processed)
-      setProcessedAt(pdTs ?? pd.processedAt)
-      lsSaveProcessed({ processed: pd.processed, processedAt: pd.processedAt, cachedAt: new Date().toISOString() })
     }
   }, [])
 
@@ -217,12 +177,6 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     let cancelled = false
 
     async function load() {
-      const cachedProcessed = lsLoadProcessed()
-      if (cachedProcessed?.processed?.length && !cancelled) {
-        setProcessedRecords(cachedProcessed.processed)
-        setProcessedAt(cachedProcessed.processedAt)
-      }
-
       const cached = lsLoad()
       if (cached?.employees?.length && !cancelled) {
         const normalized = normalizeDivisions(cached.employees)
@@ -255,9 +209,9 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
 
     setIsProcessing(true)
     apiRecomputeAll(policy)
-      .then(async ({ error }) => {
+      .then(({ error }) => {
         if (error) { setDbSaveError(error); return }
-        await refreshFromServer()
+        setDataVersion(v => v + 1)
       })
       .catch(err => setDbSaveError(String(err)))
       .finally(() => setIsProcessing(false))
@@ -273,14 +227,14 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
         setDbSaveError(error)
       } else {
         setDbSaveError(null)
-        await refreshFromServer()
+        setDataVersion(v => v + 1)
       }
     } catch (err) {
       setDbSaveError(`전체 재계산 실패: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setIsProcessing(false)
     }
-  }, [policy, refreshFromServer])
+  }, [policy])
 
   // ── setRawData / mergeRawData: /api/attendance-ingest에 위임 ────────────
   // upsert 기반이라 "전체 교체"와 "병합"의 구분이 없어졌다(둘 다 누적) — setRawData는
@@ -297,6 +251,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
         return { employees: [], rawRecords: [], skippedCount: 0, erpOtMatchCount: 0, addedCount: 0, updatedCount: 0 }
       }
       await refreshFromServer()
+      setDataVersion(v => v + 1)
       return {
         employees: liveEmployees ?? [],
         rawRecords: liveRecords ?? [],
@@ -335,6 +290,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
       }
       const { deletedCount } = await res.json() as { deletedCount: number }
       await refreshFromServer()
+      setDataVersion(v => v + 1)
       return { deletedCount }
     } finally {
       setIsProcessing(false)
@@ -345,8 +301,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     <AttendanceSourceContext.Provider value={{
       employees:          liveEmployees ?? EMPLOYEES,
       rawRecords:         liveRecords   ?? ALL_RECORDS,
-      processedRecords,
-      processedAt,
+      dataVersion,
       isLiveData,
       isLoading,
       isProcessing,

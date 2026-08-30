@@ -8,6 +8,7 @@ import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { useDateRange, DEFAULT_RANGE } from '@/context/DateRangeContext'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
+import { useScopedProcessedRecords } from '@/hooks/useProcessedAttendance'
 import { useSlack } from '@/context/SlackContext'
 import { CsvUploader } from '@/components/admin/CsvUploader'
 import { EmployeeCalendarGrid } from '@/components/admin/EmployeeCalendarGrid'
@@ -66,9 +67,10 @@ export default function FastDashboard() {
   const { recordOverrides } = useAttendanceData()
   const {
     employees: baseEmployees, rawRecords: baseRecords, isLiveData, isLoading,
-    processedRecords: serverProcessed, isProcessing: isServerProcessing,
+    isProcessing: isServerProcessing, dataVersion,
     recomputeProcessed, dbSaveError: recomputeError,
   } = useAttendanceSource()
+  const serverProcessed = useScopedProcessedRecords(dateRange.from, dateRange.to, dataVersion)
   const { slackNoteMap } = useSlack()
 
   const [view,              setView]             = useState<View>('table')
@@ -168,7 +170,8 @@ export default function FastDashboard() {
 
   const allProcessed = useMemo<ProcessedRecord[]>(() => {
     if (!serverProcessed) return clientProcessed
-    const dateFiltered = serverProcessed.filter(r => r.date >= dateRange.from && r.date <= dateRange.to)
+    // 서버 조회 자체가 이미 [dateRange.from, dateRange.to]로 스코프돼 있어 재필터 불필요.
+    const dateFiltered = serverProcessed
     if (!Object.keys(recordOverrides).length && attrOverrideEmployeeIds.size === 0) return dateFiltered
     return dateFiltered.map(r => {
       const ov = recordOverrides[`${r.employeeId}_${r.date}`]
