@@ -27,11 +27,12 @@ model PersonLink {
 model PersonLinkMember {
   id           String   @id @default(uuid())
   personLinkId String   @map("person_link_id")
-  rawId        String   @map("raw_id")
+  rawId        String   @unique @map("raw_id")
   createdAt    DateTime @default(now()) @map("created_at")
 
   personLink PersonLink @relation(fields: [personLinkId], references: [id], onDelete: Cascade)
 
+  @@index([personLinkId])
   @@map("person_link_members")
 }
 
@@ -274,6 +275,7 @@ model Department {
 
 enum ContractType {
   FULL_TIME   // 정규직
+  PART_TIME   // 아르바이트/시간제 — 실DB엔 있었는데 schema.prisma 누락돼있던 값(2026-08-30 발견)
   CONTRACT    // 계약직
   DISPATCHED  // 파견
   INTERN      // 인턴/수습
