@@ -193,6 +193,20 @@ async function buildEmployeeRoster(): Promise<Employee[]> {
   return extractEmployees(capsForParser)
 }
 
+/** 화면 배지("LIVE · N명 · M건")용 — 전체 캡스 원본 건수만 가볍게 센다(레코드 내용은 안 가져옴). */
+async function countCapsDailyLogs(): Promise<number> {
+  return prisma.capsDailyLog.count()
+}
+
+/** DateRangePicker 기본값 추정용 — 원본 전체를 안 끌어오고 min/max 날짜만 조회. */
+async function getWorkDateBounds(): Promise<{ min: string; max: string } | null> {
+  const [row] = await prisma.$queryRaw<{ min: string | null; max: string | null }[]>(
+    Prisma.sql`SELECT MIN(work_date) AS min, MAX(work_date) AS max FROM caps_daily_logs`,
+  )
+  if (!row?.min || !row?.max) return null
+  return { min: row.min, max: row.max }
+}
+
 /**
  * caps_daily_logs/erp_applications를 CapsRow[]/ErpUnifiedRow[]로 복원해 parseAttendanceData()에
  * 넘긴 결과를 그대로 돌려준다. rawIds를 생략하면 전체 직원 대상(compute-attendance 전체 재계산,
@@ -328,4 +342,5 @@ async function recomputeEmployeesFromNormalizedTables(rawIds: string[]): Promise
 export {
   upsertCapsRows, upsertErpRows, deleteCapsRows, recomputeEmployeesFromNormalizedTables,
   ensureEmployeeMasterStubs, buildEmployeesAndRawRecords, buildEmployeeRoster,
+  countCapsDailyLogs, getWorkDateBounds,
 }

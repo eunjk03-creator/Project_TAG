@@ -96,18 +96,13 @@ function addDays(s: string, n: number): string {
 
 /** Returns the latest-7-days window within the data (earliest record date if the data spans
  *  less than a week). 업로드 직후 min~max(보통 1월~오늘) 전체를 자동으로 띄우면 그리드/집계 렌더링이
- *  무거워져서 기본값을 최근 1주일로 좁힘 — 더 넓은 기간은 DateRangePicker로 수동 선택. */
-function detectMonthRange(records: { date: string }[]): { from: string; to: string } | null {
-  let min: string | null = null
-  let max: string | null = null
-  for (const r of records) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date)) continue
-    if (!min || r.date < min) min = r.date
-    if (!max || r.date > max) max = r.date
-  }
-  if (!min || !max) return null
-  const weekAgo = addDays(max, -6)
-  return { from: weekAgo > min ? weekAgo : min, to: max }
+ *  무거워져서 기본값을 최근 1주일로 좁힘 — 더 넓은 기간은 DateRangePicker로 수동 선택.
+ *  min/max는 서버가 이미 계산해서 주는 값을 그대로 씀(caps_daily_logs 전체를 다시 스캔할
+ *  필요 없음 — context.dateBounds, /api/attendance-raw-records 참고). */
+function detectMonthRange(bounds: { min: string; max: string } | null): { from: string; to: string } | null {
+  if (!bounds) return null
+  const weekAgo = addDays(bounds.max, -6)
+  return { from: weekAgo > bounds.min ? weekAgo : bounds.min, to: bounds.max }
 }
 
 type View = 'grid' | 'table' | 'summary' | 'allowance'
@@ -118,7 +113,7 @@ export default function AdminDashboard() {
   const { dateRange, setDateRange } = useDateRange()
   const { recordOverrides, setRecordOverrides, resolutions, setResolutions, saveOverride, deletedKeys, deleteRecord } = useAttendanceData()
   const {
-    employees: baseEmployees, rawRecords: baseRecords, isLiveData,
+    employees: baseEmployees, dateBounds, isLiveData,
     isProcessing: isServerProcessing,
     recomputeProcessed, dbSaveError: recomputeError,
   } = useAttendanceSource()
@@ -224,9 +219,9 @@ export default function AdminDashboard() {
       setDateRange(DEFAULT_RANGE)
       return
     }
-    const detected = detectMonthRange(baseRecords)
+    const detected = detectMonthRange(dateBounds)
     if (detected) setDateRange(detected)
-  }, [isLiveData, baseRecords]) // setDateRange is a stable context setter
+  }, [isLiveData, dateBounds]) // setDateRange is a stable context setter
 
   const scopedEmployees = baseEmployees
 

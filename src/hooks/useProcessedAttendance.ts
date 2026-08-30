@@ -16,19 +16,73 @@ import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/ty
  *  전체를 전송하는 낭비였다(2026-08-30 실측 — 초기 로딩 지연의 주 원인). from/to가 바뀌거나
  *  dataVersion이 바뀌면(업로드/전체 재계산 완료) 다시 받아온다. */
 export function useScopedProcessedRecords(from: string, to: string, dataVersion: number): ProcessedRecord[] | null {
-  const [records, setRecords] = useState<ProcessedRecord[] | null>(null)
+  const { records } = useScopedProcessedRecordsWithStatus(from, to, dataVersion)
+  return records
+}
+
+/** useScopedProcessedRecords와 동일하지만 "아직 로딩 중"과 "받아봤더니 진짜 비어있음"을
+ *  구분해서 알려준다 — 폴백 경로(서버에 아직 daily_attendance가 없을 때 클라이언트에서
+ *  직접 계산)가 로딩 중에 성급하게 발동하지 않게 하려면 이 구분이 필요하다. */
+function useScopedProcessedRecordsWithStatus(
+  from: string, to: string, dataVersion: number,
+): { records: ProcessedRecord[] | null; isLoading: boolean } {
+  const [records, setRecords]     = useState<ProcessedRecord[] | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
   const reqIdRef = useRef(0)
 
   useEffect(() => {
     const reqId = ++reqIdRef.current
+    setIsLoading(true)
     fetch(`/api/attendance-records?from=${from}&to=${to}`)
       .then(res => res.ok ? res.json() as Promise<{ records: ProcessedRecord[] }> : null)
       .then(json => {
         if (reqIdRef.current !== reqId) return // 응답 도착 전에 from/to가 또 바뀜 — 낡은 응답 무시
         setRecords(json?.records?.length ? json.records : null)
+        setIsLoading(false)
       })
-      .catch(() => { if (reqIdRef.current === reqId) setRecords(null) })
+      .catch(() => {
+        if (reqIdRef.current !== reqId) return
+        setRecords(null)
+        setIsLoading(false)
+      })
   }, [from, to, dataVersion])
+
+  return { records, isLoading }
+}
+
+/** serverProcessed가 정말로 없을 때만(로딩 중이 아니라 진짜 데이터가 없을 때만) 쓰는
+ *  폴백 — 이 경우에만 원본 전체를 가져와 클라이언트에서 직접 계산한다. 정상 운영 중엔
+ *  daily_attendance가 항상 최신이라 이 경로를 탈 일이 거의 없다(최초 세팅 직후 등 예외적
+ *  상황 전용) — 그래서 흔치 않은 이 경로에서는 범위 제한 없이 전체를 받아도 괜찮다고 판단. */
+function useFallbackRawRecords(shouldFetch: boolean) {
+  const [records, setRecords] = useState<import('@/types/tag').RawRecord[]>([])
+
+  useEffect(() => {
+    if (!shouldFetch) return
+    let cancelled = false
+    fetch('/api/attendance-raw-records?full=1')
+      .then(res => res.ok ? res.json() as Promise<{ rawRecords: import('@/types/tag').RawRecord[] }> : null)
+      .then(json => { if (!cancelled && json?.rawRecords) setRecords(json.rawRecords) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [shouldFetch])
+
+  return records
+}
+
+/** 전 직원 rawRecords가 실제로 필요한 화면(anomalies, fast) 전용 — 남용 금지. dataVersion이
+ *  바뀌면(업로드/재계산 완료) 다시 받아온다. */
+export function useFullRawRecords(dataVersion: number): import('@/types/tag').RawRecord[] {
+  const [records, setRecords] = useState<import('@/types/tag').RawRecord[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/attendance-raw-records?full=1')
+      .then(res => res.ok ? res.json() as Promise<{ rawRecords: import('@/types/tag').RawRecord[] }> : null)
+      .then(json => { if (!cancelled && json?.rawRecords) setRecords(json.rawRecords) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [dataVersion])
 
   return records
 }
@@ -65,12 +119,14 @@ export function useProcessedAttendance(from: string, to: string): ProcessedAtten
   const { policy } = usePolicy()
   const { excludeFromOtIds, employeeAttrMap, exceptionRules } = useEmployeeExceptions()
   const { recordOverrides, deletedKeys } = useAttendanceData()
-  const {
-    employees: baseEmployees, rawRecords: baseRecords, dataVersion,
-  } = useAttendanceSource()
+  const { employees: baseEmployees, dataVersion } = useAttendanceSource()
   const { slackNoteMap } = useSlack()
 
-  const serverProcessed = useScopedProcessedRecords(from, to, dataVersion)
+  const { records: serverProcessed, isLoading: isServerProcessedLoading } =
+    useScopedProcessedRecordsWithStatus(from, to, dataVersion)
+  // 서버에 daily_attendance가 아직 없을 때만(로딩 중이 아니라 정말 없을 때만) 원본 전체를
+  // 받아 클라이언트에서 계산 — 정상 운영 중엔 거의 안 타는 경로라 범위 제한 없이 받아도 된다.
+  const baseRecords = useFallbackRawRecords(!isServerProcessedLoading && !serverProcessed)
 
   const companyHolsMap = useMemo(
     () => new Map((policy.companyHolidays ?? []).map(h => [h.date, h.label])),

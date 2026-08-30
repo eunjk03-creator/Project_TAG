@@ -1,5 +1,5 @@
 'use client'
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useAttendanceLogic } from '@/hooks/useAttendanceLogic'
 import { usePolicy } from '@/context/PolicyContext'
 import { useDateRange } from '@/context/DateRangeContext'
@@ -9,7 +9,25 @@ import {
   ATTR_RULE_MAP,
   type EmployeeAttributeOverrides,
 } from '@/context/EmployeeExceptionsContext'
-import { FINAL_STATUS_CATEGORY } from '@/types/tag'
+import { FINAL_STATUS_CATEGORY, type RawRecord } from '@/types/tag'
+
+/** 서랍이 열린 그 직원 1명분만 받아온다 — 이 화면은 항상 딱 한 명만 보므로 전 직원
+ *  원본을 들고 있을 이유가 없다(rawId 기준, /api/attendance-raw-records?employeeId=). */
+function useEmployeeRawRecords(rawId: string | null | undefined): RawRecord[] {
+  const [records, setRecords] = useState<RawRecord[]>([])
+
+  useEffect(() => {
+    if (!rawId) { setRecords([]); return }
+    let cancelled = false
+    fetch(`/api/attendance-raw-records?employeeId=${encodeURIComponent(rawId)}`)
+      .then(res => res.ok ? res.json() as Promise<{ rawRecords: RawRecord[] }> : null)
+      .then(json => { if (!cancelled) setRecords(json?.rawRecords ?? []) })
+      .catch(() => { if (!cancelled) setRecords([]) })
+    return () => { cancelled = true }
+  }, [rawId])
+
+  return records
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -129,12 +147,14 @@ export function EmployeeDrawer() {
 
   const { policy }     = usePolicy()
   const { dateRange }  = useDateRange()
-  const { employees, rawRecords } = useAttendanceSource()
+  const { employees } = useAttendanceSource()
 
   const emp = useMemo(
     () => selectedId ? employees.find(e => e.id === selectedId) ?? null : null,
     [selectedId, employees],
   )
+
+  const rawRecords = useEmployeeRawRecords(emp?.rawId ?? emp?.id.split('_')[0])
 
   // Attrs are read live from context (no local draft — instant save on toggle)
   const attrs: EmployeeAttributeOverrides = selectedId ? getEmployeeAttr(selectedId) : {}

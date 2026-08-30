@@ -1,44 +1,56 @@
 'use client'
 import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
 import { EMPLOYEES } from '@/data/orgChart'
-import { ALL_RECORDS } from '@/data/mockData'
-import type { Employee, RawRecord, CapsRow, ErpUnifiedRow, ProcessedRecord, PolicySettings } from '@/types/tag'
-import type { ParseResult } from '@/utils/dataParser'
+import type { Employee, CapsRow, ErpUnifiedRow, ProcessedRecord, PolicySettings } from '@/types/tag'
 import { usePolicy } from '@/context/PolicyContext'
 
 // ── Context interface ─────────────────────────────────────────────────────
-// processedRecords(전체 연도)는 여기서 더 이상 들고 있지 않는다 — 각 화면이 자기가 보는
-// 기간만 useProcessedAttendance(from, to)로 직접 서버에서 받아온다(스캐폴딩은
-// src/hooks/useProcessedAttendance.ts 참고). dataVersion만 노출해서, 업로드/전체
-// 재계산이 끝났을 때 그 훅들이 자기 범위를 다시 받아오도록 신호를 준다.
+// processedRecords(전체 연도)도, rawRecords(전체 6만+행)도 여기서 더 이상 들고 있지 않는다 —
+// 둘 다 "화면마다 필요한 범위가 다 다른데 굳이 다 받아서 메모리에 올려두고 자를 이유가
+// 없다"는 이유로 각 화면이 자기 몫만 직접 서버에서 받아간다:
+//   - processedRecords → useProcessedAttendance(from, to) (src/hooks/useProcessedAttendance.ts)
+//   - rawRecords(직원 1명분)   → EmployeeDrawer가 /api/attendance-raw-records?employeeId= 직접 호출
+//   - rawRecords(전체, 드묾)   → admin/anomalies처럼 정말 전 직원이 필요한 화면만
+//     /api/attendance-raw-records?full=1 직접 호출
+// 여기 Context는 employees(가벼움, ~400명)와 rawRecordCount/dateBounds(배지·기본기간 추정용
+// 숫자 몇 개)만 들고 있고, dataVersion으로 "서버 데이터가 방금 바뀌었다"만 신호로 준다.
 
 interface AttendanceSourceContextValue {
   employees:          Employee[]
-  rawRecords:         RawRecord[]
+  rawRecordCount:      number
+  dateBounds:          { min: string; max: string } | null
   dataVersion:        number
   isLiveData:         boolean
   isLoading:          boolean
   isProcessing:       boolean
   lastUploadedAt:     string | null
   dbSaveError:        string | null
-  setRawData:            (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult>
-  mergeRawData:          (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult & { addedCount: number; updatedCount: number }>
+  setRawData:            (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<IngestSummary>
+  mergeRawData:          (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<IngestSummary>
   deleteRecordsByKeys:   (keys: Set<string>) => Promise<{ deletedCount: number }>
   recomputeProcessed:    () => Promise<void>
 }
 
+export interface IngestSummary {
+  employeeCount:   number
+  affectedCount:   number
+  skippedCount:    number
+  erpOtMatchCount: number
+}
+
 const AttendanceSourceContext = createContext<AttendanceSourceContextValue | null>(null)
 
-// ── localStorage helpers (raw records만 — processed는 각 화면이 직접 캐싱하지 않음) ──
-interface StoredAttendance {
-  employees:  Employee[]
-  rawRecords: RawRecord[]
+// ── localStorage helpers — 가벼운 값(직원 목록 + 건수 + 날짜범위)만 캐싱 ──────
+interface StoredLight {
+  employees:      Employee[]
+  rawRecordCount: number
+  dateBounds:     { min: string; max: string } | null
 }
-interface CacheEntry extends StoredAttendance {
+interface CacheEntry extends StoredLight {
   updatedAt: string
 }
 
-const LS_KEY = 'tag_attendance_v1'
+const LS_KEY = 'tag_attendance_v2'
 
 function lsLoad(): CacheEntry | null {
   if (typeof window === 'undefined') return null
@@ -57,13 +69,19 @@ function normalizeDivisions(employees: Employee[]): Employee[] {
 
 // ── 서버 API 헬퍼 ────────────────────────────────────────────────────────────
 
-async function fetchRawRecords(): Promise<{ data: StoredAttendance | null; updatedAt: string | null }> {
+async function fetchRoster(): Promise<{ data: StoredLight | null; updatedAt: string | null }> {
   try {
     const res = await fetch('/api/attendance-raw-records')
     if (!res.ok) return { data: null, updatedAt: null }
-    const json = await res.json() as { employees: Employee[]; rawRecords: RawRecord[]; fetchedAt: string }
+    const json = await res.json() as {
+      employees: Employee[]; rawRecordCount: number
+      dateBounds: { min: string; max: string } | null; fetchedAt: string
+    }
     if (!json.employees?.length) return { data: null, updatedAt: null }
-    return { data: { employees: json.employees, rawRecords: json.rawRecords }, updatedAt: json.fetchedAt }
+    return {
+      data: { employees: json.employees, rawRecordCount: json.rawRecordCount, dateBounds: json.dateBounds },
+      updatedAt: json.fetchedAt,
+    }
   } catch {
     return { data: null, updatedAt: null }
   }
@@ -151,7 +169,8 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
   const { policy } = usePolicy()
 
   const [liveEmployees,    setLiveEmployees]    = useState<Employee[] | null>(null)
-  const [liveRecords,      setLiveRecords]      = useState<RawRecord[] | null>(null)
+  const [rawRecordCount,   setRawRecordCount]   = useState(0)
+  const [dateBounds,       setDateBounds]       = useState<{ min: string; max: string } | null>(null)
   const [dataVersion,      setDataVersion]      = useState(0)
   const [isLoading,        setIsLoading]        = useState(true)
   const [isProcessing,     setIsProcessing]     = useState(false)
@@ -160,15 +179,16 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
 
   const isLiveData = liveEmployees !== null
 
-  // ── 서버에서 employees/rawRecords 새로고침 (processedRecords는 각 화면이 직접 받아감) ──
+  // ── 서버에서 직원 목록 + 건수/날짜범위 새로고침 ────────────────────────
   const refreshFromServer = useCallback(async () => {
-    const { data, updatedAt } = await fetchRawRecords()
+    const { data, updatedAt } = await fetchRoster()
     if (data?.employees?.length) {
       const normalized = normalizeDivisions(data.employees)
       setLiveEmployees(normalized)
-      setLiveRecords(data.rawRecords)
+      setRawRecordCount(data.rawRecordCount)
+      setDateBounds(data.dateBounds)
       setLastUploadedAt(updatedAt)
-      if (updatedAt) lsSave({ employees: normalized, rawRecords: data.rawRecords, updatedAt })
+      if (updatedAt) lsSave({ ...data, employees: normalized, updatedAt })
     }
   }, [])
 
@@ -181,7 +201,8 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
       if (cached?.employees?.length && !cancelled) {
         const normalized = normalizeDivisions(cached.employees)
         setLiveEmployees(normalized)
-        setLiveRecords(cached.rawRecords)
+        setRawRecordCount(cached.rawRecordCount)
+        setDateBounds(cached.dateBounds)
         setLastUploadedAt(cached.updatedAt)
         setIsLoading(false)
       } else {
@@ -241,37 +262,33 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
   // 호출부가 없어(레거시) mergeRawData와 동일하게 동작해도 무방.
   const runIngest = useCallback(async (
     caps: CapsRow[], erp: ErpUnifiedRow[],
-  ): Promise<ParseResult & { addedCount: number; updatedCount: number }> => {
+  ): Promise<IngestSummary> => {
     setIsProcessing(true)
     setDbSaveError(null)
     try {
       const { result, error } = await ingest(caps, erp)
       if (!result) {
         setDbSaveError(error ?? '업로드 처리에 실패했습니다.')
-        return { employees: [], rawRecords: [], skippedCount: 0, erpOtMatchCount: 0, addedCount: 0, updatedCount: 0 }
+        return { employeeCount: 0, affectedCount: 0, skippedCount: 0, erpOtMatchCount: 0 }
       }
       await refreshFromServer()
       setDataVersion(v => v + 1)
       return {
-        employees: liveEmployees ?? [],
-        rawRecords: liveRecords ?? [],
-        skippedCount: result.skippedCount,
+        employeeCount:   liveEmployees?.length ?? 0,
+        affectedCount:   result.affectedEmployees,
+        skippedCount:    result.skippedCount,
         erpOtMatchCount: result.erpOtMatchCount,
-        addedCount: result.affectedEmployees,
-        updatedCount: 0,
       }
     } finally {
       setIsProcessing(false)
     }
-  }, [refreshFromServer, liveEmployees, liveRecords])
+  }, [refreshFromServer, liveEmployees])
 
-  const setRawData = useCallback(async (caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<ParseResult> => {
+  const setRawData = useCallback(async (caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<IngestSummary> => {
     return runIngest(caps, erp)
   }, [runIngest])
 
-  const mergeRawData = useCallback(async (
-    caps: CapsRow[], erp: ErpUnifiedRow[],
-  ): Promise<ParseResult & { addedCount: number; updatedCount: number }> => {
+  const mergeRawData = useCallback(async (caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<IngestSummary> => {
     return runIngest(caps, erp)
   }, [runIngest])
 
@@ -300,7 +317,8 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
   return (
     <AttendanceSourceContext.Provider value={{
       employees:          liveEmployees ?? EMPLOYEES,
-      rawRecords:         liveRecords   ?? ALL_RECORDS,
+      rawRecordCount,
+      dateBounds,
       dataVersion,
       isLiveData,
       isLoading,

@@ -8,7 +8,7 @@ import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { useDateRange, DEFAULT_RANGE } from '@/context/DateRangeContext'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
-import { useScopedProcessedRecords } from '@/hooks/useProcessedAttendance'
+import { useScopedProcessedRecords, useFullRawRecords } from '@/hooks/useProcessedAttendance'
 import { useSlack } from '@/context/SlackContext'
 import { CsvUploader } from '@/components/admin/CsvUploader'
 import { EmployeeCalendarGrid } from '@/components/admin/EmployeeCalendarGrid'
@@ -66,11 +66,14 @@ export default function FastDashboard() {
   const { dateRange, setDateRange } = useDateRange()
   const { recordOverrides } = useAttendanceData()
   const {
-    employees: baseEmployees, rawRecords: baseRecords, isLiveData, isLoading,
+    employees: baseEmployees, isLiveData, isLoading,
     isProcessing: isServerProcessing, dataVersion,
     recomputeProcessed, dbSaveError: recomputeError,
   } = useAttendanceSource()
   const serverProcessed = useScopedProcessedRecords(dateRange.from, dateRange.to, dataVersion)
+  // 이 페이지는 어떤 nav에서도 안 걸림(orphaned route) — 전 직원 원본이 필요한 기존 동작만
+  // 그대로 유지(useFullRawRecords, /api/attendance-raw-records?full=1).
+  const baseRecords = useFullRawRecords(dataVersion)
   const { slackNoteMap } = useSlack()
 
   const [view,              setView]             = useState<View>('table')

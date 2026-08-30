@@ -20,7 +20,7 @@ type SlotState =
   | { phase: 'error';  name: string; msg: string }
 
 type ApplyResult =
-  | { ok: true;  empCount: number; recCount: number; skipped: number; added?: number; updated?: number; erpOtMatchCount?: number }
+  | { ok: true;  empCount: number; affectedCount: number; skipped: number; erpOtMatchCount?: number }
   | { ok: false; msg: string }
 
 // ── Low-level file → rows parser ──────────────────────────────────────────
@@ -312,7 +312,7 @@ function extractCapsKeys(rows: Record<string, string>[]): Set<string> {
 
 // ── Main export ───────────────────────────────────────────────────────────
 export function CsvUploader() {
-  const { mergeRawData, deleteRecordsByKeys, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, isProcessing } = useAttendanceSource()
+  const { mergeRawData, deleteRecordsByKeys, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecordCount, dbSaveError, isProcessing } = useAttendanceSource()
 
   // CAPS: 복수 파일 지원 (최대 MAX_CAPS)
   const capsDataRefs = useRef<(Record<string, string>[] | null)[]>([null])
@@ -446,11 +446,11 @@ export function CsvUploader() {
     const mergedErp  = allErp.flat()
     setIsSaving(true)
     try {
-      const { employees: emps, rawRecords: recs, skippedCount, addedCount, updatedCount, erpOtMatchCount } = await mergeRawData(
+      const { employeeCount, affectedCount, skippedCount, erpOtMatchCount } = await mergeRawData(
         mergedCaps as unknown as CapsRow[],
         mergedErp  as unknown as ErpUnifiedRow[],
       )
-      setResult({ ok: true, empCount: emps.length, recCount: recs.length, skipped: skippedCount, added: addedCount, updated: updatedCount, erpOtMatchCount })
+      setResult({ ok: true, empCount: employeeCount, affectedCount, skipped: skippedCount, erpOtMatchCount })
       setExpanded(false)
     } catch (e) {
       setResult({ ok: false, msg: (e as Error).message })
@@ -524,7 +524,7 @@ export function CsvUploader() {
           }`}>
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLiveData ? 'bg-emerald-500' : 'bg-gray-400'}`} />
             {isLiveData
-              ? `LIVE · ${employees.length}명 · ${rawRecords.length.toLocaleString()}건`
+              ? `LIVE · ${employees.length}명 · ${rawRecordCount.toLocaleString()}건`
               : '목업 데이터'}
           </div>
         )}
@@ -553,7 +553,7 @@ export function CsvUploader() {
         )}
         {!isSaving && result?.ok && !dbSaveError && (
           <span className="text-[11px] text-emerald-600 font-medium whitespace-nowrap flex items-center gap-2">
-            ✓ 추가 {result.added ?? 0}건 · 업데이트 {result.updated ?? 0}건 (총 {result.recCount.toLocaleString()}건)
+            ✓ 영향받은 직원 {result.affectedCount}명 · 스킵 {result.skipped}건
             {result.erpOtMatchCount !== undefined && (
               <span
                 className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${

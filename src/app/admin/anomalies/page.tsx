@@ -6,6 +6,7 @@ import { usePolicy } from '@/context/PolicyContext'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { useDateRange } from '@/context/DateRangeContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
+import { useFullRawRecords } from '@/hooks/useProcessedAttendance'
 import { useSlack } from '@/context/SlackContext'
 import { DateRangePicker } from '@/components/admin/DateRangePicker'
 import { DailyDetailModal } from '@/components/admin/DailyDetailModal'
@@ -113,7 +114,10 @@ export default function AnomaliesPage() {
   const { openDrawer, excludeFromOtIds, employeeAttrMap } = useEmployeeExceptions()
   const { dateRange, setDateRange } = useDateRange()
   const { recordOverrides, setRecordOverrides, resolutions, setResolutions } = useAttendanceData()
-  const { employees: liveEmployees, rawRecords: liveRecords } = useAttendanceSource()
+  const { employees: liveEmployees, dataVersion } = useAttendanceSource()
+  // 이 화면은 전 직원 원본이 실제로 필요함(회사 전체 이상치 집계) — 그리드처럼 주간으로
+  // 좁힐 수 없어 전체를 받는다(useFullRawRecords, /api/attendance-raw-records?full=1).
+  const liveRecords = useFullRawRecords(dataVersion)
   const { slackNoteMap } = useSlack()
   const EMPLOYEES = liveEmployees  // used by sort/lookup helpers below
 
