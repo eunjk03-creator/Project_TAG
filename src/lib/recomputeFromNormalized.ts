@@ -18,7 +18,7 @@ import { processRecord } from '@/lib/processRecord'
 import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
 import { buildRecordSet } from '@/lib/buildRecordSet'
 import { upsertAttendanceRows } from '@/lib/upsertAttendanceRows'
-import { parseAttendanceData, isValidEmpId, type ParseResult } from '@/utils/dataParser'
+import { parseAttendanceData, isValidEmpId, normalizeDate, type ParseResult } from '@/utils/dataParser'
 import { DEFAULT_POLICY } from '@/types/tag'
 import type { CapsRow, ErpUnifiedRow } from '@/types/tag'
 
@@ -54,7 +54,15 @@ async function upsertCapsRows(rowsInRaw: CapsRow[]): Promise<UpsertCounts> {
   // 사원번호가 'E' + 8자리 이상 숫자 형식이 아니면 dataParser.parseAttendanceData()도 항상
   // 무시하는 행이다(방문자/도급사 코드 등) — 여기서 미리 안 걸러내면 employee_master에
   // 매칭되는 stub이 없어서(빈 사원번호는 stub 자체를 안 만듦) FK 위반으로 INSERT가 통째로 실패한다.
-  const rowsIn = rowsInRaw.filter(r => isValidEmpId(String(r.사원번호 ?? '').trim()))
+  // work_date는 반드시 normalizeDate()로 정규화한 뒤 저장한다 — 원본 CAPS 파일마다
+  // "2026-08-01"/"2026/08/01"처럼 날짜 표기가 달라서, 정규화 없이 그대로 저장하면
+  // UNIQUE(employee_id, work_date)가 같은 날을 다른 행으로 착각해 중복이 생긴다
+  // (2026-08-30 백필 중 실제로 발견 — parseAttendanceData는 항상 정규화된 날짜로 비교하므로
+  // 저장 시점에도 반드시 동일하게 정규화해야 한다).
+  const rowsIn = rowsInRaw
+    .filter(r => isValidEmpId(String(r.사원번호 ?? '').trim()))
+    .map(r => ({ ...r, 근무일자: normalizeDate(r.근무일자) }))
+    .filter(r => r.근무일자)
   if (rowsIn.length === 0) return { insertedCount: 0, updatedCount: 0 }
   await ensureEmployeeMasterStubs(rowsIn.map(r => ({ rawId: String(r.사원번호 ?? '').trim(), name: String(r.이름 ?? '').trim() })))
 
@@ -93,17 +101,31 @@ async function upsertCapsRows(rowsInRaw: CapsRow[]): Promise<UpsertCounts> {
 }
 
 async function upsertErpRows(rowsInRaw: ErpUnifiedRow[]): Promise<UpsertCounts> {
-  const rowsIn = rowsInRaw.filter(r => isValidEmpId(String(r.사원번호 ?? '').trim()))
+  const looseInRaw = rowsInRaw as unknown as Record<string, string>[]
+  const findKey = (r: Record<string, string>, name: string) =>
+    Object.keys(r).find(k => k.replace(/\s+/g, '') === name) ?? name
+
+  // 시작일/종료일/신청일 전부 normalizeDate()로 정규화 후 저장 — caps_daily_logs와 동일한
+  // 이유(원본 파일마다 날짜 표기가 달라 정규화 없이는 같은 날이 다른 행으로 중복 저장됨).
+  const rowsIn = rowsInRaw
+    .map((r, i) => ({
+      ...r,
+      시작일: normalizeDate(r.시작일),
+      종료일: r.종료일 ? normalizeDate(r.종료일) : r.종료일,
+      __신청일정규화__: (() => {
+        const raw = looseInRaw[i][findKey(looseInRaw[i], '신청일')]
+        return raw ? normalizeDate(raw) : raw
+      })(),
+    }))
+    .filter(r => isValidEmpId(String(r.사원번호 ?? '').trim()) && r.시작일)
   if (rowsIn.length === 0) return { insertedCount: 0, updatedCount: 0 }
   await ensureEmployeeMasterStubs(rowsIn.map(r => ({ rawId: String(r.사원번호 ?? '').trim(), name: String(r.성명 ?? '').trim() })))
 
   const looseIn = rowsIn as unknown as Record<string, string>[]
-  const findKey = (r: Record<string, string>, name: string) =>
-    Object.keys(r).find(k => k.replace(/\s+/g, '') === name) ?? name
 
   // upsertCapsRows와 동일한 이유 — 같은 INSERT 문 안의 (employee_id, leave_type, start_date,
   // start_time) 중복을 미리 제거(마지막 것만 유지).
-  const dedupMap = new Map<string, ErpUnifiedRow>()
+  const dedupMap = new Map<string, typeof rowsIn[number]>()
   for (let i = 0; i < rowsIn.length; i++) {
     const r = rowsIn[i]
     const startTime = String(looseIn[i][findKey(looseIn[i], '시작시간')] ?? '').trim()
@@ -120,7 +142,7 @@ async function upsertErpRows(rowsInRaw: ErpUnifiedRow[]): Promise<UpsertCounts> 
   const startTimes       = loose.map(r => String(r[findKey(r, '시작시간')] ?? '').trim())
   const endDates         = rows.map(r => r.종료일 ?? null)
   const endTimes         = loose.map(r => (r[findKey(r, '종료시간')] ?? null))
-  const submitDates      = loose.map(r => (r[findKey(r, '신청일')] ?? null))
+  const submitDates      = rows.map(r => r.__신청일정규화__ ?? null)
   const recognizedTimes  = rows.map(r => r.인정시간 ?? null)
   const leaveDaysArr     = rows.map(r => r.일수 ?? null)
   const categories       = rows.map(r => r.근태구분 ?? null)
