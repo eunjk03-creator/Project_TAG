@@ -23,7 +23,6 @@ interface AttendanceSourceContextValue {
   setRawData:            (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult>
   mergeRawData:          (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<ParseResult & { addedCount: number; updatedCount: number }>
   deleteRecordsByKeys:   (keys: Set<string>) => Promise<{ deletedCount: number }>
-  clearLiveData:         () => Promise<void>
   recomputeProcessed:    () => Promise<void>
 }
 
@@ -58,9 +57,6 @@ function lsLoad(): CacheEntry | null {
 function lsSave(entry: CacheEntry) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(entry)) } catch {}
 }
-function lsClear() {
-  try { localStorage.removeItem(LS_KEY) } catch {}
-}
 function lsLoadProcessed(): ProcessedCacheEntry | null {
   if (typeof window === 'undefined') return null
   try {
@@ -70,9 +66,6 @@ function lsLoadProcessed(): ProcessedCacheEntry | null {
 }
 function lsSaveProcessed(entry: ProcessedCacheEntry) {
   try { localStorage.setItem(LS_PROCESSED_KEY, JSON.stringify(entry)) } catch {}
-}
-function lsClearProcessed() {
-  try { localStorage.removeItem(LS_PROCESSED_KEY) } catch {}
 }
 
 function normalizeDivisions(employees: Employee[]): Employee[] {
@@ -348,20 +341,6 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     }
   }, [refreshFromServer])
 
-  // ── clearLiveData: 로컬 상태/캐시만 리셋(데모 데이터로 폴백) ────────────
-  // 주의: 정규화 테이블(caps_daily_logs/erp_applications/daily_attendance) 자체는 지우지
-  // 않는다 — 새로고침하면 서버 데이터가 다시 로드된다. 진짜 "전체 삭제"가 필요하면 별도
-  // 명시적 관리자 기능으로 다뤄야 한다(실수 방지).
-  const clearLiveData = useCallback(async () => {
-    lsClear()
-    lsClearProcessed()
-    setLiveEmployees(null)
-    setLiveRecords(null)
-    setProcessedRecords(null)
-    setProcessedAt(null)
-    setLastUploadedAt(null)
-  }, [])
-
   return (
     <AttendanceSourceContext.Provider value={{
       employees:          liveEmployees ?? EMPLOYEES,
@@ -376,7 +355,6 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
       setRawData,
       mergeRawData,
       deleteRecordsByKeys,
-      clearLiveData,
       recomputeProcessed,
     }}>
       {children}

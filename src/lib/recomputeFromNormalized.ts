@@ -18,9 +18,9 @@ import { processRecord } from '@/lib/processRecord'
 import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
 import { buildRecordSet } from '@/lib/buildRecordSet'
 import { upsertAttendanceRows } from '@/lib/upsertAttendanceRows'
-import { parseAttendanceData, isValidEmpId, normalizeDate, type ParseResult } from '@/utils/dataParser'
+import { parseAttendanceData, extractEmployees, isValidEmpId, normalizeDate, type ParseResult } from '@/utils/dataParser'
 import { DEFAULT_POLICY } from '@/types/tag'
-import type { CapsRow, ErpUnifiedRow } from '@/types/tag'
+import type { CapsRow, ErpUnifiedRow, Employee } from '@/types/tag'
 
 export interface UpsertCounts {
   insertedCount: number
@@ -175,15 +175,71 @@ async function upsertErpRows(rowsInRaw: ErpUnifiedRow[]): Promise<UpsertCounts> 
 }
 
 /**
+ * 직원 목록만 필요할 때(예: daily_attendance 조회에 곁들이는 이름/부서 조회)의 경량 경로 —
+ * caps_daily_logs 6만+ 행 전체를 끌어와 parseAttendanceData() 전체를 돌리는 대신, 직원당
+ * 1행만 distinct로 가져와 extractEmployees()만 적용한다. 계산 결과(leaveMap/otMap/rawRecords)가
+ * 필요 없는 호출부(getProcessedRecords.ts 등)는 반드시 이걸 쓸 것 — buildEmployeesAndRawRecords()는
+ * 그 결과까지 전부 만드느라 훨씬 느리다.
+ */
+async function buildEmployeeRoster(): Promise<Employee[]> {
+  const rows = await prisma.capsDailyLog.findMany({
+    distinct: ['employeeId'],
+    select: { employeeId: true, name: true, rawDept: true, jobTitle: true },
+  })
+  const capsForParser: CapsRow[] = rows.map(r => ({
+    사원번호: r.employeeId, 이름: r.name, 부서: r.rawDept ?? '', 직급: r.jobTitle ?? '',
+    근무일자: '', 출근: null, 퇴근: null,
+  }))
+  return extractEmployees(capsForParser)
+}
+
+/**
  * caps_daily_logs/erp_applications를 CapsRow[]/ErpUnifiedRow[]로 복원해 parseAttendanceData()에
  * 넘긴 결과를 그대로 돌려준다. rawIds를 생략하면 전체 직원 대상(compute-attendance 전체 재계산,
  * 화면 raw records 조회용) — 지정하면 그 사원번호들만(업로드 증분 재계산용).
  */
+interface CapsDailyLogRow {
+  employeeId: string
+  name:       string
+  workDate:   string
+  clockIn:    string | null
+  clockOut:   string | null
+  rawDept:    string | null
+  jobTitle:   string | null
+}
+interface ErpApplicationRow {
+  employeeId:     string
+  name:           string
+  leaveType:      string
+  approvalStatus: string
+  startDate:      string
+  startTime:      string
+  endDate:        string | null
+  endTime:        string | null
+  submitDate:     string | null
+  recognizedTime: string | null
+  leaveDays:      string | null
+  category:       string | null
+}
+
 async function buildEmployeesAndRawRecords(rawIds?: string[]): Promise<ParseResult> {
-  const where = rawIds ? { employeeId: { in: [...new Set(rawIds.filter(Boolean))] } } : undefined
+  // Prisma ORM(findMany)이 6만+ 행을 JS 객체로 매핑하는 오버헤드가 커서(2026-08-30 실측,
+  // daily_attendance 기준 초당 수백ms) raw SQL로 직접 조회 — getProcessedRecords.ts와 동일 패턴.
+  const idFilter = rawIds
+    ? Prisma.sql`WHERE employee_id IN (${Prisma.join([...new Set(rawIds.filter(Boolean))])})`
+    : Prisma.empty
   const [capsRows, erpRows] = await Promise.all([
-    prisma.capsDailyLog.findMany({ where }),
-    prisma.erpApplication.findMany({ where }),
+    prisma.$queryRaw<CapsDailyLogRow[]>(Prisma.sql`
+      SELECT employee_id AS "employeeId", name, work_date AS "workDate",
+             clock_in AS "clockIn", clock_out AS "clockOut", raw_dept AS "rawDept", job_title AS "jobTitle"
+      FROM caps_daily_logs ${idFilter}
+    `),
+    prisma.$queryRaw<ErpApplicationRow[]>(Prisma.sql`
+      SELECT employee_id AS "employeeId", name, leave_type AS "leaveType", approval_status AS "approvalStatus",
+             start_date AS "startDate", start_time AS "startTime", end_date AS "endDate", end_time AS "endTime",
+             submit_date AS "submitDate", recognized_time AS "recognizedTime", leave_days AS "leaveDays", category
+      FROM erp_applications ${idFilter}
+    `),
   ])
   // parseAttendanceData의 employee 추출은 CAPS 기준 — CAPS 이력이 없는 사람(ERP만 있음)은
   // 기존 로직에서도 애초에 직원으로 잡히지 않는다. 동일하게 스킵.
@@ -271,5 +327,5 @@ async function recomputeEmployeesFromNormalizedTables(rawIds: string[]): Promise
 
 export {
   upsertCapsRows, upsertErpRows, deleteCapsRows, recomputeEmployeesFromNormalizedTables,
-  ensureEmployeeMasterStubs, buildEmployeesAndRawRecords,
+  ensureEmployeeMasterStubs, buildEmployeesAndRawRecords, buildEmployeeRoster,
 }

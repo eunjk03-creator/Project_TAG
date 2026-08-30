@@ -312,7 +312,7 @@ function extractCapsKeys(rows: Record<string, string>[]): Set<string> {
 
 // ── Main export ───────────────────────────────────────────────────────────
 export function CsvUploader() {
-  const { mergeRawData, deleteRecordsByKeys, clearLiveData, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, isProcessing } = useAttendanceSource()
+  const { mergeRawData, deleteRecordsByKeys, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecords, dbSaveError, isProcessing } = useAttendanceSource()
 
   // CAPS: 복수 파일 지원 (최대 MAX_CAPS)
   const capsDataRefs = useRef<(Record<string, string>[] | null)[]>([null])
@@ -332,20 +332,9 @@ export function CsvUploader() {
   const [pwInput,      setPwInput]      = useState('')
   const [pwError,      setPwError]      = useState<string | null>(null)
   const [pwChecking,   setPwChecking]   = useState(false)
-  // 암호 확인 후 실행할 액션 — 업로드 펼치기/초기화 둘 다 같은 게이트를 공유
-  const pendingActionRef = useRef<'expand' | 'clear' | null>(null)
-
   function handleUploadToggleClick() {
     if (expanded)  { setExpanded(false); return }
     if (unlocked)  { setExpanded(true);  return }
-    pendingActionRef.current = 'expand'
-    setPwError(null)
-    setShowPwPrompt(true)
-  }
-
-  function handleClearClick() {
-    if (unlocked) { void handleClear(); return }
-    pendingActionRef.current = 'clear'
     setPwError(null)
     setShowPwPrompt(true)
   }
@@ -366,10 +355,7 @@ export function CsvUploader() {
         sessionStorage.setItem('tag_upload_unlocked', '1')
         setShowPwPrompt(false)
         setPwInput('')
-        const action = pendingActionRef.current
-        pendingActionRef.current = null
-        if (action === 'clear') void handleClear()
-        else                    setExpanded(true)
+        setExpanded(true)
       } else {
         setPwError('암호가 올바르지 않습니다.')
       }
@@ -515,17 +501,6 @@ export function CsvUploader() {
     }
   }
 
-  // ── Reset ─────────────────────────────────────────────────────────────
-  async function handleClear() {
-    await clearLiveData()
-    capsDataRefs.current = [null]
-    erpDataRefs.current  = [null]
-    setCapsSlots([{ phase: 'idle' }])
-    setErpSlots([{ phase: 'idle' }])
-    setResult(null)
-    setExpanded(true)
-  }
-
   // ── Render ────────────────────────────────────────────────────────────
   return (
     <div className="mx-6 mt-3 mb-1 rounded-xl border border-gray-200 bg-white overflow-hidden shrink-0">
@@ -627,14 +602,6 @@ export function CsvUploader() {
         )}
 
         <div className="ml-auto flex items-center gap-2 shrink-0">
-          {isLiveData && (
-            <button
-              onClick={handleClearClick}
-              className="text-[11px] text-gray-400 hover:text-red-500 transition-colors font-medium"
-            >
-              목업으로 초기화
-            </button>
-          )}
           <button
             onClick={handleUploadToggleClick}
             className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 transition-colors font-medium"
@@ -655,7 +622,7 @@ export function CsvUploader() {
       {showPwPrompt && (
         <div className="border-t border-gray-100 px-4 py-3 bg-gray-50">
           <p className="text-[11px] font-semibold text-gray-600 mb-1.5">
-            {pendingActionRef.current === 'clear' ? '초기화 암호 확인' : '파일 업로드 암호 확인'}
+            파일 업로드 암호 확인
           </p>
           <div className="flex items-center gap-2">
             <input
@@ -677,7 +644,7 @@ export function CsvUploader() {
               {pwChecking ? '확인 중…' : '확인'}
             </button>
             <button
-              onClick={() => { pendingActionRef.current = null; setShowPwPrompt(false); setPwInput(''); setPwError(null) }}
+              onClick={() => { setShowPwPrompt(false); setPwInput(''); setPwError(null) }}
               className="text-xs text-gray-400 hover:text-gray-600 px-1"
             >
               취소

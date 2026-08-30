@@ -12,11 +12,11 @@
  * 이제는 "쓰기 시점에 최신으로 유지"로 책임이 이동했다는 뜻).
  */
 import { prisma }            from '@/lib/prisma'
+import { Prisma }            from '@prisma/client'
 import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
 import { getDayInfo }        from '@/utils/dataParser'
-import { buildEmployeesAndRawRecords } from '@/lib/recomputeFromNormalized'
+import { buildEmployeeRoster } from '@/lib/recomputeFromNormalized'
 import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
-import type { DailyAttendance } from '@prisma/client'
 
 interface AttendanceExtra {
   verificationNote?:   string[]
@@ -30,8 +30,30 @@ interface AttendanceExtra {
   isHolidayWork?:      boolean
 }
 
+/** raw SQL로 조회한 daily_attendance 행 — 컬럼을 camelCase로 alias해서 Prisma 모델과 같은 모양으로 맞춤. */
+interface DailyAttendanceRow {
+  employeeId:       string
+  workDate:         string
+  dayType:          string
+  clockIn:          string | null
+  clockOut:         string | null
+  effectiveClockIn: string | null
+  regularHours:     number
+  overtimeHours:    number
+  nightHours:       number
+  holidayHours:     number
+  erpOtApplied:     boolean
+  leaveType:        string | null
+  erpLeaveAmount:   number | null
+  isUnpaidLeave:    boolean
+  isLeader:         boolean
+  finalStatus:      string
+  flag:             string | null
+  extra:            unknown
+}
+
 /** DailyAttendance row → ProcessedRecord 완전 복원. dayLabel은 저장 안 하므로 재계산(순수 함수). */
-function reassemble(row: DailyAttendance): ProcessedRecord {
+function reassemble(row: DailyAttendanceRow): ProcessedRecord {
   const extra = (row.extra ?? {}) as AttendanceExtra
   const { dayLabel } = getDayInfo(row.workDate)
   return {
@@ -68,10 +90,10 @@ export async function getProcessedRecords(opts?: {
   from?: string
   to?:   string
 }): Promise<{ employees: Employee[]; records: ProcessedRecord[]; finalAttrMap: Map<string, EmployeeAttributeOverrides> }> {
-  // 1. 직원 목록 — caps_daily_logs/erp_applications(정규화 테이블)에서 재구성.
-  // TODO(성능): 이 호출은 daily_attendance 조회에 필요 없는 rawRecords까지 함께 만든다 —
-  // employees만 뽑는 경량 경로(extractEmployees를 distinct 쿼리로 재사용)로 나중에 최적화 가능.
-  const { employees } = await buildEmployeesAndRawRecords()
+  // 1. 직원 목록 — caps_daily_logs에서 직원당 1행만 distinct로 가져와 재구성(경량 경로).
+  // buildEmployeesAndRawRecords()(전체 6만+행 파싱)를 쓰면 daily_attendance 조회엔 필요
+  // 없는 rawRecords/leaveMap/otMap까지 매번 다시 만들어서 훨씬 느리다.
+  const employees = await buildEmployeeRoster()
   if (employees.length === 0) return { employees: [], records: [], finalAttrMap: new Map() }
 
   // 2. 예외규칙 + 직책자 맵
@@ -91,15 +113,26 @@ export async function getProcessedRecords(opts?: {
   )
   const visibleEmployees = employees.filter(e => !resignedExcludedIds.has(e.id))
 
-  // 4. 범위만 SQL로 조회 — 이게 진짜 성능 이득 지점
-  const rows = await prisma.dailyAttendance.findMany({
-    where: (opts?.from || opts?.to) ? {
-      workDate: {
-        ...(opts?.from ? { gte: opts.from } : {}),
-        ...(opts?.to   ? { lte: opts.to }   : {}),
-      },
-    } : undefined,
-  })
+  // 4. 범위만 SQL로 조회 — 이게 진짜 성능 이득 지점. Prisma ORM(findMany)이 6만+ 행을
+  // JS 객체로 매핑하는 데만 6~700ms 오버헤드가 실측돼서(2026-08-30), raw SQL로 직접 조회 —
+  // 같은 데이터를 훨씬 적은 비용으로 가져온다. 컬럼은 camelCase로 alias해서 reassemble()이
+  // Prisma 모델을 받을 때와 동일하게 동작하게 맞춤.
+  const conditions: Prisma.Sql[] = []
+  if (opts?.from) conditions.push(Prisma.sql`work_date >= ${opts.from}`)
+  if (opts?.to)   conditions.push(Prisma.sql`work_date <= ${opts.to}`)
+  const whereClause = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty
+
+  const rows = await prisma.$queryRaw<DailyAttendanceRow[]>(Prisma.sql`
+    SELECT
+      employee_id AS "employeeId", work_date AS "workDate", day_type AS "dayType",
+      clock_in AS "clockIn", clock_out AS "clockOut", effective_clock_in AS "effectiveClockIn",
+      regular_hours AS "regularHours", overtime_hours AS "overtimeHours", night_hours AS "nightHours",
+      holiday_hours AS "holidayHours", erp_ot_applied AS "erpOtApplied", leave_type AS "leaveType",
+      erp_leave_amount AS "erpLeaveAmount", is_unpaid_leave AS "isUnpaidLeave", is_leader AS "isLeader",
+      final_status AS "finalStatus", flag, extra
+    FROM daily_attendance
+    ${whereClause}
+  `)
 
   const records = rows.map(reassemble)
 

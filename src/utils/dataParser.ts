@@ -572,7 +572,7 @@ function buildOtMap(
 
 // ── Employee extraction ───────────────────────────────────────────────────
 
-function extractEmployees(capsData: CapsRow[]): Employee[] {
+export function extractEmployees(capsData: CapsRow[]): Employee[] {
   const seen = new Map<string, Employee>()
 
   for (const row of capsData) {
