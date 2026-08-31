@@ -144,6 +144,12 @@ export interface RawRecord {
    *  → '연차' 1.0) for calculation purposes — this array preserves the original 1+ requests
    *  so the UI can show exactly what was applied for, not just the merged total. */
   leaveCodesDetail?: ErpLeaveType[]
+  /** True when the admin has explicitly overridden this field via the daily-detail edit
+   *  modal (a real "2차 수정", not the original CAPS punch or the offsite auto-estimate).
+   *  processRecord.ts's 외근(Slack) auto clamp only applies to fields WITHOUT this flag —
+   *  once an admin manually sets a time, that exact value is used as-is. */
+  clockInOverridden?:  boolean
+  clockOutOverridden?: boolean
 }
 
 export interface ProcessedRecord extends RawRecord {

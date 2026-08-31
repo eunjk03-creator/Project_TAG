@@ -13,6 +13,7 @@ import type { SavePayload } from '@/components/admin/DailyDetailModal'
 import { AnomalyResolutionModal } from '@/components/admin/AnomalyResolutionModal'
 import type { ResolutionTarget, TimeOverride } from '@/components/admin/AnomalyResolutionModal'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
+import { clockOverrideFields } from '@/utils/attendanceCalc'
 import type { ProcessedRecord, SieveFlag, EditHistoryEntry, Employee, ResolutionData } from '@/types/tag'
 
 // ── Badge taxonomy — synced with dashboard design system ──────────────────
@@ -163,6 +164,7 @@ export default function AnomaliesPage() {
         clockIn:      ov.clockIn,
         clockOut:     ov.clockOut,
         erpOtApplied: ov.erpOtApplied !== null ? ov.erpOtApplied : r.erpOtApplied,
+        ...clockOverrideFields(ov),
       }
     })
   }, [recordOverrides, liveRecords])

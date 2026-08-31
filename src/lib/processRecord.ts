@@ -243,12 +243,17 @@ export function processRecord(
     // 출근 시각 결정
     // AM 반차: CAPS가 기준시 이전이면 실 기록 사용, 이후(지각)이면 기준시로 클램핑
     // AM 반차 미태깅: 기준시(11:00 또는 14:00)를 출근으로 인정 (기존 09:00 대신)
+    // clockIn/clockOut을 관리자가 명시적으로 override한 경우(2차 수정)에는 아래 09~18시
+    // 자동 클램프를 건너뛰고 입력한 시각을 그대로 실제 시각으로 사용한다 — 그렇지 않으면
+    // 외근 자동 추정치가 관리자의 수정을 매번 다시 덮어써버린다.
     const rawInRaw  = r.effectiveClockIn ?? r.clockIn ?? null
-    const effInMins = rawInRaw
-      ? isAMLeave
-        ? Math.min(Math.max(parseTime(rawInRaw), flexStartMins), amLeaveThresholdMins)
-        : Math.min(Math.max(parseTime(rawInRaw), flexStartMins), flexEndMins)
-      : isAMLeave ? amLeaveThresholdMins : flexEndMins
+    const effInMins = (r.clockInOverridden && r.clockIn)
+      ? parseTime(r.clockIn)
+      : rawInRaw
+        ? isAMLeave
+          ? Math.min(Math.max(parseTime(rawInRaw), flexStartMins), amLeaveThresholdMins)
+          : Math.min(Math.max(parseTime(rawInRaw), flexStartMins), flexEndMins)
+        : isAMLeave ? amLeaveThresholdMins : flexEndMins
 
     // 퇴근 시각: 외근이면 18:00까지 근무한 것으로 간주
     // PM 반차: 실 퇴근 그대로 사용 (18:00 floor 제거)
@@ -257,6 +262,7 @@ export function processRecord(
     const actualOutMins = r.clockOut ? parseTime(r.clockOut) : null
     const effOutMins: number = (() => {
       if (actualOutMins !== null) {
+        if (r.clockOutOverridden) return actualOutMins
         return isPMLeave ? actualOutMins : (actualOutMins > stdEndMins ? actualOutMins : stdEndMins)
       }
       if (isPMLeave) {

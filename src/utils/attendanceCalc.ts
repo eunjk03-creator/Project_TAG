@@ -305,6 +305,18 @@ export interface OverridePatch {
   memo?:        string | null
 }
 
+/** admin이 clockIn/clockOut을 명시적으로 override했는지 표시하는 플래그.
+ *  processRecord.ts의 외근(Slack) 자동 클램프(최소 09~18시 보장)는 이 플래그가 없는 필드에만
+ *  적용된다 — 관리자가 실제 시각을 직접 수정하면(2차 수정) 그 값을 그대로 사용한다. */
+export function clockOverrideFields(
+  ov: Pick<OverridePatch, 'clockIn' | 'clockOut'>,
+): { clockInOverridden?: boolean; clockOutOverridden?: boolean } {
+  return {
+    ...(ov.clockIn  != null ? { clockInOverridden:  true } : {}),
+    ...(ov.clockOut != null ? { clockOutOverridden: true } : {}),
+  }
+}
+
 /**
  * 관리자가 수기 입력한 근태(예: 재택근무·연차)인데 원본 CAPS/ERP 행이 아예 없는 경우를 위한
  * 합성 RawRecord 생성. dayType/dayLabel은 호출부가 dataParser.getDayInfo()로 미리 계산해 전달한다
@@ -327,6 +339,7 @@ export function synthesizeOverrideRecord(
     erpOtApplied:     ov.erpOtApplied ?? false,
     verificationNote: [ov.memo ? `수기 입력: ${ov.memo}` : '수기 입력'],
     ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+    ...clockOverrideFields(ov),
   }
 }
 

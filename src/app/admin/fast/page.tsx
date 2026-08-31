@@ -18,7 +18,7 @@ import type { Section } from '@/components/admin/MetricDeepDive'
 import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
 import { HR_THRESHOLDS } from '@/types/tag'
 import { sortByDivisionOrder } from '@/data/orgChart'
-import { leaveTypeOverrideFields } from '@/utils/attendanceCalc'
+import { leaveTypeOverrideFields, clockOverrideFields } from '@/utils/attendanceCalc'
 
 const GRID_PAGE_SIZE = 40
 
@@ -152,6 +152,7 @@ export default function FastDashboard() {
         clockOut:     ov.clockOut,
         erpOtApplied: ov.erpOtApplied !== null ? ov.erpOtApplied : r.erpOtApplied,
         ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+        ...clockOverrideFields(ov),
       }
     })
   }, [recordOverrides, baseRecords])
@@ -180,6 +181,7 @@ export default function FastDashboard() {
           clockOut:     ov.clockOut     ?? r.clockOut,
           erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
           ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+          ...clockOverrideFields(ov),
         } : {}),
       }, policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId))
     })
