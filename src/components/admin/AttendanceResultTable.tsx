@@ -493,7 +493,9 @@ export function AttendanceResultTable({
       // 외근: processRecord.ts(applyOffsiteEntry)가 9~18시 기본/조기출근/지연퇴근 규칙대로 이미
       // effectiveClockIn을 보정해둠 — 원본 태깅 시각(r.clockIn)으로 다시 계산하면, 외근으로 늦게
       // 태깅된 출근시각이 virtualIn+10h 기산점을 밀어버려 연장근로가 0으로 계산되는 버그가 있었음.
-      const effectiveIn        = r.finalStatus === '외근'
+      // 관리자가 clockIn을 명시적으로 override한 경우(휴일근무 등)도 동일한 이유로 원본 r.clockIn을
+      // 08:00 floor로 재클램핑하지 않고 processRecord가 이미 확정한 effectiveClockIn을 그대로 쓴다.
+      const effectiveIn        = (r.finalStatus === '외근' || r.clockInOverridden)
         ? (r.effectiveClockIn ?? r.clockIn)
         : computeEffClockIn(r.clockIn, null, true)
       const clockInMins        = effectiveIn ? parseTimeToMins(effectiveIn) : null
