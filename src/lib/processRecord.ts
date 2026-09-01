@@ -500,7 +500,9 @@ export function processRecord(
   if (dayType !== 'WEEKDAY') {
     if (clockIn && clockOut) {
       const rawInMins = parseTime(clockIn)
-      const inMins    = Math.max(rawInMins, flexStartMins)
+      // 관리자가 clockIn을 명시적으로 override한 경우(2차 수정)에는 flexStart 클램프를
+      // 건너뛰고 입력한 시각을 그대로 사용 — 외근(applyOffsiteEntry)과 동일한 원칙.
+      const inMins    = record.clockInOverridden ? rawInMins : Math.max(rawInMins, flexStartMins)
       const outMins   = parseTime(clockOut)
       const rawElapsed    = outMins - inMins
       const lunchDeducted = outMins > lunchEndMins && inMins < lunchStartMins
