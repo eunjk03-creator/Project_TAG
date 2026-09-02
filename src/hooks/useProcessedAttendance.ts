@@ -6,7 +6,7 @@ import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useSlack } from '@/context/SlackContext'
-import { leaveTypeOverrideFields, synthesizeOverrideRecord } from '@/utils/attendanceCalc'
+import { leaveTypeOverrideFields, synthesizeOverrideRecord, clockOverrideFields } from '@/utils/attendanceCalc'
 import { getDayInfo } from '@/utils/dataParser'
 import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
 
@@ -143,6 +143,7 @@ export function useProcessedAttendance(from: string, to: string): ProcessedAtten
         clockOut:     ov.clockOut,
         erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
         ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+        ...clockOverrideFields(ov),
       }
     })
 
@@ -246,6 +247,7 @@ export function useProcessedAttendance(from: string, to: string): ProcessedAtten
             clockOut:     ov.clockOut     ?? r.clockOut,
             erpOtApplied: ov.erpOtApplied !== null ? (ov.erpOtApplied as boolean) : r.erpOtApplied,
             ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+            ...clockOverrideFields(ov),
           } : {}),
         },
         policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId),

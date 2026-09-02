@@ -16,7 +16,7 @@
  * 여기서 공통 적용해 수정.
  */
 import type { Employee, RawRecord, EmployeeAttributeOverrides, PolicySettings } from '@/types/tag'
-import { leaveTypeOverrideFields, synthesizeOverrideRecord } from '@/utils/attendanceCalc'
+import { leaveTypeOverrideFields, synthesizeOverrideRecord, clockOverrideFields } from '@/utils/attendanceCalc'
 import { getDayInfo } from '@/utils/dataParser'
 
 /** attendance_overrides 테이블 행 — Prisma가 생성하는 정확한 타입 대신 실제 쓰는 필드만 최소 정의 */
@@ -91,6 +91,7 @@ export function buildRecordSet(params: BuildRecordSetParams): BuildRecordSetResu
       erpOtApplied: ov.erpOtApplied !== null ? ov.erpOtApplied : r.erpOtApplied,
       // erpLeaveType 반영 누락 버그 수정 — null=미수정, '없음'=명시적 삭제, 그 외=해당 연차유형으로 교체
       ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+      ...clockOverrideFields(ov),
     }
   })
 

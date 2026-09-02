@@ -305,6 +305,18 @@ export interface OverridePatch {
   memo?:        string | null
 }
 
+/** admin이 clockIn/clockOut을 명시적으로 override했는지 표시하는 플래그.
+ *  processRecord.ts의 외근(Slack) 자동 클램프(최소 09~18시 보장)는 이 플래그가 없는 필드에만
+ *  적용된다 — 관리자가 실제 시각을 직접 수정하면(2차 수정) 그 값을 그대로 사용한다. */
+export function clockOverrideFields(
+  ov: Pick<OverridePatch, 'clockIn' | 'clockOut'>,
+): { clockInOverridden?: boolean; clockOutOverridden?: boolean } {
+  return {
+    ...(ov.clockIn  != null ? { clockInOverridden:  true } : {}),
+    ...(ov.clockOut != null ? { clockOutOverridden: true } : {}),
+  }
+}
+
 /**
  * 관리자가 수기 입력한 근태(예: 재택근무·연차)인데 원본 CAPS/ERP 행이 아예 없는 경우를 위한
  * 합성 RawRecord 생성. dayType/dayLabel은 호출부가 dataParser.getDayInfo()로 미리 계산해 전달한다
@@ -327,6 +339,7 @@ export function synthesizeOverrideRecord(
     erpOtApplied:     ov.erpOtApplied ?? false,
     verificationNote: [ov.memo ? `수기 입력: ${ov.memo}` : '수기 입력'],
     ...(ov.erpLeaveType !== null ? leaveTypeOverrideFields(ov.erpLeaveType) : {}),
+    ...clockOverrideFields(ov),
   }
 }
 
@@ -403,8 +416,11 @@ export function computeRealHoursOt(params: {
   isErpLeaveApproved:  boolean
   erpOtApplied:        boolean | null | undefined
   isLeader?:           boolean
+  /** 관리자가 clockIn을 명시적으로 override한 경우(2차 수정) — true면 아래 08:00 floor를
+   *  건너뛰고 입력한 시각을 그대로 사용한다. processRecord.ts의 동일 원칙과 통일. */
+  clockInOverridden?:  boolean | null
 }): RealHoursOtResult {
-  const { clockIn, clockOut, leaveType, erpLeaveAmount, isUnpaidLeave, isErpLeaveApproved, erpOtApplied, isLeader } = params
+  const { clockIn, clockOut, leaveType, erpLeaveAmount, isUnpaidLeave, isErpLeaveApproved, erpOtApplied, isLeader, clockInOverridden } = params
   const empty = {
     stayMins: 0, realWorkMins: 0, otherMins: 0, otMins: 0, nightMins: 0,
     payOtherH: 0, payOtH: 0, payNightH: 0,
@@ -413,7 +429,7 @@ export function computeRealHoursOt(params: {
   if (!clockIn || !clockOut) return empty
 
   const flexStartMins = 480 // 08:00 — 반차 전용 스냅 제거, 전사 공통 최저 floor만 유지
-  const inMins  = Math.max(parseTimeToMins(clockIn), flexStartMins)
+  const inMins  = clockInOverridden ? parseTimeToMins(clockIn) : Math.max(parseTimeToMins(clockIn), flexStartMins)
   const outMins = parseTimeToMins(clockOut)
   const stayMins = Math.max(0, outMins - inMins)
   const breakMins = compute4141BreakMins(stayMins)
@@ -464,6 +480,7 @@ export function computeRealHoursOtForRecord(r: {
   verificationNote?: string[] | null
   holidayHours?:     number | null
   erpOtApplied?:     boolean | null
+  clockInOverridden?: boolean | null
 }, isLeader = false): RealHoursOtResult {
   const isSlackInjected    = (r.verificationNote ?? []).some(n => n.includes('ERP 미신청'))
   const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
@@ -476,6 +493,7 @@ export function computeRealHoursOtForRecord(r: {
     clockIn: r.clockIn ?? r.effectiveClockIn, clockOut: r.clockOut, leaveType: r.leaveType,
     erpLeaveAmount: r.erpLeaveAmount, isUnpaidLeave: r.isUnpaidLeave,
     isErpLeaveApproved, erpOtApplied: r.erpOtApplied, isLeader,
+    clockInOverridden: r.clockInOverridden,
   })
   if (r.dayType === 'WEEKDAY') return base
   // 휴일근로는 ERP 연장신청 체계 밖 — 구글폼으로 수기 확인하는 별도 프로세스라
