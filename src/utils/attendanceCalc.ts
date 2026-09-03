@@ -377,9 +377,14 @@ export function normalizeLeaveType(
  *   +9h~+10h  → 저녁 (최대 60m)
  * 분단위 연속 계산 — 0/30/60/120 이산값 아님.
  */
-export function compute4141BreakMins(elapsedMins: number): number {
-  const lunch  = Math.min(Math.max(0, elapsedMins - 240), 60)
-  const dinner = Math.min(Math.max(0, elapsedMins - 540), 60)
+export function compute4141BreakMins(
+  elapsedMins: number,
+  lunchThresholdMins = 240,
+  dinnerThresholdMins = 540,
+  capMins = 60,
+): number {
+  const lunch  = Math.min(Math.max(0, elapsedMins - lunchThresholdMins), capMins)
+  const dinner = Math.min(Math.max(0, elapsedMins - dinnerThresholdMins), capMins)
   return lunch + dinner
 }
 
@@ -419,8 +424,27 @@ export function computeRealHoursOt(params: {
   /** 관리자가 clockIn을 명시적으로 override한 경우(2차 수정) — true면 아래 08:00 floor를
    *  건너뛰고 입력한 시각을 그대로 사용한다. processRecord.ts의 동일 원칙과 통일. */
   clockInOverridden?:  boolean | null
+  // ── OT 엔진 통합(2026-09) — 아래는 전부 선택 파라미터, 기본값이 기존 하드코딩과 동일해서
+  // 안 넘기면 예전과 100% 같게 동작한다(그리드/테이블/CSV는 아직 기본값 사용 — 근태규정.md
+  // §3-3, 다음 라운드에서 effectiveStdH 반영 예정). processRecord.ts만 실제 정책/직원별
+  // 예외값을 넘긴다.
+  /** 최소 출근 floor(분) — policy.flexStart 파싱값. 기본 480(08:00) */
+  flexStartMins?:      number
+  /** 표준근무시간(분) — effectiveStdH*60(단축근무/임신부 등 예외 반영). 기본 480(8h) */
+  stdWorkBaseMins?:    number
+  /** 야간 시작(분) — policy.nightStart 파싱값. 기본 1320(22:00) */
+  nightStartMins?:     number
+  /** 야간 종료(분, 1440 이상 = 익일) — policy.nightEnd 파싱값 + 1440. 기본 1800(익일06:00) */
+  nightEndMins?:       number
+  otBreakLunchThresholdMins?: number
+  otBreakDinnerThresholdMins?: number
+  otBreakCapMins?:     number
 }): RealHoursOtResult {
-  const { clockIn, clockOut, leaveType, erpLeaveAmount, isUnpaidLeave, isErpLeaveApproved, erpOtApplied, isLeader, clockInOverridden } = params
+  const {
+    clockIn, clockOut, leaveType, erpLeaveAmount, isUnpaidLeave, isErpLeaveApproved, erpOtApplied, isLeader, clockInOverridden,
+    flexStartMins = 480, stdWorkBaseMins = 480, nightStartMins = 1320, nightEndMins = 1800,
+    otBreakLunchThresholdMins = 240, otBreakDinnerThresholdMins = 540, otBreakCapMins = 60,
+  } = params
   const empty = {
     stayMins: 0, realWorkMins: 0, otherMins: 0, otMins: 0, nightMins: 0,
     payOtherH: 0, payOtH: 0, payNightH: 0,
@@ -428,20 +452,18 @@ export function computeRealHoursOt(params: {
   }
   if (!clockIn || !clockOut) return empty
 
-  const flexStartMins = 480 // 08:00 — 반차 전용 스냅 제거, 전사 공통 최저 floor만 유지
   const inMins  = clockInOverridden ? parseTimeToMins(clockIn) : Math.max(parseTimeToMins(clockIn), flexStartMins)
   const outMins = parseTimeToMins(clockOut)
   const stayMins = Math.max(0, outMins - inMins)
-  const breakMins = compute4141BreakMins(stayMins)
+  const breakMins = compute4141BreakMins(stayMins, otBreakLunchThresholdMins, otBreakDinnerThresholdMins, otBreakCapMins)
   const realWorkMins = Math.max(0, stayMins - breakMins)
 
   const creditMins  = (leaveType && isErpLeaveApproved && !isUnpaidLeave) ? (erpLeaveAmount ?? 0) * 8 * 60 : 0
-  const stdWorkMins = Math.max(0, 480 - creditMins)
-  const otherMins = Math.min(Math.max(0, realWorkMins - stdWorkMins), 480 - stdWorkMins)
-  const otMins    = Math.max(0, realWorkMins - 480)
+  const stdWorkMins = Math.max(0, stdWorkBaseMins - creditMins)
+  const otherMins = Math.min(Math.max(0, realWorkMins - stdWorkMins), stdWorkBaseMins - stdWorkMins)
+  const otMins    = Math.max(0, realWorkMins - stdWorkBaseMins)
 
-  const nightStart = 1320, nightEnd = 1800 // 22:00 ~ 익일 06:00(1440+360)
-  const nightMins = Math.max(0, Math.min(outMins, nightEnd) - Math.max(inMins, nightStart))
+  const nightMins = Math.max(0, Math.min(outMins, nightEndMins) - Math.max(inMins, nightStartMins))
 
   // 급여용 게이트 — 직책자는 OT를 급여 계산에 반영하지 않으므로 항상 잠김(0).
   const payGate = isLeader !== true && erpOtApplied === true

@@ -20,6 +20,37 @@ export interface PolicySettings {
   companyHolidays: CompanyHoliday[]
   /** Slack subteam/usergroup ID → division name. Resolves <subteam^ID> mentions in Slack messages for 동명이인 disambiguation. */
   slackGroupMap?: Record<string, string>
+
+  // ── OT 엔진 통합(2026-09) — computeRealHoursOt 등 계산 엔진이 참조하는 임계값.
+  // 전수조사에서 발견된 하드코딩 리터럴을 정책값으로 승격한 것 — 근태규정.md §3 참고.
+  /** 4/1/4/1 휴게: 점심 구간 시작(경과분), 기존 하드코딩 240분(4h) */
+  otBreakLunchThresholdMins: number
+  /** 4/1/4/1 휴게: 저녁 구간 시작(경과분), 기존 하드코딩 540분(9h) */
+  otBreakDinnerThresholdMins: number
+  /** 4/1/4/1 휴게: 각 구간 상한(분), 기존 하드코딩 60분 */
+  otBreakCapMins: number
+  /** 오전/오후반차 최소체류(분), 기존 하드코딩 240분(4h) */
+  amPmLeaveMinStayMins: number
+  /** 오전반반차 최소체류(분), 기존 하드코딩 360분(6h) */
+  amQuarterLeaveMinStayMins: number
+  /** 오후반반차 최소체류(분), 기존 하드코딩 420분(7h) */
+  pmQuarterLeaveMinStayMins: number
+  /** 근무시간 미달 판정 유예(분) — effectiveStdH*60 + 이 값, 기존 하드코딩 60분(1h) */
+  insufficientGraceMins: number
+  /** 임신부 단축근무 표준시간(시간), 기존 하드코딩 6h (B6) */
+  pregnantReducedStdHours: number
+  /** 임신부 이상치 판정 최소 실근무(분), 기존 하드코딩 360분(6h) (B6) */
+  pregnantAnomalyFloorMins: number
+  /** 10시 출근자 지각기준(HH:MM), 기존 하드코딩 '10:00' */
+  tenAmStarterFlexEnd: string
+  /** 고정스케줄 A 출근시각(HH:MM), 기존 하드코딩 '08:00' */
+  fixedScheduleAStart: string
+  /** 고정스케줄 A 휴게(분), 기존 하드코딩 30분 */
+  fixedScheduleABreakMins: number
+  /** 고정스케줄 B 출근시각(HH:MM), 기존 하드코딩 '08:30' */
+  fixedScheduleBStart: string
+  /** 외근 기본 퇴근시각(HH:MM), 기존 하드코딩 '18:00' */
+  offsiteStdEndTime: string
 }
 
 export const DEFAULT_POLICY: PolicySettings = {
@@ -38,6 +69,21 @@ export const DEFAULT_POLICY: PolicySettings = {
   holidayExcessRate: 2.0,
   companyHolidays: [],
   slackGroupMap: {},
+
+  otBreakLunchThresholdMins: 240,
+  otBreakDinnerThresholdMins: 540,
+  otBreakCapMins: 60,
+  amPmLeaveMinStayMins: 240,
+  amQuarterLeaveMinStayMins: 360,
+  pmQuarterLeaveMinStayMins: 420,
+  insufficientGraceMins: 60,
+  pregnantReducedStdHours: 6,
+  pregnantAnomalyFloorMins: 360,
+  tenAmStarterFlexEnd: '10:00',
+  fixedScheduleAStart: '08:00',
+  fixedScheduleABreakMins: 30,
+  fixedScheduleBStart: '08:30',
+  offsiteStdEndTime: '18:00',
 }
 
 export type DayType = 'WEEKDAY' | 'WEEKEND' | 'HOLIDAY'

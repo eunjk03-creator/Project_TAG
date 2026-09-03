@@ -77,7 +77,7 @@ export function processRecord(
     (!attrOverrides?.pregnantReducedTo   || record.date <= attrOverrides.pregnantReducedTo)
   )
 
-  const effectiveStdH = _pregActive ? 6 :
+  const effectiveStdH = _pregActive ? policy.pregnantReducedStdHours :
     isShortenedHours ? (attrOverrides?.shortenedHoursValue ?? 6) :
     policy.standardHours
   const isTenAMStarter     = attrOverrides?.isTenAMStarter     ?? false
@@ -106,7 +106,7 @@ export function processRecord(
   const policyFlexStartMins = parseTime(policy.flexStart)
   const policyFlexEndMins   = parseTime(policy.flexEnd)
   const flexStartMins       = policyFlexStartMins
-  const flexEndMins         = isTenAMStarter ? 10 * 60 : policyFlexEndMins
+  const flexEndMins         = isTenAMStarter ? parseTime(policy.tenAmStarterFlexEnd) : policyFlexEndMins
   const lunchStartMins = parseTime(policy.lunchStart)
   const lunchEndMins   = parseTime(policy.lunchEnd)
   const nightStartMins = parseTime(policy.nightStart)
@@ -258,7 +258,7 @@ export function processRecord(
     // 퇴근 시각: 외근이면 18:00까지 근무한 것으로 간주
     // PM 반차: 실 퇴근 그대로 사용 (18:00 floor 제거)
     //   미태깅이면 반차 기준 퇴근 시각을 추정하고 verificationNote에 명시
-    const stdEndMins    = parseTime('18:00')
+    const stdEndMins    = parseTime(policy.offsiteStdEndTime)
     const actualOutMins = r.clockOut ? parseTime(r.clockOut) : null
     const effOutMins: number = (() => {
       if (actualOutMins !== null) {
@@ -545,8 +545,8 @@ export function processRecord(
 
   if (isFixedScheduleA && !bypassAllAnomalies) {
     const schedNote  = [...(base.verificationNote ?? []), '특수근무제']
-    const schedIn    = parseTime('08:00')
-    const schedBreak = 30
+    const schedIn    = parseTime(policy.fixedScheduleAStart)
+    const schedBreak = policy.fixedScheduleABreakMins
     const effectiveIn  = Math.max(actualInMins, schedIn)
     const isSchedLate  = actualInMins > schedIn
 
@@ -570,7 +570,7 @@ export function processRecord(
 
   if (isFixedScheduleB && !bypassAllAnomalies) {
     const schedNote  = [...(base.verificationNote ?? []), '특수근무제']
-    const schedIn    = parseTime('08:30')
+    const schedIn    = parseTime(policy.fixedScheduleBStart)
     const schedBreak = 0
     const effectiveIn  = Math.max(actualInMins, schedIn)
     const isSchedLate  = actualInMins > schedIn
@@ -621,11 +621,11 @@ export function processRecord(
   const elapsed         = Math.max(0, rawStayMins - breakMins)
 
   const leaveMinRequired: number | null =
-    effectiveLeaveType === '오전반반차' ? 6 * 60 :
-    effectiveLeaveType === '오전반차'   ? 4 * 60 :
-    effectiveLeaveType === '오후반반차' ? 6 * 60 :
-    effectiveLeaveType === '오후반차'   ? 4 * 60 :
-    effectiveLeaveType === '반차'       ? 4 * 60 :
+    effectiveLeaveType === '오전반반차' ? policy.amQuarterLeaveMinStayMins :
+    effectiveLeaveType === '오전반차'   ? policy.amPmLeaveMinStayMins :
+    effectiveLeaveType === '오후반반차' ? policy.amQuarterLeaveMinStayMins :
+    effectiveLeaveType === '오후반차'   ? policy.amPmLeaveMinStayMins :
+    effectiveLeaveType === '반차'       ? policy.amPmLeaveMinStayMins :
     null
 
   const effectiveTargetMins = leaveMinRequired ?? effectiveStdH * 60
@@ -636,7 +636,9 @@ export function processRecord(
   // 이 기준선이 어차피 더 늦게 잡힘). 휴일근무는 이 분기 자체를 안 타므로(별도 처리) 영향 없음.
   const lunchDeducted  = rawStayMins > 240   // 4-1-4-1 점심 구간(4h) 진입
   const dinnerDeducted = rawStayMins > 540   // 4-1-4-1 저녁 구간(9h) 진입
-  const otBreakMins    = compute4141BreakMins(rawStayMins)
+  const otBreakMins    = compute4141BreakMins(
+    rawStayMins, policy.otBreakLunchThresholdMins, policy.otBreakDinnerThresholdMins, policy.otBreakCapMins,
+  )
   const otNetMins      = Math.max(0, rawStayMins - otBreakMins)
 
   const regularHours   = Math.min(Math.max(elapsed, 0), effectiveTargetMins) / 60
@@ -657,10 +659,10 @@ export function processRecord(
   // 일반(휴가없음)/오전반차/오전반반차 기준선 = effectiveStdH(단축근로·임신기 단축 반영) + 점심 60분.
   // 표준 8h 근무자는 8+1=9h로 기존과 동일 — 단축근로자만 그 값만큼 기준선이 낮아짐.
   const insufficientBaselineMins =
-    effectiveLeaveType === '오후반차'   ? 4 * 60 :
-    effectiveLeaveType === '반차'       ? 4 * 60 :
-    effectiveLeaveType === '오후반반차' ? 7 * 60 :
-    effectiveStdH * 60 + 60
+    effectiveLeaveType === '오후반차'   ? policy.amPmLeaveMinStayMins :
+    effectiveLeaveType === '반차'       ? policy.amPmLeaveMinStayMins :
+    effectiveLeaveType === '오후반반차' ? policy.pmQuarterLeaveMinStayMins :
+    effectiveStdH * 60 + policy.insufficientGraceMins
   const isInsufficientHours = !bypassAllAnomalies && !isEasyLogis &&
     outMins < (virtualInMins + insufficientBaselineMins)
 
@@ -671,9 +673,9 @@ export function processRecord(
 
   if (isPregnantReduced && !bypassAllAnomalies) {
     const leaveEquivMins =
-      effectiveLeaveType === '오전반차' || effectiveLeaveType === '오후반차' ? 4 * 60 : 0
+      effectiveLeaveType === '오전반차' || effectiveLeaveType === '오후반차' ? policy.amPmLeaveMinStayMins : 0
     const effectiveWork = Math.max(0, elapsed) + leaveEquivMins
-    if (effectiveWork < 360) flag = 'ATTENDANCE_ANOMALY'
+    if (effectiveWork < policy.pregnantAnomalyFloorMins) flag = 'ATTENDANCE_ANOMALY'
   }
 
   if (isEasyLogis || bypassAllAnomalies) flag = null
