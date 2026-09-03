@@ -5,7 +5,7 @@ import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
 import { buildRecordSet } from '@/lib/buildRecordSet'
 import { upsertAttendanceRows } from '@/lib/upsertAttendanceRows'
 import { buildEmployeesAndRawRecords } from '@/lib/recomputeFromNormalized'
-import { DEFAULT_POLICY } from '@/types/tag'
+import { getPolicyFromDB } from '@/lib/policyStore'
 import type { PolicySettings, RawRecord, EmployeeAttributeOverrides } from '@/types/tag'
 
 // 한 페이지(offset/limit 슬라이스) 처리 + DB 왕복은 몇 초 내로 끝나야 하므로 여유를 넉넉히
@@ -82,14 +82,17 @@ async function deleteStagingChunks(chunkCount: number): Promise<void> {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { policy: rawPolicy, offset: rawOffset, limit: rawLimit } = body as {
-      policy?: Partial<PolicySettings>
+    const { offset: rawOffset, limit: rawLimit } = body as {
       /** 지정하면 정렬된 전체 레코드 중 [offset, offset+limit) 슬라이스만 처리·upsert하고
        *  반환한다. 생략하면 기존처럼 전체를 한 요청에서 처리(작은 데이터셋/하위호환용). */
       offset?: number
       limit?:  number
     }
-    const policy: PolicySettings = { ...DEFAULT_POLICY, ...(rawPolicy ?? {}) }
+    // 정책은 더 이상 클라이언트 요청 바디를 신뢰하지 않고 DB(policy_config/holidays)에서
+    // 직접 읽는다 — 브라우저별 localStorage에만 있던 회사지정휴일이 세션에 따라 빠지면서
+    // 재계산 때마다 HOLIDAY 판정이 되돌아가던 문제의 근본 수정. 매 페이지 요청마다 다시
+    // 읽지만 policy_config/holidays 둘 다 가벼운 테이블이라 페이지당 비용 증가는 무시 가능.
+    const policy: PolicySettings = await getPolicyFromDB()
     const isPaginated = rawLimit != null
     const offset = rawOffset ?? 0
 

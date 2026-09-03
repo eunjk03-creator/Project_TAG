@@ -19,7 +19,7 @@ import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
 import { buildRecordSet } from '@/lib/buildRecordSet'
 import { upsertAttendanceRows } from '@/lib/upsertAttendanceRows'
 import { parseAttendanceData, extractEmployees, isValidEmpId, normalizeDate, type ParseResult } from '@/utils/dataParser'
-import { DEFAULT_POLICY } from '@/types/tag'
+import { getPolicyFromDB } from '@/lib/policyStore'
 import type { CapsRow, ErpUnifiedRow, Employee } from '@/types/tag'
 
 export interface UpsertCounts {
@@ -284,7 +284,8 @@ async function buildEmployeesAndRawRecords(rawIds?: string[]): Promise<ParseResu
     신청일:    r.submitDate ?? undefined,
   })) as unknown as ErpUnifiedRow[]
 
-  return parseAttendanceData(capsForParser, erpForParser, DEFAULT_POLICY)
+  const policy = await getPolicyFromDB()
+  return parseAttendanceData(capsForParser, erpForParser, policy)
 }
 
 /**
@@ -316,7 +317,10 @@ async function recomputeEmployeesFromNormalizedTables(rawIds: string[]): Promise
   const empty: RecomputeResult = { processedCount: 0, skippedCount: 0, erpOtMatchCount: 0 }
   if (rawIds.filter(Boolean).length === 0) return empty
 
-  const { employees, rawRecords, skippedCount, erpOtMatchCount } = await buildEmployeesAndRawRecords(rawIds)
+  const [{ employees, rawRecords, skippedCount, erpOtMatchCount }, policy] = await Promise.all([
+    buildEmployeesAndRawRecords(rawIds),
+    getPolicyFromDB(),
+  ])
   if (employees.length === 0) return { ...empty, skippedCount, erpOtMatchCount }
 
   const compositeIds = employees.map(e => e.id)
@@ -328,12 +332,12 @@ async function recomputeEmployeesFromNormalizedTables(rawIds: string[]): Promise
   const { finalAttrMap, otExemptIds } = buildFinalAttrMap(employees, dbRules)
 
   const { records: mergedRecords, slackNoteMap } = buildRecordSet({
-    employees, rawRecords, finalAttrMap, overrides, slackExceptions: slackExcs, policy: DEFAULT_POLICY,
+    employees, rawRecords, finalAttrMap, overrides, slackExceptions: slackExcs, policy,
   })
   if (mergedRecords.length === 0) return { ...empty, skippedCount, erpOtMatchCount }
 
   const processed = mergedRecords.map(r =>
-    processRecord(r, DEFAULT_POLICY, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId)),
+    processRecord(r, policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId)),
   )
   await upsertAttendanceRows(processed)
   return { processedCount: processed.length, skippedCount, erpOtMatchCount }
