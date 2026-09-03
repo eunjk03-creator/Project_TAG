@@ -95,7 +95,24 @@ interface IngestResponse {
   erpOtMatchCount: number
 }
 
-async function ingest(caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<{ result: IngestResponse | null; error: string | null }> {
+// 반기 CAPS 파일 하나가 수만 행이라, caps/erp를 한 번의 POST에 통째로 담으면 Vercel
+// 서버리스 요청 본문 제한(~4.5MB)에 걸려 413으로 조용히 실패한다(로컬은 이 제한이 없어서
+// 재현이 안 됐음). caps/erp를 각각 이 크기로 쪼개 순차 요청 — caps 청크 → erp 청크 순서로
+// 보낸다(같은 요청에 둘 다 채우면 최악의 경우 청크 두 개 크기가 합쳐져 다시 초과할 수 있어서
+// 아예 종류별로 분리). 청크마다 영향받은 직원만 증분 재계산되는 기존 ingest 라우트 동작은
+// 그대로라 최종 결과는 동일하고, 같은 직원이 여러 청크에 걸치면 재계산이 중복 실행될 수
+// 있는 정도의 비용만 감수한다.
+const INGEST_CHUNK_SIZE = 3000
+
+function chunkRows<T>(rows: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size))
+  return out
+}
+
+async function postIngestChunk(
+  caps: CapsRow[], erp: ErpUnifiedRow[], label: string,
+): Promise<{ result: IngestResponse | null; error: string | null }> {
   try {
     const res = await fetch('/api/attendance-ingest', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -105,12 +122,45 @@ async function ingest(caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<{ result: 
       const bodyText = await res.text().catch(() => '')
       let msg = bodyText
       try { msg = (JSON.parse(bodyText) as { error?: string }).error ?? bodyText } catch { /* not JSON */ }
-      return { result: null, error: `업로드 실패 (HTTP ${res.status})${msg ? `: ${msg.slice(0, 200)}` : ''}` }
+      return { result: null, error: `업로드 실패 (${label}, HTTP ${res.status})${msg ? `: ${msg.slice(0, 200)}` : ''}` }
     }
     return { result: await res.json() as IngestResponse, error: null }
   } catch (err) {
-    return { result: null, error: `업로드 요청 실패: ${err instanceof Error ? err.message : String(err)}` }
+    return { result: null, error: `업로드 요청 실패 (${label}): ${err instanceof Error ? err.message : String(err)}` }
   }
+}
+
+async function ingest(caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<{ result: IngestResponse | null; error: string | null }> {
+  const capsChunks = chunkRows(caps, INGEST_CHUNK_SIZE)
+  const erpChunks  = chunkRows(erp, INGEST_CHUNK_SIZE)
+  const totalSteps = capsChunks.length + erpChunks.length || 1
+
+  const acc: IngestResponse = { ok: true, affectedEmployees: 0, processedRecords: 0, skippedCount: 0, erpOtMatchCount: 0 }
+  let step = 0
+
+  if (capsChunks.length === 0 && erpChunks.length === 0) {
+    return { result: acc, error: null }
+  }
+
+  for (const part of capsChunks) {
+    step++
+    const { result, error } = await postIngestChunk(part, [], `CAPS ${step}/${totalSteps}`)
+    if (!result) return { result: null, error }
+    acc.processedRecords  += result.processedRecords
+    acc.skippedCount      += result.skippedCount
+    acc.erpOtMatchCount   += result.erpOtMatchCount
+    acc.affectedEmployees  = Math.max(acc.affectedEmployees, result.affectedEmployees)
+  }
+  for (const part of erpChunks) {
+    step++
+    const { result, error } = await postIngestChunk([], part, `ERP ${step}/${totalSteps}`)
+    if (!result) return { result: null, error }
+    acc.processedRecords  += result.processedRecords
+    acc.skippedCount      += result.skippedCount
+    acc.erpOtMatchCount   += result.erpOtMatchCount
+    acc.affectedEmployees  = Math.max(acc.affectedEmployees, result.affectedEmployees)
+  }
+  return { result: acc, error: null }
 }
 
 // 한 페이지당 처리 건수 — /api/compute-attendance가 이 슬라이스만큼만 processRecord()를
@@ -293,19 +343,26 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
   }, [runIngest])
 
   // ── deleteRecordsByKeys: 업로드한 파일 되돌리기 ─────────────────────────
+  // ingest()와 동일한 이유로 청크 분할 — 반기 파일 되돌리기는 키 수만 건이라 한 번에 보내면
+  // 마찬가지로 413에 걸린다.
   const deleteRecordsByKeys = useCallback(async (keys: Set<string>): Promise<{ deletedCount: number }> => {
     setIsProcessing(true)
     setDbSaveError(null)
     try {
-      const res = await fetch('/api/attendance-ingest', {
-        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keys: [...keys] }),
-      })
-      if (!res.ok) {
-        setDbSaveError(`삭제 실패 (HTTP ${res.status})`)
-        return { deletedCount: 0 }
+      const chunks = chunkRows([...keys], INGEST_CHUNK_SIZE)
+      let deletedCount = 0
+      for (const part of chunks) {
+        const res = await fetch('/api/attendance-ingest', {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keys: part }),
+        })
+        if (!res.ok) {
+          setDbSaveError(`삭제 실패 (HTTP ${res.status})`)
+          return { deletedCount }
+        }
+        const part_ = await res.json() as { deletedCount: number }
+        deletedCount += part_.deletedCount
       }
-      const { deletedCount } = await res.json() as { deletedCount: number }
       await refreshFromServer()
       setDataVersion(v => v + 1)
       return { deletedCount }
