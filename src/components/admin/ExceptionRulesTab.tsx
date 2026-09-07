@@ -1,5 +1,5 @@
 'use client'
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import type { Employee } from '@/types/tag'
 import {
   useEmployeeExceptions,
@@ -13,7 +13,7 @@ const RULES_PAGE_SIZE = 20
 
 // ── Config ────────────────────────────────────────────────────────────────
 
-const RULE_BADGE: Record<RuleType, { label: string; cls: string; desc: string }> = {
+export const RULE_BADGE: Record<RuleType, { label: string; cls: string; desc: string }> = {
   manager_exemption: {
     label: '직책자',
     desc:  'Manager Exemption',
@@ -586,6 +586,20 @@ export function ExceptionRulesTab() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [page, setPage] = useState(0)
 
+  // 근무제 이름 조회 — 규칙이 근무제로부터 배정됐으면 출처 배지로 표시(§근무제 관리 참고)
+  const [scheduleNames, setScheduleNames] = useState<Map<string, string>>(new Map())
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/work-schedules')
+      .then(r => r.json())
+      .then((data: { id: string; name: string }[]) => {
+        if (cancelled || !Array.isArray(data)) return
+        setScheduleNames(new Map(data.map(s => [s.id, s.name])))
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
   const existingIds = useMemo(() => new Set(rules.map(r => r.employeeId)), [rules])
 
   const pageCount = Math.max(1, Math.ceil(rules.length / RULES_PAGE_SIZE))
@@ -783,11 +797,16 @@ export function ExceptionRulesTab() {
                       <p className="text-[10px] text-gray-400 mt-0.5">{r.team}</p>
                     </td>
 
-                    {/* Rule type badge */}
+                    {/* Rule type badge (+ 근무제 배정 출처) */}
                     <td className="px-4 py-3 text-center whitespace-nowrap">
                       <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold ${badge.cls}`}>
                         {badge.label}
                       </span>
+                      {r.workScheduleId && scheduleNames.has(r.workScheduleId) && (
+                        <span className="block mt-1 text-[9px] text-[var(--info)] font-semibold">
+                          근무제: {scheduleNames.get(r.workScheduleId)}
+                        </span>
+                      )}
                     </td>
 
                     {/* Controls — vary by rule type */}

@@ -18,13 +18,13 @@ export function DeptSection({
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <span className="w-1 h-[15px] rounded-full shrink-0" style={{ background: accent }} />
-          <span className="text-[13px] font-extrabold text-gray-900">{label}</span>
-          <span className="text-[11px] text-gray-400">{cards.length}개 · {headcount}명</span>
+          <span className="text-[13px] font-extrabold text-[var(--ink)]">{label}</span>
+          <span className="text-[11px] text-[var(--ink-3)]">{cards.length}개 · {headcount}명</span>
         </div>
         <div className="flex items-center gap-4">
           {summary.map(s => (
-            <span key={s.label} className="text-[11px] text-gray-500">
-              {s.label} <span className="font-extrabold text-gray-900 ml-1">{s.value}</span>
+            <span key={s.label} className="text-[11px] text-[var(--ink-3)]">
+              {s.label} <span className="font-extrabold text-[var(--ink)] ml-1">{s.value}</span>
             </span>
           ))}
         </div>

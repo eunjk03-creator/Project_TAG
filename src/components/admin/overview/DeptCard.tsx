@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 
-export type DeptCardSeverity = 'normal' | 'warning' | 'action'
+export type DeptCardSeverity = 'normal' | 'warning' | 'action' | 'nodata'
 
 export interface DeptCardCell {
   label: string
@@ -43,12 +43,17 @@ export interface DeptCardVM {
   footerValue: string
 }
 
-const BAND: Record<DeptCardSeverity, string> = { normal: '#e2e8f0', warning: '#f59e0b', action: '#dc2626' }
-const MAIN_COLOR: Record<DeptCardSeverity, string> = { normal: '#16a34a', warning: '#d97706', action: '#dc2626' }
+// v3 디자인 토큰 매핑 — normal=pos, warning=cau, action=neg (README "색은 의미에 고정" 규칙)
+// nodata(회색)는 "이상 없음"과 별개 상태 — 해당 기간에 원본 데이터 자체가 없어서 판정이
+// 불가능한 경우(예: 아직 업로드 안 된 오늘)에 쓴다. 이걸 action(빨강)으로 두면 실제로는
+// 아무 문제 없는데 "전원 결근"처럼 보이는 오탐이 생긴다(2026-09-07 발견).
+const BAND: Record<DeptCardSeverity, string> = { normal: '#eaebec', warning: '#d17600', action: '#e5342f', nodata: '#eaebec' }
+const MAIN_COLOR: Record<DeptCardSeverity, string> = { normal: '#00b13c', warning: '#d17600', action: '#e5342f', nodata: '#b8bac0' }
 const BADGE: Record<DeptCardSeverity, { bg: string; fg: string; label: string }> = {
-  normal:  { bg: '#f1f5f9', fg: '#94a3b8', label: '정상' },
-  warning: { bg: '#fffbeb', fg: '#b45309', label: '주의' },
-  action:  { bg: '#fef2f6', fg: '#b91c1c', label: '조치 필요' },
+  normal:  { bg: '#f1f2f4', fg: '#8b8d94', label: '정상' },
+  warning: { bg: '#fff4e5', fg: '#d17600', label: '주의' },
+  action:  { bg: '#ffeded', fg: '#e5342f', label: '조치 필요' },
+  nodata:  { bg: '#f1f2f4', fg: '#b8bac0', label: '데이터 없음' },
 }
 
 export function DeptCard({ vm }: { vm: DeptCardVM }) {
@@ -56,13 +61,13 @@ export function DeptCard({ vm }: { vm: DeptCardVM }) {
   const badge = BADGE[vm.severity]
 
   return (
-    <section className="bg-white border border-gray-100 rounded-[13px] overflow-hidden flex flex-col h-[400px] hover:border-gray-300 transition-colors">
+    <section className="bg-white border border-[var(--line)] rounded-[13px] overflow-hidden flex flex-col h-[400px] hover:border-[var(--ink-4)] transition-colors">
       <div className="h-[3px] shrink-0" style={{ background: BAND[vm.severity] }} />
 
       <div className="px-[15px] pt-[13px] pb-3 shrink-0">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[12.5px] font-extrabold text-gray-900 truncate">{vm.division}</span>
-          <span className="text-[10px] text-gray-400 shrink-0">{vm.headcount}명</span>
+          <span className="text-[12.5px] font-extrabold text-[var(--ink)] truncate">{vm.division}</span>
+          <span className="text-[10px] text-[var(--ink-3)] shrink-0">{vm.headcount}명</span>
         </div>
         <div className="flex items-center gap-2 mt-1">
           <span className="text-[25px] font-extrabold tabular-nums leading-none" style={{ color: MAIN_COLOR[vm.severity] }}>
@@ -71,23 +76,23 @@ export function DeptCard({ vm }: { vm: DeptCardVM }) {
           <span className="flex-1" />
           <span className="text-[9.5px] font-bold px-[7px] py-0.5 rounded shrink-0" style={{ background: badge.bg, color: badge.fg }}>{badge.label}</span>
         </div>
-        <div className="relative h-[5px] rounded-full bg-[#eef2f6] mt-2 overflow-hidden">
+        <div className="relative h-[5px] rounded-full bg-[var(--line-2)] mt-2 overflow-hidden">
           <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, vm.progressPct))}%`, background: MAIN_COLOR[vm.severity] }} />
           {vm.progressMarkerPct !== undefined && (
-            <div className="absolute -top-0.5 w-0.5 h-[9px] bg-[#0f172a] rounded-sm" style={{ left: `${Math.max(0, Math.min(100, vm.progressMarkerPct))}%` }} />
+            <div className="absolute -top-0.5 w-0.5 h-[9px] bg-[var(--ink)] rounded-sm" style={{ left: `${Math.max(0, Math.min(100, vm.progressMarkerPct))}%` }} />
           )}
         </div>
         <div className="flex items-center justify-between mt-1">
-          <span className="text-[9.5px] text-gray-400 truncate">{vm.captionLeft}</span>
-          <span className="text-[9.5px] text-gray-400 shrink-0">{vm.captionRight}</span>
+          <span className="text-[9.5px] text-[var(--ink-3)] truncate">{vm.captionLeft}</span>
+          <span className="text-[9.5px] text-[var(--ink-3)] shrink-0">{vm.captionRight}</span>
         </div>
       </div>
 
-      <div className="flex gap-px bg-[#f1f5f9] shrink-0">
+      <div className="flex gap-px bg-[var(--line-2)] shrink-0">
         {vm.cells.map((c, i) => (
           <div key={i} className="flex-1 bg-white py-[7px] text-center">
-            <p className="text-[9px] text-gray-400">{c.label}</p>
-            <p className="text-[13px] font-extrabold tabular-nums" style={{ color: c.value === '—' || c.value === '0' ? '#e2e8f0' : (c.color ?? '#0f172a') }}>
+            <p className="text-[9px] text-[var(--ink-3)]">{c.label}</p>
+            <p className="text-[13px] font-extrabold tabular-nums" style={{ color: c.value === '—' || c.value === '0' ? 'var(--ink-4)' : (c.color ?? 'var(--ink)') }}>
               {c.value}
             </p>
           </div>
@@ -98,8 +103,8 @@ export function DeptCard({ vm }: { vm: DeptCardVM }) {
         onClick={() => setOpen(o => !o)}
         className="flex items-center justify-between px-[15px] py-2 bg-[#fafbfc] shrink-0 text-left"
       >
-        <span className="text-[10px] font-bold text-gray-500">{vm.listHeaderLabel}</span>
-        <span className="flex items-center gap-1 text-[10px] text-gray-400">
+        <span className="text-[10px] font-bold text-[var(--ink-3)]">{vm.listHeaderLabel}</span>
+        <span className="flex items-center gap-1 text-[10px] text-[var(--ink-3)]">
           {vm.listSortLabel}
           <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
         </span>
@@ -108,37 +113,37 @@ export function DeptCard({ vm }: { vm: DeptCardVM }) {
       {open && (
         <div className="flex-1 min-h-0 overflow-y-auto">
           {vm.listColumnHeaders && (
-            <div className="sticky top-0 flex items-center px-[15px] py-1 bg-white text-[9.5px] text-gray-400">
+            <div className="sticky top-0 flex items-center px-[15px] py-1 bg-white text-[9.5px] text-[var(--ink-3)]">
               <span className="flex-1">{vm.listColumnHeaders[0]}</span>
               {vm.listColumnHeaders.slice(1).map((h, i) => <span key={i} className="w-[26px] text-center">{h}</span>)}
             </div>
           )}
           {vm.rows.length === 0 ? (
-            <p className="text-[11px] text-gray-200 text-center py-3">해당 없음</p>
+            <p className="text-[11px] text-[var(--ink-4)] text-center py-3">해당 없음</p>
           ) : vm.rows.map(r => (
-            <div key={r.key} className="flex items-center px-[15px] py-[7px] border-b border-[#f8fafc] last:border-b-0 gap-1.5">
-              <span className="text-[11px] font-bold text-gray-800 truncate">{r.name}</span>
+            <div key={r.key} className="flex items-center px-[15px] py-[7px] border-b border-[var(--line-2)] last:border-b-0 gap-1.5">
+              <span className="text-[11px] font-bold text-[var(--ink)] truncate">{r.name}</span>
               {r.tag && (
                 <span className="text-[9.5px] font-semibold px-1 rounded shrink-0" style={{ background: r.tag.bg, color: r.tag.fg }}>{r.tag.text}</span>
               )}
               <span className="flex-1" />
               {r.cols ? (
                 r.cols.map((v, i) => (
-                  <span key={i} className="w-[26px] text-center text-[11px] font-extrabold tabular-nums" style={{ color: !v || v === '—' ? '#e2e8f0' : undefined }}>
+                  <span key={i} className="w-[26px] text-center text-[11px] font-extrabold tabular-nums" style={{ color: !v || v === '—' ? 'var(--ink-4)' : undefined }}>
                     {v || '—'}
                   </span>
                 ))
               ) : (
-                <span className={`text-[10.5px] font-bold tabular-nums shrink-0 ${r.valueRed ? 'text-red-600' : 'text-gray-600'}`}>{r.value}</span>
+                <span className={`text-[10.5px] font-bold tabular-nums shrink-0 ${r.valueRed ? 'text-[var(--neg)]' : 'text-[var(--ink-2)]'}`}>{r.value}</span>
               )}
             </div>
           ))}
         </div>
       )}
 
-      <div className="mt-auto flex items-center justify-between px-[15px] py-2 bg-[#fafbfc] border-t border-[#f1f5f9] shrink-0">
-        <span className="text-[10px] text-gray-400">{vm.footerLabel}</span>
-        <span className="text-[10.5px] font-extrabold text-gray-700">{vm.footerValue}</span>
+      <div className="mt-auto flex items-center justify-between px-[15px] py-2 bg-[#fafbfc] border-t border-[var(--line-2)] shrink-0">
+        <span className="text-[10px] text-[var(--ink-3)]">{vm.footerLabel}</span>
+        <span className="text-[10.5px] font-extrabold text-[var(--ink-2)]">{vm.footerValue}</span>
       </div>
     </section>
   )

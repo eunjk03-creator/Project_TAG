@@ -27,8 +27,11 @@ export interface KpiTileVM {
   onClick?: () => void
 }
 
+// v3 디자인 토큰(admin-v3.css)으로 재스킨 — 카드 구조(다크 메인 타일/breakdown3/dotted
+// subRows)는 .kc보다 정보 밀도가 높아서 그대로 두고, 색상만 --dark/--ink/--pos/--neg/--cau
+// 토큰으로 교체.
 const TONE_DARK: Record<NonNullable<KpiSubRow['tone']>, string> = {
-  neutral: '#e2e8f0', negative: '#fca5a5', positive: '#86efac',
+  neutral: 'var(--ink-4)', negative: 'var(--neg)', positive: 'var(--pos)',
 }
 
 function Tile({ vm }: { vm: KpiTileVM }) {
@@ -37,27 +40,27 @@ function Tile({ vm }: { vm: KpiTileVM }) {
     <button
       onClick={vm.onClick}
       disabled={!vm.onClick}
-      className={`text-left rounded-[13px] border px-[18px] pt-[15px] pb-4 flex flex-col gap-[9px] transition-colors ${
-        dark ? 'bg-[#0f172a] border-[#0f172a]' : 'bg-white border-[#e8ecf1] hover:border-gray-300'
+      className={`text-left rounded-xl border px-[18px] pt-[15px] pb-4 flex flex-col gap-[9px] transition-colors ${
+        dark ? 'bg-[var(--dark)] border-[var(--dark)]' : 'bg-white border-[var(--line)] hover:border-[var(--ink-4)]'
       } ${vm.onClick ? 'cursor-pointer' : 'cursor-default'}`}
     >
-      <p className={`text-[11px] font-bold flex items-center gap-1.5 ${dark ? 'text-[#64748b]' : 'text-gray-400'}`}>
+      <p className={`text-[11px] font-bold flex items-center gap-1.5 ${dark ? 'text-[var(--ink-3)]' : 'text-[var(--ink-3)]'}`}>
         {vm.label}
         {dark && (
-          <span className="text-[8.5px] font-extrabold px-1.5 py-px rounded tracking-wide" style={{ background: '#facc15', color: '#0f172a' }}>
+          <span className="text-[8.5px] font-extrabold px-1.5 py-px rounded tracking-wide bg-[var(--cau)] text-white">
             메인 데이터
           </span>
         )}
       </p>
-      <p className={`text-[30px] font-extrabold tabular-nums leading-none ${dark ? 'text-white' : 'text-gray-900'}`}>
-        {vm.value}{vm.unit && <span className="text-[13px] font-semibold text-gray-400 ml-1">{vm.unit}</span>}
+      <p className={`text-[30px] font-extrabold tabular-nums leading-none ${dark ? 'text-white' : 'text-[var(--ink)]'}`}>
+        {vm.value}{vm.unit && <span className="text-[13px] font-semibold text-[var(--ink-3)] ml-1">{vm.unit}</span>}
       </p>
 
       {vm.breakdown3 ? (
-        <div className="grid grid-cols-3 gap-px bg-[#eef2f6] rounded-[10px] overflow-hidden mt-0.5">
+        <div className="grid grid-cols-3 gap-px bg-[var(--line)] rounded-[10px] overflow-hidden mt-0.5">
           {vm.breakdown3.map(b => (
             <div key={b.label} className="bg-white py-[9px] text-center">
-              <p className="text-[10px] text-gray-400">{b.label}</p>
+              <p className="text-[10px] text-[var(--ink-3)]">{b.label}</p>
               <p className="text-[20px] font-extrabold tabular-nums" style={{ color: b.color }}>{b.value}</p>
             </div>
           ))}
@@ -66,11 +69,11 @@ function Tile({ vm }: { vm: KpiTileVM }) {
         <div className="grid grid-cols-2 gap-x-[18px] gap-y-1">
           {vm.subRows.map(row => (
             <div key={row.key} className="flex items-center gap-1 min-w-0">
-              <span className={`text-[11px] whitespace-nowrap ${dark ? 'text-[#64748b]' : 'text-gray-400'}`}>{row.key}</span>
-              <span className={`flex-1 border-b ${dark ? 'border-dotted border-[#334155]' : 'border-dotted border-[#e8ecf1]'} translate-y-[-2px]`} />
+              <span className={`text-[11px] whitespace-nowrap ${dark ? 'text-[var(--ink-3)]' : 'text-[var(--ink-3)]'}`}>{row.key}</span>
+              <span className={`flex-1 border-b border-dotted ${dark ? 'border-[var(--ink-2)]' : 'border-[var(--line)]'} translate-y-[-2px]`} />
               <span
                 className="text-[11px] font-extrabold whitespace-nowrap"
-                style={{ color: dark ? TONE_DARK[row.tone ?? 'neutral'] : '#0f172a' }}
+                style={{ color: dark ? TONE_DARK[row.tone ?? 'neutral'] : 'var(--ink)' }}
               >
                 {row.value}
               </span>
@@ -79,7 +82,7 @@ function Tile({ vm }: { vm: KpiTileVM }) {
         </div>
       ) : null}
 
-      {vm.footnote && <p className={`text-[10.5px] ${dark ? 'text-[#94a3b8]' : 'text-gray-400'}`}>{vm.footnote}</p>}
+      {vm.footnote && <p className={`text-[10.5px] ${dark ? 'text-[var(--ink-4)]' : 'text-[var(--ink-3)]'}`}>{vm.footnote}</p>}
     </button>
   )
 }

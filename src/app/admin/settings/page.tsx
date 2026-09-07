@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { DEFAULT_POLICY, type PolicySettings } from '@/types/tag'
 import { usePolicy } from '@/context/PolicyContext'
 import { ExceptionRulesTab } from '@/components/admin/ExceptionRulesTab'
+import { WorkSchedulesTab } from '@/components/admin/WorkSchedulesTab'
 import { LeaveAdjustmentsTab } from '@/components/admin/LeaveAdjustmentsTab'
 import { SlackIntegrationTab } from '@/components/admin/SlackIntegrationTab'
 import { OrgSyncTab } from '@/components/admin/OrgSyncTab'
@@ -23,20 +24,6 @@ interface PolicyCat {
   id:     string
   label:  string
   fields: FieldDef[]
-}
-
-interface GroupTemplate {
-  id:             string
-  name:           string    // English
-  nameKo:         string    // Korean badge
-  desc:           string
-  badgeCls:       string    // chip colour classes
-  ringCls:        string    // card border accent
-  coreStart:      string    // HH:MM — earliest / snap-to
-  coreEnd:        string    // HH:MM — late threshold
-  baseHours:      number
-  capsException:  boolean | null   // null = feature N/A for this group
-  members:        string           // comma-separated dept names
 }
 
 // ── Policy categories ─────────────────────────────────────────────────────
@@ -61,6 +48,7 @@ const POLICY_CATS: PolicyCat[] = [
       { key: 'nightStart',         label: '야간 근무 시작',   desc: '이 시각부터 야간 가산 적용', type: 'time' },
       { key: 'nightEnd',           label: '야간 근무 종료',   desc: '야간 가산 종료 시각 (익일 기준)', type: 'time' },
       { key: 'nightRate',          label: '야간 추가 가산율', desc: 'OT 위에 추가 적용되는 야간 배율', type: 'number', unit: '×', step: 0.1 },
+      { key: 'avgHourlyWage',      label: '평균 시급',        desc: '경영진 현황의 초과근무 비용 환산에 사용 (0이면 미설정으로 취급, 금액 표시 안 함)', type: 'number', unit: '원' },
     ],
   },
   {
@@ -72,207 +60,6 @@ const POLICY_CATS: PolicyCat[] = [
   },
   { id: 'system', label: '시스템 관리', fields: [] },
 ]
-
-// ── Group template defaults ───────────────────────────────────────────────
-
-const DEFAULT_GROUPS: GroupTemplate[] = [
-  {
-    id: 'standard', name: 'Standard', nameKo: '표준 그룹',
-    desc: '일반 본부·팀 기본 적용 그룹 (전사 기본값)',
-    badgeCls: 'bg-blue-100 text-blue-700',
-    ringCls:  'border-blue-200',
-    coreStart: '08:00', coreEnd: '09:00', baseHours: 8,
-    capsException: null,
-    members: '개발본부, 경영지원본부, 마케팅본부',
-  },
-]
-
-// ── Toggle switch ─────────────────────────────────────────────────────────
-
-function Toggle({
-  on,
-  onChange,
-  disabled = false,
-}: {
-  on: boolean
-  onChange: (v: boolean) => void
-  disabled?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      disabled={disabled}
-      onClick={() => !disabled && onChange(!on)}
-      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors
-        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500
-        ${disabled ? 'cursor-default' : 'cursor-pointer'}
-        ${on ? 'bg-blue-600' : 'bg-gray-200'}`}
-    >
-      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform
-        ${on ? 'translate-x-[18px]' : 'translate-x-[3px]'}`}
-      />
-    </button>
-  )
-}
-
-// ── Group Template Card ───────────────────────────────────────────────────
-
-function GroupCard({
-  group,
-  editing,
-  draft,
-  onEdit,
-  onCancel,
-  onSave,
-  onPatch,
-  onToggleCaps,
-}: {
-  group:         GroupTemplate
-  editing:       boolean
-  draft:         GroupTemplate | null
-  onEdit:        () => void
-  onCancel:      () => void
-  onSave:        () => void
-  onPatch:       (p: Partial<GroupTemplate>) => void
-  onToggleCaps:  (v: boolean) => void   // live toggle, no edit mode required
-}) {
-  const g = editing && draft ? draft : group
-  const rangeLabel = g.coreStart === g.coreEnd ? g.coreStart : `${g.coreStart} ~ ${g.coreEnd}`
-
-  return (
-    <div className={`bg-white rounded-xl border ${group.ringCls} p-5 transition-shadow hover:shadow-sm`}>
-
-      {/* ── Card header ── */}
-      <div className="flex items-center justify-between mb-3 gap-3">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className={`shrink-0 px-2 py-0.5 text-[11px] font-bold rounded-md ${group.badgeCls}`}>
-            {group.nameKo}
-          </span>
-          <span className="text-xs text-gray-400 font-medium truncate">{group.name}</span>
-        </div>
-        {editing ? (
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              onClick={onCancel}
-              className="px-2.5 py-1 text-xs rounded-lg border border-gray-200 text-gray-500
-                hover:bg-gray-50 transition-colors"
-            >
-              취소
-            </button>
-            <button
-              onClick={onSave}
-              className="px-2.5 py-1 text-xs rounded-lg bg-blue-600 text-white font-medium
-                hover:bg-blue-700 transition-colors"
-            >
-              저장
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={onEdit}
-            className="shrink-0 px-2.5 py-1 text-xs rounded-lg border border-gray-200 text-gray-600
-              hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/60 transition-all"
-          >
-            편집
-          </button>
-        )}
-      </div>
-
-      <p className="text-xs text-gray-500 mb-4 leading-relaxed">{group.desc}</p>
-
-      {/* ── Properties ── */}
-      <div className="space-y-3">
-
-        {/* Core commute window */}
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-xs font-medium text-gray-600 shrink-0">핵심 출근 시간</span>
-          {editing && draft ? (
-            <div className="flex items-center gap-1.5">
-              <input
-                type="time"
-                value={draft.coreStart}
-                onChange={e => onPatch({ coreStart: e.target.value })}
-                className="w-28 px-2 py-1 text-xs border border-gray-200 rounded-lg
-                  focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <span className="text-gray-400 text-xs">~</span>
-              <input
-                type="time"
-                value={draft.coreEnd}
-                onChange={e => onPatch({ coreEnd: e.target.value })}
-                className="w-28 px-2 py-1 text-xs border border-gray-200 rounded-lg
-                  focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          ) : (
-            <span className="text-xs font-semibold text-gray-800 tabular-nums">{rangeLabel}</span>
-          )}
-        </div>
-
-        {/* Base hours */}
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-xs font-medium text-gray-600 shrink-0">소정 근무시간</span>
-          {editing && draft ? (
-            <div className="flex items-center gap-1.5">
-              <input
-                type="number"
-                min={1} max={12}
-                value={draft.baseHours}
-                onChange={e => onPatch({ baseHours: Number(e.target.value) })}
-                className="w-16 px-2 py-1 text-xs border border-gray-200 rounded-lg
-                  focus:outline-none focus:ring-2 focus:ring-blue-500 text-right"
-              />
-              <span className="text-xs text-gray-400">h</span>
-            </div>
-          ) : (
-            <span className="text-xs font-semibold text-gray-800">{g.baseHours} 시간</span>
-          )}
-        </div>
-
-        {/* CAPS tagging exception — rendered only for groups where it's applicable */}
-        {group.capsException !== null && (
-          <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <span className="text-xs font-medium text-gray-600">CAPS 태깅 예외</span>
-              <span className="ml-1.5 text-[10px] text-gray-400">출퇴근 태깅 면제</span>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <Toggle
-                on={g.capsException ?? false}
-                onChange={editing && draft
-                  ? v => onPatch({ capsException: v })
-                  : onToggleCaps
-                }
-              />
-              <span className={`text-[10px] font-bold w-5 ${g.capsException ? 'text-blue-600' : 'text-gray-400'}`}>
-                {g.capsException ? 'ON' : 'OFF'}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Applied departments */}
-        <div className="flex items-start justify-between gap-4">
-          <span className="text-xs font-medium text-gray-600 shrink-0 pt-0.5">적용 부서</span>
-          {editing && draft ? (
-            <input
-              type="text"
-              value={draft.members}
-              onChange={e => onPatch({ members: e.target.value })}
-              className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg
-                focus:outline-none focus:ring-2 focus:ring-blue-500 text-right min-w-0"
-            />
-          ) : (
-            <span className="text-xs text-gray-500 text-right leading-relaxed">{g.members}</span>
-          )}
-        </div>
-
-      </div>
-    </div>
-  )
-}
 
 // ── Placeholder view (tabs 2 & 3) ─────────────────────────────────────────
 
@@ -294,9 +81,6 @@ export default function SettingsPage() {
   const [policyDraft, setPolicyDraft] = useState<PolicySettings>({ ...policy })
   const [saved,       setSaved]       = useState(false)
   const [activeId,    setActiveId]    = useState('groups')
-  const [groups,      setGroups]      = useState<GroupTemplate[]>(DEFAULT_GROUPS)
-  const [editingId,   setEditingId]   = useState<string | null>(null)
-  const [groupDraft,  setGroupDraft]  = useState<GroupTemplate | null>(null)
 
   // ── Company holidays ──
   const [holDate,  setHolDate]  = useState('')
@@ -326,21 +110,6 @@ export default function SettingsPage() {
   }
   function handleSavePolicy()  { setPolicy(policyDraft); setSaved(true) }
   function handleResetPolicy() { setPolicyDraft({ ...DEFAULT_POLICY }); setSaved(false) }
-
-  // ── Group handlers ──
-  function startEdit(g: GroupTemplate) { setEditingId(g.id); setGroupDraft({ ...g }) }
-  function cancelEdit()                { setEditingId(null); setGroupDraft(null) }
-  function saveEdit() {
-    if (!groupDraft) return
-    setGroups(gs => gs.map(g => g.id === groupDraft.id ? groupDraft : g))
-    setEditingId(null); setGroupDraft(null)
-  }
-  function patchDraft(patch: Partial<GroupTemplate>) {
-    setGroupDraft(prev => prev ? { ...prev, ...patch } : prev)
-  }
-  function toggleCaps(id: string, v: boolean) {
-    setGroups(gs => gs.map(g => g.id === id ? { ...g, capsException: v } : g))
-  }
 
   return (
     <div className="h-full flex flex-col">
@@ -384,7 +153,7 @@ export default function SettingsPage() {
             근무 그룹 관리
           </p>
           {[
-            { id: 'groups',     label: '그룹 템플릿' },
+            { id: 'groups',     label: '근무제 관리' },
             { id: 'exceptions', label: '예외 규칙'   },
             { id: 'leave',      label: '연차 조정'   },
             { id: 'holidays',   label: '전사휴무'    },
@@ -427,33 +196,8 @@ export default function SettingsPage() {
         {/* Content */}
         <div className="flex-1 overflow-auto p-6">
 
-          {/* ─── Tab: Group Templates ─── */}
-          {activeId === 'groups' && (
-            <div>
-              <div className="mb-5">
-                <h2 className="text-base font-semibold text-gray-800">그룹 템플릿</h2>
-                <p className="text-xs text-gray-400 mt-1">
-                  부서·팀별 근무 규칙을 그룹으로 관리합니다.
-                  카드의 <strong className="text-gray-600 font-semibold">편집</strong> 버튼을 눌러 시간 및 조건을 수정하세요.
-                </p>
-              </div>
-              <div className="space-y-4 max-w-2xl">
-                {groups.map(g => (
-                  <GroupCard
-                    key={g.id}
-                    group={g}
-                    editing={editingId === g.id}
-                    draft={editingId === g.id ? groupDraft : null}
-                    onEdit={()  => startEdit(g)}
-                    onCancel={cancelEdit}
-                    onSave={saveEdit}
-                    onPatch={patchDraft}
-                    onToggleCaps={v => toggleCaps(g.id, v)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+          {/* ─── Tab: Work Schedules (근무제 관리) ─── */}
+          {activeId === 'groups' && <WorkSchedulesTab />}
 
           {/* ─── Tab: Exception Rules ─── */}
           {activeId === 'exceptions' && <ExceptionRulesTab />}

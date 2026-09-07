@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildProductivityReportBuffer } from '@/utils/productivityReportExcel'
 import { getProcessedRecords }           from '@/lib/getProcessedRecords'
+import { prisma } from '@/lib/prisma'
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,6 +35,10 @@ export async function POST(req: NextRequest) {
     const fromLabel = (from ?? filteredRecords.map(r => r.date).sort()[0]         ?? '').replace(/-/g, '').slice(2)
     const toLabel   = (to   ?? [...filteredRecords.map(r => r.date)].sort().at(-1) ?? '').replace(/-/g, '').slice(2)
     const filename  = encodeURIComponent(`${deptLabel} 근로시간활용현황_${fromLabel}-${toLabel}.xlsx`)
+
+    prisma.exportHistory.create({
+      data: { reportType: 'productivity-report', format: 'xlsx', dept: dept ?? null, dateFrom: from ?? '', dateTo: to ?? '' },
+    }).catch(err => console.error('[productivity-report] export history 기록 실패', err))
 
     return new NextResponse(buffer as unknown as BodyInit, {
       headers: {

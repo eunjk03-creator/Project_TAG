@@ -20,6 +20,7 @@ export async function PATCH(
     if (body.shortenedHours !== undefined) data.shortenedHours = body.shortenedHours
     if (body.validFrom      !== undefined) data.validFrom      = body.validFrom
     if (body.validTo        !== undefined) data.validTo        = body.validTo
+    if (body.workScheduleId !== undefined) data.workScheduleId = body.workScheduleId
 
     // employeeId 자체가 바뀔 수도 있는 드문 케이스까지 대비해 수정 전 소유자도 기억해둔다.
     const before = await prisma.exceptionRule.findUnique({ where: { id }, select: { employeeId: true } })

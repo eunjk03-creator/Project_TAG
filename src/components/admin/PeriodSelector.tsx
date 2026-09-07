@@ -7,31 +7,33 @@ const GRANULARITIES: PeriodGranularity[] = ['day', 'week', 'month']
 export function PeriodSelector({ period }: { period: PeriodRange }) {
   return (
     <div className="flex items-center gap-2">
-      <div className="flex bg-gray-100 rounded-lg p-0.5">
+      {/* v3 .pillseg 톤으로 재스킨(admin-v3.css) — 조직도 페이지와 공용 컴포넌트라 여기 색만
+          바뀌면 그쪽도 자연히 같이 반영됨(이번 라운드에서 조직도 페이지 자체는 안 건드림). */}
+      <div className="flex border border-[var(--line)] rounded-lg overflow-hidden">
         {GRANULARITIES.map(g => (
           <button
             key={g}
             onClick={() => period.setGranularity(g)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              period.granularity === g ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
+              period.granularity === g ? 'bg-[var(--line-2)] text-[var(--ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink-2)]'
             }`}
           >
             {g === 'day' ? '일' : g === 'week' ? '주' : '월'}
           </button>
         ))}
       </div>
-      <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-lg px-1">
-        <button onClick={() => period.shift(-1)} className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-50">
+      <div className="flex items-center gap-1 bg-white border border-[var(--line)] rounded-lg px-1">
+        <button onClick={() => period.shift(-1)} className="w-7 h-7 flex items-center justify-center text-[var(--ink-3)] hover:text-[var(--ink)] rounded-md hover:bg-[var(--line-2)]">
           ‹
         </button>
-        <span className="text-xs font-medium text-gray-700 px-1.5 min-w-[120px] text-center tabular-nums">{period.label}</span>
-        <button onClick={() => period.shift(1)} className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-50">
+        <span className="text-xs font-medium text-[var(--ink-2)] px-1.5 min-w-[120px] text-center tabular-nums">{period.label}</span>
+        <button onClick={() => period.shift(1)} className="w-7 h-7 flex items-center justify-center text-[var(--ink-3)] hover:text-[var(--ink)] rounded-md hover:bg-[var(--line-2)]">
           ›
         </button>
       </div>
       <button
         onClick={period.goToday}
-        className="px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+        className="px-3 py-1.5 text-xs font-semibold text-[var(--ink-2)] border border-[var(--line)] rounded-lg hover:bg-[var(--line-2)] transition-colors"
       >
         오늘
       </button>

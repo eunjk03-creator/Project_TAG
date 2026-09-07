@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
         shortenedHours: body.shortenedHours ?? 0,
         validFrom:      body.validFrom      ?? '',
         validTo:        body.validTo        ?? '',
+        workScheduleId: body.workScheduleId ?? null,
       },
     })
 

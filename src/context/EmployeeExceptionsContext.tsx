@@ -43,6 +43,8 @@ export interface ExceptionRule {
   shortenedHours: number
   validFrom:      string
   validTo:        string
+  /** 이 규칙이 근무제(WorkSchedule)로부터 배정된 것이면 그 근무제 id — 개별 예외규칙이면 null/undefined */
+  workScheduleId?: string | null
 }
 
 // Prisma row shape → ExceptionRule (Prisma returns camelCase)
@@ -59,6 +61,7 @@ function fromRow(row: Record<string, unknown>): ExceptionRule {
     shortenedHours: Number(row.shortenedHours ?? 0),
     validFrom:      String(row.validFrom      ?? ''),
     validTo:        String(row.validTo        ?? ''),
+    workScheduleId: row.workScheduleId != null ? String(row.workScheduleId) : null,
   }
 }
 

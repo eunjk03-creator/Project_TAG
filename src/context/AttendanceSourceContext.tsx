@@ -25,8 +25,8 @@ interface AttendanceSourceContextValue {
   isProcessing:       boolean
   lastUploadedAt:     string | null
   dbSaveError:        string | null
-  setRawData:            (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<IngestSummary>
-  mergeRawData:          (caps: CapsRow[], erp: ErpUnifiedRow[]) => Promise<IngestSummary>
+  setRawData:            (caps: CapsRow[], erp: ErpUnifiedRow[], onProgress?: (step: number, total: number) => void) => Promise<IngestSummary>
+  mergeRawData:          (caps: CapsRow[], erp: ErpUnifiedRow[], onProgress?: (step: number, total: number) => void) => Promise<IngestSummary>
   deleteRecordsByKeys:   (keys: Set<string>) => Promise<{ deletedCount: number }>
   recomputeProcessed:    () => Promise<void>
 }
@@ -130,7 +130,10 @@ async function postIngestChunk(
   }
 }
 
-async function ingest(caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<{ result: IngestResponse | null; error: string | null }> {
+async function ingest(
+  caps: CapsRow[], erp: ErpUnifiedRow[],
+  onProgress?: (step: number, total: number) => void,
+): Promise<{ result: IngestResponse | null; error: string | null }> {
   const capsChunks = chunkRows(caps, INGEST_CHUNK_SIZE)
   const erpChunks  = chunkRows(erp, INGEST_CHUNK_SIZE)
   const totalSteps = capsChunks.length + erpChunks.length || 1
@@ -150,6 +153,7 @@ async function ingest(caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<{ result: 
     acc.skippedCount      += result.skippedCount
     acc.erpOtMatchCount   += result.erpOtMatchCount
     acc.affectedEmployees  = Math.max(acc.affectedEmployees, result.affectedEmployees)
+    onProgress?.(step, totalSteps)
   }
   for (const part of erpChunks) {
     step++
@@ -159,6 +163,7 @@ async function ingest(caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<{ result: 
     acc.skippedCount      += result.skippedCount
     acc.erpOtMatchCount   += result.erpOtMatchCount
     acc.affectedEmployees  = Math.max(acc.affectedEmployees, result.affectedEmployees)
+    onProgress?.(step, totalSteps)
   }
   return { result: acc, error: null }
 }
@@ -273,10 +278,22 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
   }, [refreshFromServer])
 
   // ── 정책 변경 시 자동 전체 재계산 (예: 공휴일 추가) ─────────────────────
-  const mountedRef = useRef(false)
+  // PolicyContext가 마운트 시 localStorage 캐시로 먼저 렌더한 뒤 DB에서 받아온 값으로
+  // 한 번 더 setPolicyState를 호출하는데, 내용이 그대로여도 매번 "새 객체 참조"라 이 effect가
+  // [policy] 참조 변경만 보고 매 새로고침마다 전체 재계산을 돌리고 있었다(2026-09-07 발견 —
+  // 업로드는 이미 attendance-ingest에서 DB 안에서 증분 재계산되므로 이 자동 재계산은 "실제로
+  // 정책 내용이 바뀐 경우"에만 필요). 내용 비교로 진짜 변경일 때만 돌리도록 수정.
+  const mountedRef    = useRef(false)
+  const prevPolicyRef = useRef<PolicySettings | null>(null)
   useEffect(() => {
-    if (!mountedRef.current) { mountedRef.current = true; return }
-    if (!isLiveData) return
+    if (!mountedRef.current) {
+      mountedRef.current = true
+      prevPolicyRef.current = policy
+      return
+    }
+    const changed = JSON.stringify(prevPolicyRef.current) !== JSON.stringify(policy)
+    prevPolicyRef.current = policy
+    if (!changed || !isLiveData) return
 
     setIsProcessing(true)
     apiRecomputeAll(policy)
@@ -312,11 +329,12 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
   // 호출부가 없어(레거시) mergeRawData와 동일하게 동작해도 무방.
   const runIngest = useCallback(async (
     caps: CapsRow[], erp: ErpUnifiedRow[],
+    onProgress?: (step: number, total: number) => void,
   ): Promise<IngestSummary> => {
     setIsProcessing(true)
     setDbSaveError(null)
     try {
-      const { result, error } = await ingest(caps, erp)
+      const { result, error } = await ingest(caps, erp, onProgress)
       if (!result) {
         setDbSaveError(error ?? '업로드 처리에 실패했습니다.')
         return { employeeCount: 0, affectedCount: 0, skippedCount: 0, erpOtMatchCount: 0 }
@@ -334,12 +352,16 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
     }
   }, [refreshFromServer, liveEmployees])
 
-  const setRawData = useCallback(async (caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<IngestSummary> => {
-    return runIngest(caps, erp)
+  const setRawData = useCallback(async (
+    caps: CapsRow[], erp: ErpUnifiedRow[], onProgress?: (step: number, total: number) => void,
+  ): Promise<IngestSummary> => {
+    return runIngest(caps, erp, onProgress)
   }, [runIngest])
 
-  const mergeRawData = useCallback(async (caps: CapsRow[], erp: ErpUnifiedRow[]): Promise<IngestSummary> => {
-    return runIngest(caps, erp)
+  const mergeRawData = useCallback(async (
+    caps: CapsRow[], erp: ErpUnifiedRow[], onProgress?: (step: number, total: number) => void,
+  ): Promise<IngestSummary> => {
+    return runIngest(caps, erp, onProgress)
   }, [runIngest])
 
   // ── deleteRecordsByKeys: 업로드한 파일 되돌리기 ─────────────────────────

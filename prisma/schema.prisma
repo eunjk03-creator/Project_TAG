@@ -149,6 +149,19 @@ model Holiday {
   @@map("holidays")
 }
 
+// ─── 리포트 내보내기 이력 ──────────────
+model ExportHistory {
+  id         String   @id @default(uuid())
+  reportType String   @map("report_type")
+  format     String
+  dept       String?
+  dateFrom   String   @map("date_from")
+  dateTo     String   @map("date_to")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("export_history")
+}
+
 // ─── 관리자 수정 이력 (새로고침 후에도 유지) ──────────────
 model AttendanceOverride {
   id           String   @id @default(uuid())
@@ -243,12 +256,34 @@ model ExceptionRule {
   shortenedHours Float    @default(0) @map("shortened_hours")
   validFrom      String   @default("") @map("valid_from")
   validTo        String   @default("") @map("valid_to")
+  workScheduleId String?  @map("work_schedule_id")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
+  workSchedule WorkSchedule? @relation(fields: [workScheduleId], references: [id])
+
   @@index([employeeId])
   @@index([ruleType])
+  @@index([workScheduleId])
   @@map("exception_rules")
+}
+
+// ─── 근무제 — 기존 ExceptionRule 위에 이름 붙이고 여러 명 한번에 배정하는 관리 편의 레이어.
+// 계산 엔진(processRecord.ts)은 이 테이블을 전혀 모른다 — ruleType은 ExceptionRule과 동일
+// 어휘를 재사용하고, "배정"은 ExceptionRule 행 생성/갱신 시 workScheduleId만 태그하는 것.
+model WorkSchedule {
+  id             String   @id @default(uuid())
+  name           String   @unique
+  description    String   @default("")
+  ruleType       String   @map("rule_type")
+  shortenedHours Float?   @map("shortened_hours")
+  excludeFromOt  Boolean  @default(false) @map("exclude_from_ot")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  members ExceptionRule[]
+
+  @@map("work_schedules")
 }
 
 // ─── 조직도 마스터 (Google Sheet 동기화 대상) ─────────────

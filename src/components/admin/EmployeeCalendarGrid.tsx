@@ -33,17 +33,19 @@ const L2        = W_NAME                                         // 소속      
 const STICKY_SEP = '3px 0 6px -2px rgba(0,0,0,0.10)'
 
 // ── Outline info-tags ──────────────────────────────────────────────────────
+// 디자인 시스템(v3.css) 색 토큰으로 정렬 — "색은 의미에 고정"(README) 규칙에 따라
+// 미정의 유형(외근/재택)은 새 의미를 만들지 않고 중립(ink-3/line-2)으로 둔다.
 const TAG = {
-  amLeave:   'border border-blue-200   bg-blue-50    text-blue-600',
-  pmLeave:   'border border-blue-200   bg-blue-50    text-blue-600',
-  dayLeave:  'border border-green-200  bg-green-50   text-green-700',
-  holiday:   'border border-violet-200 bg-violet-50  text-violet-700',
-  anomaly:   'border border-red-200    bg-red-50     text-red-600',
-  bizTrip:   'border border-teal-200   bg-teal-50    text-teal-700',
-  remote:    'border border-indigo-200 bg-indigo-50  text-indigo-700',
-  late:      'border border-amber-200  bg-amber-50   text-amber-600',
-  ot:        'border border-sky-200    bg-sky-50     text-sky-700',
-  normal:    'border border-gray-200   bg-gray-50    text-gray-500',
+  amLeave:   'border border-[var(--info)]/25 bg-[var(--info-bg)] text-[var(--info)]',
+  pmLeave:   'border border-[var(--info)]/25 bg-[var(--info-bg)] text-[var(--info)]',
+  dayLeave:  'border border-[var(--pos)]/25  bg-[var(--pos-bg)]  text-[var(--pos)]',
+  holiday:   'border border-[var(--vio)]/25  bg-[var(--vio-bg)]  text-[var(--vio)]',
+  anomaly:   'border border-[var(--neg)]/25  bg-[var(--neg-bg)]  text-[var(--neg)]',
+  bizTrip:   'border border-[var(--line)]    bg-[var(--line-2)]  text-[var(--ink-3)]',
+  remote:    'border border-[var(--line)]    bg-[var(--line-2)]  text-[var(--ink-3)]',
+  late:      'border border-[var(--cau)]/25  bg-[var(--cau-bg)]  text-[var(--cau)]',
+  ot:        'border border-[var(--info)]/25 bg-[var(--info-bg)] text-[var(--info)]',
+  normal:    'border border-[var(--line)]    bg-[var(--line-2)]  text-[var(--ink-3)]',
 }
 
 const DOW_KR = ['일', '월', '화', '수', '목', '금', '토']
@@ -695,9 +697,11 @@ const empStats = useMemo(() => {
                   const isWknd    = dow === 0 || dow === 6
                   const isCmpHol  = companyHolSet.has(date)
                   const holLabel  = companyHolLabel.get(date)
-                  const bgCls     = isCmpHol ? 'bg-teal-50' : isWknd ? 'bg-slate-50' : 'bg-gray-50'
-                  const numCls    = isCmpHol ? 'text-teal-600' : isWknd ? 'text-slate-400' : 'text-gray-600'
-                  const dowCls    = isCmpHol ? 'text-teal-400' : isWknd ? 'text-slate-300' : 'text-gray-300'
+                  {/* 휴일·주말 헤더 숫자는 --neg (README "셀 배지 규칙" 표) — 회사지정휴일은
+                      기존처럼 teal 계열 유지(별도 의미, --neg와 혼동 방지). */}
+                  const bgCls     = isCmpHol ? 'bg-teal-50' : isWknd ? 'bg-[#fbfbfc]' : 'bg-gray-50'
+                  const numCls    = isCmpHol ? 'text-teal-600' : isWknd ? 'text-[var(--neg)]' : 'text-gray-600'
+                  const dowCls    = isCmpHol ? 'text-teal-400' : isWknd ? 'text-[var(--neg)]/60' : 'text-gray-300'
                   return (
                     <th key={date}
                       className={`sticky z-40 pt-2 pb-1.5 text-center border-l border-gray-100 whitespace-nowrap ${bgCls}`}
@@ -969,7 +973,7 @@ const empStats = useMemo(() => {
                       return (
                         <td key={date}
                           className={`py-1 px-1 text-center border-l border-b border-gray-100 whitespace-nowrap align-middle ${
-                            isWknd ? 'bg-slate-50/60' : ''
+                            isWknd ? 'bg-[#fbfbfc]' : ''
                           }`}
                           style={{ width: W_DATE, minWidth: W_DATE }}>
                           {showContent ? (
@@ -1018,10 +1022,10 @@ const empStats = useMemo(() => {
                             onEmptyCellClick ? (
                               <button onClick={() => onEmptyCellClick(emp.id, date)}
                                 className="w-full h-5 flex items-center justify-center group">
-                                <span className="text-slate-200 text-[10px] group-hover:hidden select-none">·</span>
+                                <span className="text-[var(--ink-4)] text-[10px] group-hover:hidden select-none">·</span>
                                 <span className="hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full bg-blue-100 text-blue-500 text-[10px] font-bold">+</span>
                               </button>
-                            ) : <span className="text-slate-200 text-[10px] select-none">·</span>
+                            ) : <span className="text-[var(--ink-4)] text-[10px] select-none">·</span>
                           ) : (
                             onEmptyCellClick ? (
                               <button onClick={() => onEmptyCellClick(emp.id, date)}
@@ -1059,7 +1063,7 @@ const empStats = useMemo(() => {
                       return (
                         <td key={date}
                           className={`py-1 px-1 text-center border-l border-b border-gray-100 whitespace-nowrap align-middle ${
-                            isWknd ? 'bg-slate-50/60' : ''
+                            isWknd ? 'bg-[#fbfbfc]' : ''
                           }`}
                           style={{ width: W_DATE, minWidth: W_DATE }}>
                           {showContent ? (
@@ -1090,7 +1094,7 @@ const empStats = useMemo(() => {
                               </button>
                             )
                           ) : isWknd ? (
-                            <span className="text-slate-200 text-[10px] select-none">·</span>
+                            <span className="text-[var(--ink-4)] text-[10px] select-none">·</span>
                           ) : (
                             <span className="text-gray-200 text-[10px] select-none">—</span>
                           )}
@@ -1138,7 +1142,7 @@ const empStats = useMemo(() => {
 
                       return (
                         <td key={date}
-                          className={`py-1 px-1 text-center border-l border-b border-gray-100 whitespace-nowrap align-middle ${isWknd ? 'bg-slate-50/60' : ''}`}
+                          className={`py-1 px-1 text-center border-l border-b border-gray-100 whitespace-nowrap align-middle ${isWknd ? 'bg-[#fbfbfc]' : ''}`}
                           style={{ width: W_DATE, minWidth: W_DATE }}>
                           {!isWknd && status !== 'ABSENT' ? (
                             <button onClick={() => onCellClick(emp.id, date)}
@@ -1148,7 +1152,7 @@ const empStats = useMemo(() => {
                                 : <span className="text-gray-200 text-[10px] select-none">—</span>}
                             </button>
                           ) : isWknd ? (
-                            <span className="text-slate-200 text-[10px] select-none">·</span>
+                            <span className="text-[var(--ink-4)] text-[10px] select-none">·</span>
                           ) : (
                             <span className="text-gray-200 text-[10px] select-none">—</span>
                           )}
@@ -1188,7 +1192,7 @@ const empStats = useMemo(() => {
 
                       return (
                         <td key={date}
-                          className={`py-1 px-1 text-center border-l border-b-2 border-gray-200 whitespace-nowrap align-middle ${isWknd ? 'bg-slate-50/60' : ''}`}
+                          className={`py-1 px-1 text-center border-l border-b-2 border-gray-200 whitespace-nowrap align-middle ${isWknd ? 'bg-[#fbfbfc]' : ''}`}
                           style={{ width: W_DATE, minWidth: W_DATE }}>
                           {!isWknd && status !== 'ABSENT' ? (
                             <button onClick={() => onCellClick(emp.id, date)}
@@ -1198,7 +1202,7 @@ const empStats = useMemo(() => {
                                 : <span className="text-gray-300 text-[10px] select-none">—</span>}
                             </button>
                           ) : isWknd ? (
-                            <span className="text-slate-200 text-[10px] select-none">·</span>
+                            <span className="text-[var(--ink-4)] text-[10px] select-none">·</span>
                           ) : (
                             <span className="text-gray-200 text-[10px] select-none">—</span>
                           )}
@@ -1212,6 +1216,25 @@ const empStats = useMemo(() => {
             })}
 
           </table>
+        </div>
+
+        {/* ── 범례 ── 실제로 이 그리드가 생성 가능한 배지 종류만 (README §Attendance
+            "범례는 표 하단에 스와치 + 라벨" 규칙 — 정의 안 된 유형은 만들지 않음) ── */}
+        <div className="flex items-center gap-3.5 px-5 py-2.5 border-t border-[var(--line)] flex-wrap shrink-0">
+          {([
+            ['오전/오후반차', 'var(--info-bg)'],
+            ['연차',         'var(--pos-bg)'],
+            ['외근',         'var(--line-2)'],
+            ['휴일근로',      'var(--vio-bg)'],
+            ['지각',         'var(--cau-bg)'],
+            ['출퇴근누락·근무시간 미달', 'var(--neg-bg)'],
+            ['연장근로',      'var(--info-bg)'],
+          ] as const).map(([label, bg]) => (
+            <span key={label} className="inline-flex items-center gap-1.5 text-[12px] text-[var(--ink-2)]">
+              <span className="w-3.5 h-3.5 rounded" style={{ background: bg, boxShadow: 'inset 0 0 0 1px rgba(112,115,124,.14)' }} />
+              {label}
+            </span>
+          ))}
         </div>
 
         {/* ── 더 보기 ──────────────────────────────────────────────────── */}

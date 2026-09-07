@@ -11,9 +11,6 @@ import StatusExportButton from '@/components/admin/StatusExportButton'
 import { DailyDetailModal } from '@/components/admin/DailyDetailModal'
 import type { SavePayload } from '@/components/admin/DailyDetailModal'
 import { DateRangePicker } from '@/components/admin/DateRangePicker'
-import { MetricDeepDive } from '@/components/admin/MetricDeepDive'
-import type { Section } from '@/components/admin/MetricDeepDive'
-import { CsvUploader } from '@/components/admin/CsvUploader'
 import { ManualEntryModal } from '@/components/admin/ManualEntryModal'
 import type { ManualEntryPayload } from '@/components/admin/ManualEntryModal'
 import { AttendanceResultTable } from '@/components/admin/AttendanceResultTable'
@@ -128,7 +125,6 @@ export default function AdminDashboard() {
   const [view,                setView]                = useState<View>('grid')
   const [search,              setSearch]              = useState('')
   const [modalCell,           setModalCell]           = useState<{ employeeId: string; date: string } | null>(null)
-  const [openSections,        setOpenSections]        = useState<Set<Section>>(new Set())
   const [selectedBUs,         setSelectedBUs]         = useState<string[]>([])
   const [selectedRank,        setSelectedRank]        = useState<string | null>(null)
   const [gridFading,  setGridFading]  = useState(false)
@@ -138,6 +134,7 @@ export default function AdminDashboard() {
   const [activeTab,     setActiveTab]     = useState<'all' | 'employee' | 'leader'>('all')
   const [timeMode, setTimeMode] = useState<'recognized' | 'exact'>('recognized')
   const [gridCreditsOn, setGridCreditsOn] = useState(true)
+  const [showDisplayOptions, setShowDisplayOptions] = useState(false)
   // 그리드 인원 체크박스로 고른 사람만 조회 — 선택은 유지한 채 필터만 켜고 끌 수 있음
   const [selectedGridEmployeeIds, setSelectedGridEmployeeIds] = useState<Set<string>>(new Set())
   const [showOnlySelectedInGrid,  setShowOnlySelectedInGrid]  = useState(false)
@@ -293,10 +290,9 @@ export default function AdminDashboard() {
 
   // ── Management metrics ────────────────────────────────────────────────────
   const {
-    bizDays,
-    metrics, total,
-    employeeMetrics, employeeTotal,
-    leaderMetrics,   leaderTotal,
+    total,
+    employeeTotal,
+    leaderTotal,
   } = useManagementMetrics(
     scopedRecords, metricsEmployees, approvedKeys,
     dateRange.from, dateRange.to, finalAttrMap,
@@ -323,9 +319,6 @@ export default function AdminDashboard() {
     })
   }, [activeTab, scopedEmployees, leaderIdSet, globalExclusionIds, finalAttrMap, dateRange.from])
 
-  const activeMetrics =
-    activeTab === 'all'      ? metrics        :
-    activeTab === 'employee' ? employeeMetrics : leaderMetrics
   const activeTotal =
     activeTab === 'all'      ? total        :
     activeTab === 'employee' ? employeeTotal : leaderTotal
@@ -788,124 +781,54 @@ export default function AdminDashboard() {
     exportXlsx(tabFilteredRecords, baseEmployees, filename, visibleColIds, finalAttrMap)
   }
 
-  function toggleSection(s: Section) {
-    setOpenSections(prev => {
-      const next = new Set(prev)
-      if (next.has(s)) next.delete(s)
-      else next.add(s)
-      return next
-    })
-  }
-
-  // ── KPI card derived values ───────────────────────────────────────────────
-  const deptLabel = selectedBUs.length === 1
-    ? selectedBUs[0]
-    : selectedBUs.length > 1
-      ? `${selectedBUs.length}개 본부`
-      : '전체'
-
-  const cardStats = useMemo(() => {
-    if (activeMetrics.length === 0) return null
-    const n      = activeTotal.headcount || 1
-    const totalH = activeTotal.totalHours
-    const otH    = activeTotal.otHours
-    const topTotal     = activeMetrics.reduce((a, b) => a.totalHours > b.totalHours ? a : b)
-    const topOt        = activeMetrics.reduce((a, b) => a.otHours    > b.otHours    ? a : b)
-    const topAnomalies = activeMetrics.reduce((a, b) => a.anomalies  > b.anomalies  ? a : b)
-    const en = employeeTotal.headcount || 1
-    const ln = leaderTotal.headcount   || 1
-    return {
-      avgTotal: totalH / n,
-      avgOt:    otH    / n,
-      otRatio:  totalH > 0 ? (otH / totalH) * 100 : 0,
-      topTotal, topOt, topAnomalies,
-      empAvgTotal: employeeTotal.totalHours / en,
-      ldAvgTotal:  leaderTotal.totalHours   / ln,
-      empAvgOt:    employeeTotal.otHours    / en,
-      ldAvgOt:     leaderTotal.otHours      / ln,
-      empAnomalyRate: employeeTotal.anomalies / en,
-      ldAnomalyRate:  leaderTotal.anomalies   / ln,
-    }
-  }, [activeMetrics, activeTotal, employeeTotal, leaderTotal])
 
   if (!isMounted) return null
 
   return (
-    <div className="min-w-0 flex flex-col">
+    <div className="wrap">
+    <div className="col wide" style={{ maxWidth: 'none' }}>
 
-      {/* ── Top bar ── */}
-      <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3 shrink-0">
-        <div className="shrink-0">
-          <h1 className="text-base font-bold text-gray-900">근태 현황</h1>
-          <p className="text-xs text-gray-400">
-            {view === 'allowance' ? '수당 집계' : activeTab === 'all' ? '전체' : activeTab === 'employee' ? '사원' : '직책자'}{view !== 'allowance' ? ` · ${activeTotal.headcount}명` : ''}
-          </p>
-        </div>
-
-        <div className="ml-auto flex items-center gap-2 shrink-0">
-          <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-xs font-medium">
-            <button onClick={() => setView('grid')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${view === 'grid' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-              그리드
-            </button>
-            <button onClick={() => setView('table')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${view === 'table' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-              테이블
-            </button>
-            <button onClick={() => setView('summary')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${view === 'summary' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-              현황
-            </button>
-            <button onClick={() => setView('allowance')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${view === 'allowance' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-              수당집계
-            </button>
-          </div>
-        </div>
+      {/* ── Page title row (v3) ── */}
+      <div className="ptitle">
+        <h2>근태 현황</h2>
+        <DateRangePicker
+          value={dateRange}
+          onChange={setDateRange}
+          minDate={dateBounds?.min}
+          maxDate={dateBounds?.max}
+        />
+        {isServerProcessing ? (
+          <button className="ghost" disabled>↻ 재계산 중...</button>
+        ) : (
+          <button className="ghost" onClick={recomputeProcessed} title="예외규칙·Slack·정책 변경 사항을 반영해 전체 근태 데이터를 서버에서 다시 계산합니다">
+            ↻ 전체 재계산
+          </button>
+        )}
+        {!isServerProcessing && recomputeError && (
+          <span style={{ fontSize: 12, color: 'var(--neg)', fontWeight: 600 }} title={recomputeError}>⚠ {recomputeError}</span>
+        )}
+        <span className="sp" />
+        <StatusExportButton dateRange={dateRange} divisions={[...new Set(baseEmployees.map(e => e.division).filter(Boolean))]} />
       </div>
 
-      {/* ── Date range filter + risk view toggle ── */}
-      <div className="flex items-center gap-3 px-6 py-2.5 bg-white border-b border-gray-100 shrink-0">
-        <DateRangePicker value={dateRange} onChange={setDateRange} />
+      {/* 단계스트립+KPI 요약 카드는 경영진 현황(/admin/overview)과 중복이라 제거함(2026-09-07)
+          — 회사 전체 지표가 필요하면 경영진 현황 탭 참고. */}
 
-        <div className="ml-auto flex items-center gap-3 shrink-0">
-          <StatusExportButton dateRange={dateRange} divisions={[...new Set(baseEmployees.map(e => e.division).filter(Boolean))]} />
+      {/* ── View switch (v3 pillseg) ── */}
+      <div className="card" style={{ padding: '4px 20px' }}>
+        <div className="tbar" style={{ padding: '12px 0' }}>
+          <span className="pillseg">
+            <button aria-selected={view === 'grid'} onClick={() => setView('grid')}>그리드</button>
+            <button aria-selected={view === 'table'} onClick={() => setView('table')}>테이블</button>
+            <button aria-selected={view === 'summary'} onClick={() => setView('summary')}>현황</button>
+            <button aria-selected={view === 'allowance'} onClick={() => setView('allowance')}>수당집계</button>
+          </span>
+          <span className="ct">
+            {view === 'allowance' ? '수당 집계' : activeTab === 'all' ? '전체' : activeTab === 'employee' ? '사원' : '직책자'}
+            {view !== 'allowance' ? ` · ${activeTotal.headcount}명` : ''}
+          </span>
         </div>
       </div>
-
-      {/* ── CSV / Excel uploader ── */}
-      <CsvUploader />
-
-      {/* ── 전체 재계산 (단일 진입점) ── */}
-      {isLiveData && (
-        <div className="px-6 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-3 text-sm">
-          {isServerProcessing ? (
-            <span className="flex items-center gap-2 text-blue-600 font-medium">
-              <svg className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-              </svg>
-              전체 재계산 중...
-            </span>
-          ) : (
-            <button
-              onClick={recomputeProcessed}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-md border border-gray-200 bg-white text-gray-600 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors text-xs font-medium"
-              title="예외규칙·Slack·정책 변경 사항을 반영해 전체 근태 데이터를 서버에서 다시 계산합니다"
-            >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-              </svg>
-              전체 재계산
-            </button>
-          )}
-          {!isServerProcessing && recomputeError && (
-            <span className="text-xs text-red-600 font-medium" title={recomputeError}>
-              ⚠ {recomputeError}
-            </span>
-          )}
-        </div>
-      )}
 
       {/* ── All / Employee / Leader tab bar (hidden on allowance/analytics view) ── */}
       {view !== 'allowance' && <div className="px-6 py-2.5 bg-white border-b border-gray-100 shrink-0">
@@ -946,171 +869,9 @@ export default function AdminDashboard() {
 
         {view !== 'allowance' && (
         <>
-        {/* KPI Cards */}
-        <div className="px-6 pt-5 pb-4 shrink-0">
-          <div className="grid grid-cols-4 gap-4">
-
-            {/* Card 1 — 총 근로시간 */}
-            <div className={`bg-white rounded-xl border p-4 transition-colors ${openSections.has('total') ? 'border-blue-300 ring-1 ring-blue-200' : 'border-gray-200'}`}>
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-xs font-medium text-gray-500">총 근로시간</p>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium truncate max-w-[72px]">{deptLabel}</span>
-              </div>
-              <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">{fmt(activeTotal.totalHours)}</p>
-              <div className="mt-2 space-y-0.5">
-                <p className="text-xs text-gray-400 flex items-center gap-1">
-                  1인 평균
-                  <span className={`font-medium tabular-nums ${
-                    cardStats && cardStats.avgTotal > riskThresholds.totalAmberH
-                      ? 'text-amber-600'
-                      : 'text-gray-600'
-                  }`}>
-                    {cardStats ? fmt(cardStats.avgTotal) : '—'}
-                  </span>
-                </p>
-                {cardStats && (
-                  <p className="text-xs flex items-center gap-1">
-                    <button onClick={() => setActiveTab('employee')} className={`font-medium tabular-nums transition-colors ${activeTab === 'employee' ? 'text-blue-600 underline' : 'text-gray-400 hover:text-blue-500'}`}>사원 {fmt(cardStats.empAvgTotal)}</button>
-                    <span className="text-gray-300">·</span>
-                    <button onClick={() => setActiveTab('leader')} className={`font-medium tabular-nums transition-colors ${activeTab === 'leader' ? 'text-violet-600 underline' : 'text-gray-400 hover:text-violet-500'}`}>직책자 {fmt(cardStats.ldAvgTotal)}</button>
-                  </p>
-                )}
-                {cardStats && (
-                  <p className="text-xs text-gray-400 truncate">
-                    최다 <span className="text-blue-600 font-medium">{cardStats.topTotal.division}</span>
-                  </p>
-                )}
-              </div>
-              <button onClick={() => toggleSection('total')}
-                className="mt-2.5 text-xs text-blue-500 hover:text-blue-700 font-medium transition-colors">
-                📊 지표 분석 {openSections.has('total') ? '▴' : '▾'}
-              </button>
-            </div>
-
-            {/* Card 2 — 연장근로 */}
-            <div className={`bg-white rounded-xl border p-4 transition-colors ${openSections.has('overtime') ? 'border-amber-300 ring-1 ring-amber-200' : 'border-gray-200'}`}>
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-xs font-medium text-gray-500">연장근로</p>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium truncate max-w-[72px]">{deptLabel}</span>
-              </div>
-              <p className="text-2xl font-bold text-amber-500 mt-1 tabular-nums">{fmt(activeTotal.otHours)}</p>
-              <div className="mt-2 space-y-0.5">
-                <p className="text-xs text-gray-400 flex items-center gap-1 flex-wrap">
-                  1인 평균
-                  <span className={`font-medium tabular-nums ${
-                    cardStats && cardStats.avgOt > riskThresholds.otAmberH
-                      ? 'text-amber-600'
-                      : 'text-gray-600'
-                  }`}>
-                    {cardStats ? fmt(cardStats.avgOt) : '—'}
-                  </span>
-                  <span className="text-gray-300">·</span>
-                  <span className="tabular-nums text-gray-400">{cardStats ? cardStats.otRatio.toFixed(1) : 0}%</span>
-                </p>
-                {cardStats && (
-                  <p className="text-xs flex items-center gap-1">
-                    <button onClick={() => setActiveTab('employee')} className={`font-medium tabular-nums transition-colors ${activeTab === 'employee' ? 'text-blue-600 underline' : 'text-gray-400 hover:text-blue-500'}`}>사원 {fmt(cardStats.empAvgOt)}</button>
-                    <span className="text-gray-300">·</span>
-                    <button onClick={() => setActiveTab('leader')} className={`font-medium tabular-nums transition-colors ${activeTab === 'leader' ? 'text-violet-600 underline' : 'text-gray-400 hover:text-violet-500'}`}>직책자 {fmt(cardStats.ldAvgOt)}</button>
-                  </p>
-                )}
-                {cardStats && (
-                  <p className="text-xs text-gray-400 truncate">
-                    최다 <span className="text-amber-600 font-medium">{cardStats.topOt.division}</span>
-                  </p>
-                )}
-              </div>
-              <button onClick={() => toggleSection('overtime')}
-                className="mt-2.5 text-xs text-amber-500 hover:text-amber-700 font-medium transition-colors">
-                📊 지표 분석 {openSections.has('overtime') ? '▴' : '▾'}
-              </button>
-            </div>
-
-            {/* Card 3 — 이상치 */}
-            <div className={`rounded-xl border p-4 transition-colors ${
-              activeTotal.anomalies > 0
-                ? openSections.has('anomaly') ? 'bg-red-50 border-red-400 ring-1 ring-red-200' : 'bg-red-50 border-red-200'
-                : openSections.has('anomaly') ? 'bg-white border-red-300 ring-1 ring-red-200' : 'bg-white border-gray-200'
-            }`}>
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-xs font-medium text-gray-500">이상치</p>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium truncate max-w-[72px]">{deptLabel}</span>
-              </div>
-              <p className={`text-2xl font-bold mt-1 tabular-nums ${activeTotal.anomalies > 0 ? 'text-red-600' : 'text-gray-900'}`}>
-                {activeTotal.anomalies}건
-              </p>
-              <div className="mt-2 space-y-0.5">
-                <p className="text-xs text-gray-400">
-                  평균 <span className="text-gray-600 font-medium tabular-nums">
-                    {activeTotal.headcount > 0 ? (activeTotal.anomalies / activeTotal.headcount).toFixed(1) : 0}건/인
-                  </span>
-                </p>
-                {cardStats && (
-                  <p className="text-xs flex items-center gap-1">
-                    <button onClick={() => setActiveTab('employee')} className={`font-medium tabular-nums transition-colors ${activeTab === 'employee' ? 'text-blue-600 underline' : 'text-gray-400 hover:text-blue-500'}`}>사원 {cardStats.empAnomalyRate.toFixed(1)}건/인</button>
-                    <span className="text-gray-300">·</span>
-                    <button onClick={() => setActiveTab('leader')} className={`font-medium tabular-nums transition-colors ${activeTab === 'leader' ? 'text-violet-600 underline' : 'text-gray-400 hover:text-violet-500'}`}>직책자 {cardStats.ldAnomalyRate.toFixed(1)}건/인</button>
-                  </p>
-                )}
-                {cardStats && cardStats.topAnomalies.anomalies > 0 ? (
-                  <p className="text-xs text-gray-400 truncate">
-                    최다 <span className="text-red-600 font-medium">{cardStats.topAnomalies.division}</span>
-                  </p>
-                ) : (
-                  <p className="text-xs text-gray-400">이상치 없음</p>
-                )}
-              </div>
-              <button onClick={() => toggleSection('anomaly')}
-                className="mt-2.5 text-xs text-red-500 hover:text-red-700 font-medium transition-colors">
-                📊 지표 분석 {openSections.has('anomaly') ? '▴' : '▾'}
-              </button>
-            </div>
-
-
-          </div>
-        </div>
-
-
-        {/* ── Section Deep Dives ── */}
-        {openSections.size > 0 && (
-          <div className="px-6 pb-4 shrink-0">
-            {selectedBUs.length >= 1 && (
-              <div className="flex items-center gap-2 mb-3">
-                {selectedBUs.length === 1 && (
-                  <button onClick={() => setSelectedBUs([])}
-                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full border bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 transition-colors">
-                    필터됨: {selectedBUs[0]}
-                    <span className="opacity-60">✕</span>
-                  </button>
-                )}
-                {selectedBUs.length >= 2 && (
-                  <button onClick={() => setSelectedBUs([])}
-                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full border bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100 transition-colors">
-                    비교 중: {selectedBUs.length}개 본부
-                    <span className="opacity-60">✕</span>
-                  </button>
-                )}
-              </div>
-            )}
-            <MetricDeepDive
-              openSections={openSections}
-              onToggle={toggleSection}
-              metrics={activeMetrics}
-              total={activeTotal}
-              employeeMetrics={employeeMetrics}
-              employeeTotal={employeeTotal}
-              leaderMetrics={leaderMetrics}
-              leaderTotal={leaderTotal}
-              processedRecords={scopedRecords}
-              employees={scopedEmployees}
-              approvedKeys={approvedKeys}
-              riskThresholds={riskThresholds}
-              selectedBUs={selectedBUs}
-              onBUsChange={setSelectedBUs}
-              leaderIdSet={leaderIdSet}
-            />
-          </div>
-        )}
+        {/* 총근로/연장근로/이상치 KPI + 부서별 지표 분석(MetricDeepDive)은 상단 v3 KPI
+            스트립(.card.kpi)·경영진 현황(/admin/overview)과 중복이라 제거함(2026-09-07) —
+            분석 자세히 필요하면 경영진 현황 탭 참고. */}
 
         {/* ── Table-only filters ── */}
         {view === 'table' && <>
@@ -1364,42 +1125,56 @@ export default function AdminDashboard() {
               </div>
             )}
 
-            {/* 시간 기준 토글 — 그리드 전용 */}
-            <div className="flex flex-col gap-1 shrink-0">
-              <div className="flex items-center gap-1.5 text-[11px]">
-                <span className="text-gray-400 whitespace-nowrap">시간 기준</span>
-                <div className="flex items-center bg-gray-100 rounded-lg p-0.5 font-medium">
-                  <button
-                    onClick={() => setTimeMode('recognized')}
-                    className={`px-2.5 py-1 rounded-md transition-all ${
-                      timeMode === 'recognized' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                    }`}
-                    title="급여 계산 기준 시간 (ERP 인정 OT + 30분 절사)"
-                  >
-                    인정 시간
-                  </button>
-                  <button
-                    onClick={() => setTimeMode('exact')}
-                    className={`px-2.5 py-1 rounded-md transition-all ${
-                      timeMode === 'exact' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                    }`}
-                    title="태그 기록 기준 실제 근무 시간 (절사 없음)"
-                  >
-                    실제 값
-                  </button>
-                </div>
-              </div>
-              {timeMode === 'recognized' && (
-                <button
-                  onClick={() => setGridCreditsOn(v => !v)}
-                  className={`w-fit text-[10px] font-semibold px-2 py-0.5 rounded border transition-colors ${
-                    gridCreditsOn
-                      ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-                      : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100'
-                  }`}
-                >
-                  크레딧 {gridCreditsOn ? 'ON' : 'OFF'}
-                </button>
+            {/* 표시 옵션(시간 기준·크레딧) — 팝오버로 축소, 자주 안 바꾸는 옵션이라 덜 눈에 띄게 */}
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setShowDisplayOptions(v => !v)}
+                className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 transition-colors font-medium px-2 py-1 rounded-md hover:bg-gray-50"
+                title="표시 기준 설정 (인정시간/실제값, 크레딧)"
+              >
+                ⚙ 표시 옵션
+              </button>
+              {showDisplayOptions && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowDisplayOptions(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 w-56 rounded-xl border border-gray-200 bg-white shadow-xl p-3 flex flex-col gap-2">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-gray-400 whitespace-nowrap">시간 기준</span>
+                      <div className="flex items-center bg-gray-100 rounded-lg p-0.5 font-medium">
+                        <button
+                          onClick={() => setTimeMode('recognized')}
+                          className={`px-2.5 py-1 rounded-md transition-all ${
+                            timeMode === 'recognized' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                          }`}
+                          title="급여 계산 기준 시간 (ERP 인정 OT + 30분 절사)"
+                        >
+                          인정 시간
+                        </button>
+                        <button
+                          onClick={() => setTimeMode('exact')}
+                          className={`px-2.5 py-1 rounded-md transition-all ${
+                            timeMode === 'exact' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                          }`}
+                          title="태그 기록 기준 실제 근무 시간 (절사 없음)"
+                        >
+                          실제 값
+                        </button>
+                      </div>
+                    </div>
+                    {timeMode === 'recognized' && (
+                      <button
+                        onClick={() => setGridCreditsOn(v => !v)}
+                        className={`w-full text-left text-[10px] font-semibold px-2 py-1 rounded border transition-colors ${
+                          gridCreditsOn
+                            ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                            : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100'
+                        }`}
+                      >
+                        크레딧 {gridCreditsOn ? 'ON' : 'OFF'}
+                      </button>
+                    )}
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -1616,6 +1391,7 @@ export default function AdminDashboard() {
         )
       })()}
 
+    </div>
     </div>
   )
 }

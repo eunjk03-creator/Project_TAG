@@ -30,7 +30,7 @@ function addMonths(dateStr: string, n: number): string {
 }
 
 /** Monday of the week containing dateStr. */
-function weekStart(dateStr: string): string {
+export function weekStart(dateStr: string): string {
   const d   = toDate(dateStr)
   const dow = d.getDay() // 0 = Sun
   const back = dow === 0 ? 6 : dow - 1
@@ -38,7 +38,7 @@ function weekStart(dateStr: string): string {
   return fromDate(d)
 }
 
-function monthStart(dateStr: string): string {
+export function monthStart(dateStr: string): string {
   const [y, m] = dateStr.split('-')
   return `${y}-${m}-01`
 }
@@ -60,6 +60,8 @@ export interface PeriodRange {
   from: string
   to: string
   label: string
+  /** 직전 동일 길이 구간(일→전일, 주→전주, 월→전월) — 추세(전일/전주 대비) 계산용. */
+  previous: { from: string; to: string }
   shift: (dir: 1 | -1) => void
   goToday: () => void
 }
@@ -87,6 +89,18 @@ export function usePeriodRange(): PeriodRange {
     return { from, to, label: `${y}년 ${Number(m)}월` }
   }, [granularity, refDate])
 
+  const previous = useMemo(() => {
+    if (granularity === 'day') {
+      const d = addDays(from, -1)
+      return { from: d, to: d }
+    }
+    if (granularity === 'week') {
+      return { from: addDays(from, -7), to: addDays(to, -7) }
+    }
+    const prevRef = addMonths(refDate, -1)
+    return { from: monthStart(prevRef), to: monthEnd(prevRef) }
+  }, [granularity, refDate, from, to])
+
   function setGranularity(g: PeriodGranularity) {
     setGranularityState(g)
     setRefDate(todayStr()) // 단위를 바꾸면 "오늘이 속한" 기간으로 리셋
@@ -104,5 +118,5 @@ export function usePeriodRange(): PeriodRange {
     setRefDate(todayStr())
   }
 
-  return { granularity, setGranularity, from, to, label, shift, goToday }
+  return { granularity, setGranularity, from, to, label, previous, shift, goToday }
 }

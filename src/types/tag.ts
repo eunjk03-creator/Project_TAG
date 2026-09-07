@@ -51,6 +51,9 @@ export interface PolicySettings {
   fixedScheduleBStart: string
   /** 외근 기본 퇴근시각(HH:MM), 기존 하드코딩 '18:00' */
   offsiteStdEndTime: string
+  /** 전사 평균 시급(원) — 경영진 현황의 초과근무 비용 환산 전용. 0이면 "미설정"으로 취급해
+   *  가짜 금액을 보여주지 않는다(급여 실시급 데이터 연동 전까지의 임시 근사치). */
+  avgHourlyWage: number
 }
 
 export const DEFAULT_POLICY: PolicySettings = {
@@ -84,6 +87,7 @@ export const DEFAULT_POLICY: PolicySettings = {
   fixedScheduleABreakMins: 30,
   fixedScheduleBStart: '08:30',
   offsiteStdEndTime: '18:00',
+  avgHourlyWage: 0,
 }
 
 export type DayType = 'WEEKDAY' | 'WEEKEND' | 'HOLIDAY'

@@ -311,8 +311,21 @@ function extractCapsKeys(rows: Record<string, string>[]): Set<string> {
 }
 
 // ── Main export ───────────────────────────────────────────────────────────
-export function CsvUploader() {
+/**
+ * confirmBeforeRemove — true면 CAPS 파일 슬롯 제거(=DB에서도 삭제) 전에 예상 영향
+ * 범위(행수·직원수)를 보여주는 확인 다이얼로그를 띄운다. 기본(false)은 기존처럼 즉시 삭제 —
+ * /admin 그리드 화면의 compact 인스턴스는 이 prop을 안 넘겨서 동작이 그대로 유지된다.
+ * onProgress — 청크 단위 업로드 진행 콜백(step, total). /admin/data 전용 화면에서만 사용.
+ */
+export function CsvUploader({
+  compact = false, confirmBeforeRemove = false, onProgress,
+}: {
+  compact?: boolean
+  confirmBeforeRemove?: boolean
+  onProgress?: (step: number, total: number) => void
+} = {}) {
   const { mergeRawData, deleteRecordsByKeys, isLiveData, isLoading: isDbLoading, lastUploadedAt, employees, rawRecordCount, dbSaveError, isProcessing } = useAttendanceSource()
+  const [pendingRemove, setPendingRemove] = useState<{ idx: number; keys: Set<string> } | null>(null)
 
   // CAPS: 복수 파일 지원 (최대 MAX_CAPS)
   const capsDataRefs = useRef<(Record<string, string>[] | null)[]>([null])
@@ -384,19 +397,15 @@ export function CsvUploader() {
     setErpSlots(prev => [...prev, { phase: 'idle' }])
   }
 
-  async function removeCapsSlot(idx: number) {
-    const slot = capsSlots[idx]
-    // ready 상태면 해당 파일의 레코드를 DB에서도 삭제
-    if (slot.phase === 'ready' && capsDataRefs.current[idx]) {
-      const keys = extractCapsKeys(capsDataRefs.current[idx]!)
-      if (keys.size > 0) {
-        setIsSaving(true)
-        try {
-          await deleteRecordsByKeys(keys)
-          setResult(null)
-        } finally {
-          setIsSaving(false)
-        }
+  // 실제 슬롯 제거 + DB 삭제 실행부 — confirmBeforeRemove 여부와 무관하게 공유
+  async function doRemoveCapsSlot(idx: number, keys: Set<string>) {
+    if (keys.size > 0) {
+      setIsSaving(true)
+      try {
+        await deleteRecordsByKeys(keys)
+        setResult(null)
+      } finally {
+        setIsSaving(false)
       }
     }
     if (capsSlots.length <= 1) {
@@ -406,6 +415,21 @@ export function CsvUploader() {
     }
     capsDataRefs.current = capsDataRefs.current.filter((_, i) => i !== idx)
     setCapsSlots(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  async function removeCapsSlot(idx: number) {
+    const slot = capsSlots[idx]
+    // ready 상태면 해당 파일의 레코드를 DB에서도 삭제
+    if (slot.phase === 'ready' && capsDataRefs.current[idx]) {
+      const keys = extractCapsKeys(capsDataRefs.current[idx]!)
+      if (keys.size > 0 && confirmBeforeRemove) {
+        setPendingRemove({ idx, keys })
+        return
+      }
+      await doRemoveCapsSlot(idx, keys)
+      return
+    }
+    await doRemoveCapsSlot(idx, new Set())
   }
   async function removeErpSlot(idx: number) {
     const slot = erpSlots[idx]
@@ -449,6 +473,7 @@ export function CsvUploader() {
       const { employeeCount, affectedCount, skippedCount, erpOtMatchCount } = await mergeRawData(
         mergedCaps as unknown as CapsRow[],
         mergedErp  as unknown as ErpUnifiedRow[],
+        onProgress,
       )
       setResult({ ok: true, empCount: employeeCount, affectedCount, skipped: skippedCount, erpOtMatchCount })
       setExpanded(false)
@@ -502,15 +527,23 @@ export function CsvUploader() {
   }
 
   // ── Render ────────────────────────────────────────────────────────────
+  // compact(=true일 때, admin/page.tsx 툴바 안에 배치) — 전용 전체너비 바 대신
+  // 작은 인라인 배지로 축소하고, 펼친 업로드 폼은 오른쪽 아래에 뜨는 팝오버로 처리한다.
   return (
-    <div className="mx-6 mt-3 mb-1 rounded-xl border border-gray-200 bg-white overflow-hidden shrink-0">
+    <div className={compact
+      ? 'relative inline-block shrink-0'
+      : 'mx-6 mt-3 mb-1 rounded-xl border border-gray-200 bg-white overflow-hidden shrink-0'}>
 
       {/* ── Header bar ─────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2.5 px-4 py-2.5 min-h-0">
+      <div className={compact
+        ? 'flex items-center gap-1.5 min-h-0'
+        : 'flex items-center gap-2.5 px-4 py-2.5 min-h-0'}>
 
+        {!compact && (
         <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">
           데이터 소스
         </span>
+        )}
 
         {/* 상태 배지 */}
         {isDbLoading ? (
@@ -585,8 +618,8 @@ export function CsvUploader() {
           </span>
         )}
 
-        {/* 접힌 상태에서 업로드된 파일명 표시 */}
-        {!expanded && (
+        {/* 접힌 상태에서 업로드된 파일명 표시 — compact에서는 생략(펼치면 확인 가능) */}
+        {!expanded && !compact && (
           <div className="flex items-center gap-1 flex-wrap min-w-0">
             {(capsSlots.filter(s => s.phase === 'ready') as Extract<SlotState, { phase: 'ready' }>[]).map((s, i) => (
               <span key={`caps-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-50 text-[10px] text-sky-600 font-medium max-w-[130px]" title={s.name}>
@@ -620,7 +653,9 @@ export function CsvUploader() {
 
       {/* ── Password gate — 파일 업로드 펼치기 전 확인 ───────────────────── */}
       {showPwPrompt && (
-        <div className="border-t border-gray-100 px-4 py-3 bg-gray-50">
+        <div className={compact
+          ? 'absolute right-0 top-full mt-1 w-72 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 shadow-lg z-40'
+          : 'border-t border-gray-100 px-4 py-3 bg-gray-50'}>
           <p className="text-[11px] font-semibold text-gray-600 mb-1.5">
             파일 업로드 암호 확인
           </p>
@@ -656,7 +691,9 @@ export function CsvUploader() {
 
       {/* ── Expandable upload body ──────────────────────────────────────── */}
       {expanded && (
-        <div className="border-t border-gray-100 px-4 pt-3 pb-4">
+        <div className={compact
+          ? 'absolute right-0 top-full mt-1 w-[600px] max-w-[90vw] rounded-xl border border-gray-200 bg-white px-4 pt-3 pb-4 shadow-xl z-40'
+          : 'border-t border-gray-100 px-4 pt-3 pb-4'}>
           <div className="grid grid-cols-3 gap-3">
 
             {/* CAPS RAW — 복수 파일 */}
@@ -766,6 +803,34 @@ export function CsvUploader() {
               이대로 자동 반영됩니다 (나머지 파일은 마지막 저장분을 그대로 사용)
             </p>
           )}
+        </div>
+      )}
+
+      {/* ── 되돌리기 확인 다이얼로그 (confirmBeforeRemove=true일 때만) ──────── */}
+      {pendingRemove && (
+        <div className="scrim open" onClick={e => { if (e.target === e.currentTarget) setPendingRemove(null) }}>
+          <div className="dlg">
+            <h3>업로드 되돌리기</h3>
+            <p>이 파일이 반영한 근태 레코드를 DB에서 삭제하고, 영향받은 직원을 재계산합니다.</p>
+            <div className="kv">
+              <div className="r"><span>삭제될 레코드</span><span>{pendingRemove.keys.size.toLocaleString()}건</span></div>
+              <div className="r"><span>영향받는 직원</span>
+                <span>{new Set([...pendingRemove.keys].map(k => k.split('_')[0])).size}명</span></div>
+            </div>
+            <div className="dfoot">
+              <button className="c" onClick={() => setPendingRemove(null)}>취소</button>
+              <button
+                className="k"
+                onClick={async () => {
+                  const { idx, keys } = pendingRemove
+                  setPendingRemove(null)
+                  await doRemoveCapsSlot(idx, keys)
+                }}
+              >
+                삭제
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

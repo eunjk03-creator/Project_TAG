@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildStatusSlidePptxBuffer } from '@/utils/statusSlidePptx'
 import { getProcessedRecords }        from '@/lib/getProcessedRecords'
+import { prisma } from '@/lib/prisma'
 
 export async function POST(req: NextRequest) {
   try {
@@ -39,6 +40,10 @@ export async function POST(req: NextRequest) {
     const fromLabel = dateFrom.replace(/-/g, '').slice(2)
     const toLabel   = dateTo.replace(/-/g, '').slice(2)
     const filename  = encodeURIComponent(`${deptLabel} 근태현황_${fromLabel}-${toLabel}.pptx`)
+
+    prisma.exportHistory.create({
+      data: { reportType: 'status-slides', format: 'pptx', dept: dept ?? null, dateFrom, dateTo },
+    }).catch(err => console.error('[status-slides] export history 기록 실패', err))
 
     return new NextResponse(buffer as unknown as BodyInit, {
       headers: {

@@ -14,7 +14,7 @@ type ScalarKey = 'flexStart' | 'flexEnd' | 'lunchStart' | 'lunchEnd' | 'standard
   | 'amPmLeaveMinStayMins' | 'amQuarterLeaveMinStayMins' | 'pmQuarterLeaveMinStayMins'
   | 'insufficientGraceMins' | 'pregnantReducedStdHours' | 'pregnantAnomalyFloorMins'
   | 'tenAmStarterFlexEnd' | 'fixedScheduleAStart' | 'fixedScheduleABreakMins'
-  | 'fixedScheduleBStart' | 'offsiteStdEndTime'
+  | 'fixedScheduleBStart' | 'offsiteStdEndTime' | 'avgHourlyWage'
 
 const SCALAR_KEYS: ScalarKey[] = [
   'flexStart', 'flexEnd', 'lunchStart', 'lunchEnd', 'standardHours',
@@ -24,7 +24,7 @@ const SCALAR_KEYS: ScalarKey[] = [
   'amPmLeaveMinStayMins', 'amQuarterLeaveMinStayMins', 'pmQuarterLeaveMinStayMins',
   'insufficientGraceMins', 'pregnantReducedStdHours', 'pregnantAnomalyFloorMins',
   'tenAmStarterFlexEnd', 'fixedScheduleAStart', 'fixedScheduleABreakMins',
-  'fixedScheduleBStart', 'offsiteStdEndTime',
+  'fixedScheduleBStart', 'offsiteStdEndTime', 'avgHourlyWage',
 ]
 
 const NUMERIC_KEYS = new Set<ScalarKey>([
@@ -33,7 +33,7 @@ const NUMERIC_KEYS = new Set<ScalarKey>([
   'otBreakLunchThresholdMins', 'otBreakDinnerThresholdMins', 'otBreakCapMins',
   'amPmLeaveMinStayMins', 'amQuarterLeaveMinStayMins', 'pmQuarterLeaveMinStayMins',
   'insufficientGraceMins', 'pregnantReducedStdHours', 'pregnantAnomalyFloorMins',
-  'fixedScheduleABreakMins',
+  'fixedScheduleABreakMins', 'avgHourlyWage',
 ])
 
 function toDateOnlyString(d: Date): string {

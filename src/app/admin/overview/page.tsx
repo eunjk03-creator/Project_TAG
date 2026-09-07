@@ -10,12 +10,13 @@ import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useProcessedAttendance } from '@/hooks/useProcessedAttendance'
 import { useManagementMetrics } from '@/hooks/useManagementMetrics'
-import { usePeriodRange } from '@/hooks/usePeriodRange'
+import { usePeriodRange, weekStart, monthStart } from '@/hooks/usePeriodRange'
+import { usePolicy } from '@/context/PolicyContext'
 import { PeriodSelector } from '@/components/admin/PeriodSelector'
 import { AnomalyMetricBadges } from '@/components/admin/AnomalyMetricBadges'
 import { KpiTile } from '@/components/admin/KpiTile'
 import { DivisionTeamGrid } from '@/components/admin/DivisionTeamGrid'
-import { KpiTileRow, type KpiTileVM } from '@/components/admin/overview/KpiTileRow'
+import { KpiTileRow, type KpiTileVM, type KpiSubRow } from '@/components/admin/overview/KpiTileRow'
 import { DeptSection, type DeptSectionSummaryItem } from '@/components/admin/overview/DeptSection'
 import type { DeptCardVM, DeptCardPersonRow } from '@/components/admin/overview/DeptCard'
 import { LeaveTrendChart, type MonthlyLeavePoint } from '@/components/admin/overview/LeaveTrendChart'
@@ -58,11 +59,11 @@ type SectionKey = 'anomaly' | 'holiday' | 'ot' | 'leave' | 'orgIntegrity'
 // ── Small shared UI bits ────────────────────────────────────────────────────
 
 function Box({ className = '', children }: { className?: string; children: ReactNode }) {
-  return <div className={`bg-gray-50 rounded-xl px-5 py-4 ${className}`}>{children}</div>
+  return <div className={`bg-[var(--canvas)] rounded-xl px-5 py-4 ${className}`}>{children}</div>
 }
 
 function EmptyNote({ text }: { text: string }) {
-  return <p className="text-xs text-gray-400 text-center py-6">{text}</p>
+  return <p className="text-xs text-[var(--ink-3)] text-center py-6">{text}</p>
 }
 
 /** 접이식 상세 섹션 — 탭 없이 필요한 것만 펼쳐서 스크롤 부담을 줄인다. */
@@ -74,24 +75,24 @@ function AccordionSection({
   isOpen: boolean; onToggle: () => void; children: ReactNode
 }) {
   return (
-    <section ref={innerRef} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+    <section ref={innerRef} className="bg-white rounded-2xl border border-[var(--line)] shadow-sm overflow-hidden">
       <button
         onClick={onToggle}
-        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-gray-50/60 transition-colors"
+        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-[#fafbfc] transition-colors"
       >
         <span className="w-7 h-7 rounded-full bg-blue-50 flex items-center justify-center text-sm shrink-0">{icon}</span>
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-gray-800">{title}</h2>
-          <p className="text-[11px] text-gray-400 truncate">{subtitle}</p>
+          <h2 className="text-sm font-semibold text-[var(--ink)]">{title}</h2>
+          <p className="text-[11px] text-[var(--ink-3)] truncate">{subtitle}</p>
         </div>
         <svg
-          className={`w-4 h-4 text-gray-300 shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+          className={`w-4 h-4 text-[var(--ink-4)] shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
           fill="none" stroke="currentColor" viewBox="0 0 24 24"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
-      {isOpen && <div className="px-5 pb-5 pt-1 space-y-4 border-t border-gray-50">{children}</div>}
+      {isOpen && <div className="px-5 pb-5 pt-1 space-y-4 border-t border-[var(--line-2)]">{children}</div>}
     </section>
   )
 }
@@ -105,16 +106,16 @@ function DivisionCompareChart({
   title, color, data, unit, compact,
 }: { title: string; color: string; data: { label: string; value: number }[]; unit: string; compact?: boolean }) {
   return (
-    <div className={compact ? 'bg-gray-50 rounded-xl p-3' : 'bg-white rounded-2xl border border-gray-100 shadow-sm p-5'}>
-      <p className={`font-semibold text-gray-500 mb-2 flex items-center gap-1.5 ${compact ? 'text-[10.5px]' : 'text-[11px] mb-3'}`}>
+    <div className={compact ? 'bg-[var(--canvas)] rounded-xl p-3' : 'bg-white rounded-2xl border border-[var(--line)] shadow-sm p-5'}>
+      <p className={`font-semibold text-[var(--ink-3)] mb-2 flex items-center gap-1.5 ${compact ? 'text-[10.5px]' : 'text-[11px] mb-3'}`}>
         <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: color }} />
         {title}
       </p>
-      {data.length === 0 ? <p className="text-[11px] text-gray-300 text-center py-6">데이터가 없습니다.</p> : (
+      {data.length === 0 ? <p className="text-[11px] text-[var(--ink-4)] text-center py-6">데이터가 없습니다.</p> : (
         <div className={compact ? 'h-28' : 'h-36'}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 16 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f2f4" />
               <XAxis dataKey="label" tick={{ fontSize: compact ? 8.5 : 9 }} interval={0}
                 angle={data.length > (compact ? 3 : 6) ? -35 : 0} textAnchor={data.length > (compact ? 3 : 6) ? 'end' : 'middle'}
                 height={data.length > (compact ? 3 : 6) ? 36 : 20} />
@@ -134,6 +135,7 @@ function DivisionCompareChart({
 export default function OverviewPage() {
   const { isLiveData } = useAttendanceSource()
   const { resolutions } = useAttendanceData()
+  const { policy } = usePolicy()
   const period = usePeriodRange()
 
   const { records, employees, finalAttrMap, globalExclusionIds } =
@@ -348,6 +350,53 @@ export default function OverviewPage() {
     [ytdRawRecords, ytdScopedIds],
   )
 
+  // ── 전일/전주 대비 추세(day/week 뷰 전용) — 직전 동일 길이 구간을 같은 방식으로 스코핑.
+  const { records: prevRawRecords, employees: prevRawEmployees, globalExclusionIds: prevGlobalExclusionIds } =
+    useProcessedAttendance(period.previous.from, period.previous.to)
+  const prevVisibleEmployees = useMemo(
+    () => prevRawEmployees.filter(e => !prevGlobalExclusionIds.has(e.id)),
+    [prevRawEmployees, prevGlobalExclusionIds],
+  )
+  const prevScopedEmployees = useMemo(
+    () => selectedDivision ? prevVisibleEmployees.filter(e => e.division === selectedDivision) : prevVisibleEmployees,
+    [prevVisibleEmployees, selectedDivision],
+  )
+  const prevScopedIds = useMemo(() => new Set(prevScopedEmployees.map(e => e.id)), [prevScopedEmployees])
+  const prevScopedRecords = useMemo(
+    () => prevRawRecords.filter(r => prevScopedIds.has(r.employeeId)),
+    [prevRawRecords, prevScopedIds],
+  )
+
+  // ── 상습·반복 이상치(day→이번 주, week→이번 달) — "보고 있는 날짜" 기준으로 창을 잡아서
+  // 과거 날짜를 탐색해도(shift) 그 시점 기준 "이번 주/달"이 되도록 한다(실제 캘린더 오늘 고정 X).
+  const repeatWindowFrom = period.granularity === 'day' ? weekStart(period.from) : monthStart(period.from)
+  const repeatWindowTo   = period.granularity === 'day' ? period.from : period.to
+  const { records: repeatRawRecords, employees: repeatRawEmployees, globalExclusionIds: repeatGlobalExclusionIds } =
+    useProcessedAttendance(repeatWindowFrom, repeatWindowTo)
+  const repeatVisibleEmployees = useMemo(
+    () => repeatRawEmployees.filter(e => !repeatGlobalExclusionIds.has(e.id)),
+    [repeatRawEmployees, repeatGlobalExclusionIds],
+  )
+  const repeatScopedEmployees = useMemo(
+    () => selectedDivision ? repeatVisibleEmployees.filter(e => e.division === selectedDivision) : repeatVisibleEmployees,
+    [repeatVisibleEmployees, selectedDivision],
+  )
+  const repeatScopedIds = useMemo(() => new Set(repeatScopedEmployees.map(e => e.id)), [repeatScopedEmployees])
+  const repeatScopedRecords = useMemo(
+    () => repeatRawRecords.filter(r => repeatScopedIds.has(r.employeeId)),
+    [repeatRawRecords, repeatScopedIds],
+  )
+  const repeatEmpMap = useMemo(
+    () => new Map<string, Employee>(repeatScopedEmployees.map(e => [e.id, e])),
+    [repeatScopedEmployees],
+  )
+  const repeatOffenders = useMemo(
+    () => (period.granularity === 'day' || period.granularity === 'week')
+      ? buildEmployeeAnomalyRollup(repeatScopedRecords, repeatEmpMap).filter(r => r.total >= 2).slice(0, 5)
+      : [],
+    [period.granularity, repeatScopedRecords, repeatEmpMap],
+  )
+
   // ── 연차 발생일수(부여일수) 기반 사용률 — 누적(1/1~기준일) / 단월(선택된 달) 두 기준.
   // ⚠️ 발생일수는 근로기준법 제60조 법정 최소 기준 근사치다(overviewAggregations.computeGrantedDays
   // 주석 참고) — 회사 실제 연차 규정과 다를 수 있어 확정 필요.
@@ -425,11 +474,18 @@ export default function OverviewPage() {
     if (period.granularity === 'day') {
       const delta = normalRate.pct - OVERVIEW_POLICY.attendanceTargetPct
       const divsWithAnomaly = divAnomaly.filter(d => d.total > 0).length
+      const prevNormalRate = computeNormalRate(prevScopedRecords)
+      const vsPrevDelta = normalRate.pct - prevNormalRate.pct
+      const vsPrevTone: KpiSubRow['tone'] = vsPrevDelta > 0 ? 'positive' : vsPrevDelta < 0 ? 'negative' : 'neutral'
       return [
         {
           key: 'main', label: '출근율', isMain: true, value: normalRate.pct.toFixed(1), unit: '%',
           subRows: [
             { key: '기준 대비', value: `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%p`, tone: delta >= 0 ? 'positive' : 'negative' },
+            ...(prevScopedRecords.length > 0 ? [{
+              key: '전일 대비', value: `${vsPrevDelta >= 0 ? '+' : ''}${vsPrevDelta.toFixed(1)}%p`,
+              tone: vsPrevTone,
+            }] : []),
             { key: '정상출근', value: `${normalRate.normal}명` },
             { key: '이상치 발생 부문', value: `${divsWithAnomaly} / ${totalDivisionsCount}개` },
           ],
@@ -438,9 +494,9 @@ export default function OverviewPage() {
         {
           key: 'urgent', label: '당일 긴급 이상치', value: `${anomalyTotals.total}`, unit: '건',
           breakdown3: [
-            { label: '지각', value: `${anomalyTotals.late}`, color: '#d97706' },
-            { label: '근무미달', value: `${anomalyTotals.shortage}`, color: '#dc2626' },
-            { label: '미태깅', value: `${anomalyTotals.notag}`, color: '#7c3aed' },
+            { label: '지각', value: `${anomalyTotals.late}`, color: '#d17600' },
+            { label: '근무미달', value: `${anomalyTotals.shortage}`, color: '#e5342f' },
+            { label: '미태깅', value: `${anomalyTotals.notag}`, color: '#6541f2' },
           ],
           onClick: () => openAndScroll('anomaly'),
         },
@@ -460,12 +516,20 @@ export default function OverviewPage() {
       const otEligible = divisionRecognizedOt.reduce((s, d) => s + d.eligible, 0)
       const totalHolidayCount = divHoliday.reduce((s, r) => s + r.count, 0)
       const divsWithHoliday = divHoliday.filter(d => d.count > 0).length
+      const prevWeeklyRisk = computeWeeklyRiskBuckets(prevScopedRecords, prevScopedEmployees, finalAttrMap)
+      const vsPrevDanger = weeklyRisk.danger - prevWeeklyRisk.danger
+      const vsPrevDangerTone: KpiSubRow['tone'] = vsPrevDanger > 0 ? 'negative' : vsPrevDanger < 0 ? 'positive' : 'neutral'
+      const estimatedOtCost = policy.avgHourlyWage > 0 ? totalRecognizedOt * policy.avgHourlyWage * policy.otRate : null
       return [
         {
           key: 'main', label: '주 52시간 초과 위험군', isMain: true, value: `${weeklyRisk.danger}`, unit: '명',
           subRows: [
             { key: '주의 45–50h', value: `${weeklyRisk.caution}명` },
             { key: '경고 50–52h', value: `${weeklyRisk.warning}명` },
+            ...(prevScopedRecords.length > 0 ? [{
+              key: '전주 대비', value: `${vsPrevDanger >= 0 ? '+' : ''}${vsPrevDanger}명`,
+              tone: vsPrevDangerTone,
+            }] : []),
             { key: '발생 부문', value: `${divsWithRisk} / ${totalDivisionsCount}개` },
           ],
           onClick: () => openAndScroll('ot'),
@@ -476,6 +540,7 @@ export default function OverviewPage() {
           subRows: [
             { key: '총 연장', value: fmtH(totalRecognizedOt) },
             { key: '대상 인원', value: `${otEligible}명` },
+            { key: '예상 수당', value: estimatedOtCost !== null ? formatWon(estimatedOtCost) : '시급 미설정' },
           ],
           onClick: () => openAndScroll('ot'),
         },
@@ -549,6 +614,7 @@ export default function OverviewPage() {
     period.granularity, monthBasis, normalRate, divAnomaly, anomalyTotals, todayLeave, todayOffsite,
     weeklyRisk, divisionRiskBands, metrics, divHoliday, totalHolidayH, total, totalDivisionsCount,
     divisionLeaveCumulative, cumulativeBenchmarkPct, leaveTotals, overLimitRows, employeeLeaveSingle, monthLabel,
+    prevScopedRecords, prevScopedEmployees, finalAttrMap, policy,
   ])
 
   // ── 부서 카드(division → DeptCardVM) — 상태(일/주연장/주휴일/월누적/월단월)별로 콘텐츠가
@@ -577,9 +643,9 @@ export default function OverviewPage() {
       progressPct: rate, progressMarkerPct: OVERVIEW_POLICY.attendanceTargetPct,
       captionLeft: `초과 인원 ${divOtCount}명`, captionRight: `기준 ${OVERVIEW_POLICY.attendanceTargetPct}%`,
       cells: [
-        { label: '지각', value: anomaly.late ? `${anomaly.late}` : '—', color: '#d97706' },
-        { label: '미달', value: anomaly.shortage ? `${anomaly.shortage}` : '—', color: '#dc2626' },
-        { label: '미태깅', value: anomaly.notag ? `${anomaly.notag}` : '—', color: '#7c3aed' },
+        { label: '지각', value: anomaly.late ? `${anomaly.late}` : '—', color: '#d17600' },
+        { label: '미달', value: anomaly.shortage ? `${anomaly.shortage}` : '—', color: '#e5342f' },
+        { label: '미태깅', value: anomaly.notag ? `${anomaly.notag}` : '—', color: '#6541f2' },
       ],
       listHeaderLabel: `이상치 사원 ${rows.length}명`, listSortLabel: '건수 많은 순',
       listColumnHeaders: ['사원', '지각', '미달', '미태'],
@@ -599,9 +665,9 @@ export default function OverviewPage() {
     const people = weeklyRisk.rows.filter(r => r.division === m.division).sort((a, b) => b.hours - a.hours)
     const rows: DeptCardPersonRow[] = people.slice(0, 6).map(p => ({
       key: p.employeeId, name: p.name,
-      tag: p.bucket === 'danger' ? { text: '초과', bg: '#fee2e2', fg: '#991b1b' }
-        : p.bucket === 'warning' ? { text: '경고', bg: '#fef2f2', fg: '#b91c1c' }
-        : { text: '주의', bg: '#fffbeb', fg: '#b45309' },
+      tag: p.bucket === 'danger' ? { text: '초과', bg: '#ffeded', fg: '#e5342f' }
+        : p.bucket === 'warning' ? { text: '경고', bg: '#fff4e5', fg: '#d17600' }
+        : { text: '주의', bg: '#fff4e5', fg: '#d17600' },
       value: fmtH(p.hours), valueRed: p.hours >= 50,
     }))
 
@@ -613,7 +679,7 @@ export default function OverviewPage() {
       cells: [
         { label: '주의 45-50h', value: band.caution ? `${band.caution}` : '—' },
         { label: '경고 50-52h', value: band.warning ? `${band.warning}` : '—' },
-        { label: '초과 52h+', value: band.danger ? `${band.danger}` : '—', color: '#dc2626' },
+        { label: '초과 52h+', value: band.danger ? `${band.danger}` : '—', color: '#e5342f' },
       ],
       listHeaderLabel: `위험군 사원 ${rows.length}명`, listSortLabel: '근로시간 많은 순',
       rows,
@@ -629,7 +695,7 @@ export default function OverviewPage() {
     const details = holidayWorkDetails.filter(d => d.division === m.division).sort((a, b) => b.hours - a.hours)
     const rows: DeptCardPersonRow[] = details.slice(0, 6).map(d => ({
       key: `${d.employeeId}_${d.date}`, name: d.name,
-      tag: { text: d.date.slice(5).replace('-', '/'), bg: '#f5f7ff', fg: '#2563eb' },
+      tag: { text: d.date.slice(5).replace('-', '/'), bg: '#ecf2ff', fg: '#3b6fe0' },
       value: fmtH(d.hours), valueRed: d.hours >= 6,
     }))
     return {
@@ -655,7 +721,7 @@ export default function OverviewPage() {
     const people = employeeLeaveCumulative.filter(r => r.division === m.division)
     const rows: DeptCardPersonRow[] = people.slice(0, 6).map(p => ({
       key: p.employeeId, name: p.name,
-      tag: { text: `${p.hireYear ?? '—'}년 입사 · ${p.grantedDays}일`, bg: '#f1f5f9', fg: '#475569' },
+      tag: { text: `${p.hireYear ?? '—'}년 입사 · ${p.grantedDays}일`, bg: '#f1f2f4', fg: '#8b8d94' },
       value: `${fmtDays(p.usedDays)}/${p.grantedDays}일 · ${p.ratePct.toFixed(0)}%`,
       valueRed: p.ratePct < 45,
     }))
@@ -666,7 +732,7 @@ export default function OverviewPage() {
       captionLeft: `사용 ${fmtDays(row.usedDays)}일`, captionRight: `목표 ${cumulativeBenchmarkPct}%`,
       cells: [
         { label: '사용', value: `${fmtDays(row.usedDays)}일` },
-        { label: '잔여', value: `${fmtDays(remain)}일`, color: remain > 8 ? '#dc2626' : undefined },
+        { label: '잔여', value: `${fmtDays(remain)}일`, color: remain > 8 ? '#e5342f' : undefined },
       ],
       listHeaderLabel: `사원 ${rows.length}명`, listSortLabel: '사용률 낮은 순',
       rows,
@@ -704,8 +770,25 @@ export default function OverviewPage() {
     : period.granularity === 'week' ? (weekTab === 'overtime' ? buildWeekOvertimeCard : buildWeekHolidayCard)
     : (monthBasis === 'cumulative' ? buildMonthCumulativeCard : buildMonthSingleCard)
   const metricsByDivision = new Map(metrics.map(m => [m.division, m]))
-  const businessCards = BUSINESS_DIVISIONS.map(d => metricsByDivision.get(d)).filter((m): m is (typeof metrics)[number] => !!m).map(cardBuilder)
-  const supportCards  = SUPPORT_DIVISIONS.map(d => metricsByDivision.get(d)).filter((m): m is (typeof metrics)[number] => !!m).map(cardBuilder)
+  // 선택 기간에 원본 레코드 자체가 없으면(예: 아직 업로드 안 된 오늘) 각 카드의 severity
+  // 계산식이 전부 "0% ?? 0" 같은 폴백을 타서 실제로는 판정 불가한데도 최악(action=빨강)으로
+  // 뜬다 — 진짜 이상치와 구분되게 nodata로 덮어써서 회색으로 표시한다(2026-09-07).
+  const hasScopedData = scopedRecords.length > 0
+  const withDataGuard = (c: DeptCardVM): DeptCardVM => hasScopedData ? c : { ...c, severity: 'nodata' }
+  const businessCards = BUSINESS_DIVISIONS.map(d => metricsByDivision.get(d)).filter((m): m is (typeof metrics)[number] => !!m).map(cardBuilder).map(withDataGuard)
+  const supportCards  = SUPPORT_DIVISIONS.map(d => metricsByDivision.get(d)).filter((m): m is (typeof metrics)[number] => !!m).map(cardBuilder).map(withDataGuard)
+
+  // ── 부서 랭킹 TOP3(day/week 전용) — 10개 카드를 다 안 훑어도 어디부터 볼지 한눈에.
+  // severity 우선 정렬(조치필요>주의>정상), 동률만 mainValue로 세분화. 전부 normal이면 안 보여줌.
+  // day는 mainValue가 출근율(낮을수록 나쁨→오름차순), week는 위험인원수(높을수록 나쁨→내림차순).
+  const SEVERITY_RANK: Record<string, number> = { action: 2, warning: 1, normal: 0, nodata: -1 }
+  const tieBreakDir = period.granularity === 'day' ? 1 : -1
+  const rankedTopCards = (period.granularity === 'day' || period.granularity === 'week')
+    ? [...businessCards, ...supportCards]
+        .filter(c => c.severity !== 'nodata' && c.severity !== 'normal')
+        .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || tieBreakDir * (Number(a.mainValue) - Number(b.mainValue)))
+        .slice(0, 3)
+    : []
 
   /** 구획(사업부/지원부) 헤더 우측 요약 3항목 — 카드 그리드와 같은 소스에서 그 구획 divisions만 다시 롤업. */
   function summaryForGroup(divisions: readonly string[]): DeptSectionSummaryItem[] {
@@ -770,23 +853,25 @@ export default function OverviewPage() {
   }
 
   return (
-    <div className="p-6 space-y-5 max-w-6xl">
+    <div className="wrap">
+    {/* 부서별 현황(다수 카드 그리드)이 화면을 꽉 채우도록, 공용 .col.wide(1420px)보다
+        넓게 인라인으로 오버라이드 — 그리드 화면 등 다른 소비처의 .wide 정의는 안 건드림. */}
+    <div className="col wide" style={{ maxWidth: 'none' }}>
       {/* ── 헤더: 기간 선택 ── */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-lg font-bold text-gray-900">종합 현황</h1>
-          <p className="text-xs text-gray-400 mt-0.5">이상치 · 휴일근무 · 초과근무 · 휴가를 한눈에</p>
-        </div>
+      <div className="ptitle">
+        <h2>경영진 현황</h2>
+        <span className="sp" />
         <PeriodSelector period={period} />
       </div>
+      <p className="text-xs text-[var(--ink-3)] -mt-3">이상치 · 휴일근무 · 초과근무 · 휴가를 한눈에</p>
 
       {/* ── 본부 필터 ── */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[11px] font-semibold text-gray-400 mr-0.5">본부</span>
+        <span className="text-[11px] font-semibold text-[var(--ink-3)] mr-0.5">본부</span>
         <button
           onClick={() => setSelectedDivision(null)}
           className={`text-xs font-medium px-3 py-1 rounded-full border transition-colors ${
-            selectedDivision === null ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-blue-300'
+            selectedDivision === null ? 'bg-[var(--dark)] border-[var(--dark)] text-white' : 'bg-white border-[var(--line)] text-[var(--ink-3)] hover:border-[var(--ink-4)]'
           }`}
         >
           전체
@@ -796,34 +881,34 @@ export default function OverviewPage() {
             key={d}
             onClick={() => setSelectedDivision(prev => (prev === d ? null : d))}
             className={`text-xs font-medium px-3 py-1 rounded-full border transition-colors ${
-              selectedDivision === d ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-blue-300'
+              selectedDivision === d ? 'bg-[var(--dark)] border-[var(--dark)] text-white' : 'bg-white border-[var(--line)] text-[var(--ink-3)] hover:border-[var(--ink-4)]'
             }`}
           >
             {d}
           </button>
         ))}
-        <span className="text-[10.5px] text-gray-300 ml-1">선택한 본부 기준으로 아래 숫자·그래프가 전부 바뀝니다</span>
+        <span className="text-[10.5px] text-[var(--ink-4)] ml-1">선택한 본부 기준으로 아래 숫자·그래프가 전부 바뀝니다</span>
       </div>
 
       {/* ── v9 디자인 핸드오프: 근태 이상치 헤더 + (이상치/조직도 상위 탭은 기존 그대로 유지) ── */}
       <div className="space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2.5">
-            <h2 className="text-[19px] font-extrabold text-gray-900 tracking-tight">근태 이상치</h2>
+            <h2 className="text-[19px] font-extrabold text-[var(--ink)] tracking-tight">근태 이상치</h2>
             <span
               className="text-[11.5px] font-extrabold text-white px-[11px] py-1 rounded-[7px]"
-              style={{ background: overallSeverity === 'action' ? '#dc2626' : overallSeverity === 'warning' ? '#f59e0b' : '#16a34a' }}
+              style={{ background: overallSeverity === 'action' ? '#e5342f' : overallSeverity === 'warning' ? '#d17600' : '#00b13c' }}
             >
               {overallSeverity === 'action' ? '비정상' : overallSeverity === 'warning' ? '주의' : '정상'}
             </span>
           </div>
-          <p className="text-[11.5px] text-gray-400">{headerSubtitle}</p>
+          <p className="text-[11.5px] text-[var(--ink-3)]">{headerSubtitle}</p>
           <span className="flex-1" />
-          <div className="flex bg-gray-100 rounded-lg p-0.5">
+          <div className="flex bg-[var(--line-2)] rounded-lg p-0.5">
             <button
               onClick={() => setViewMode('anomaly')}
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                viewMode === 'anomaly' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                viewMode === 'anomaly' ? 'bg-white text-[var(--neg)] shadow-sm' : 'text-[var(--ink-3)] hover:text-[var(--ink-2)]'
               }`}
             >
               이상치
@@ -831,7 +916,7 @@ export default function OverviewPage() {
             <button
               onClick={() => setViewMode('chart')}
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                viewMode === 'chart' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                viewMode === 'chart' ? 'bg-white text-[var(--info)] shadow-sm' : 'text-[var(--ink-3)] hover:text-[var(--ink-2)]'
               }`}
             >
               조직도
@@ -881,20 +966,20 @@ export default function OverviewPage() {
             {/* 3. 부서별 현황 — 사업부/지원부 두 구획, 주간에는 연장/휴일 하위탭 추가 */}
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
-                <p className="text-[14.5px] font-bold text-gray-800">부서별 현황</p>
-                <p className="text-[11px] text-gray-400">{deptSectionSubtitle}</p>
+                <p className="text-[14.5px] font-bold text-[var(--ink)]">부서별 현황</p>
+                <p className="text-[11px] text-[var(--ink-3)]">{deptSectionSubtitle}</p>
               </div>
               {period.granularity === 'week' && (
-                <div className="flex bg-gray-100 rounded-lg p-0.5">
+                <div className="flex bg-[var(--line-2)] rounded-lg p-0.5">
                   <button
                     onClick={() => setWeekTab('overtime')}
-                    className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${weekTab === 'overtime' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}
+                    className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${weekTab === 'overtime' ? 'bg-white text-[var(--info)] shadow-sm' : 'text-[var(--ink-3)]'}`}
                   >
                     연장근로
                   </button>
                   <button
                     onClick={() => setWeekTab('holiday')}
-                    className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${weekTab === 'holiday' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}
+                    className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${weekTab === 'holiday' ? 'bg-white text-[var(--info)] shadow-sm' : 'text-[var(--ink-3)]'}`}
                   >
                     휴일근로
                   </button>
@@ -902,387 +987,56 @@ export default function OverviewPage() {
               )}
             </div>
 
-            <DeptSection label="사업부" accent="#dc2626" cards={businessCards} summary={businessSummary} />
-            <DeptSection label="지원부" accent="#2563eb" cards={supportCards} summary={supportSummary} />
-          </div>
-        )}
-      </div>
-
-      {/* ── 조직 정합성: 인력 마스터가 아직 연동 전이면(재직자 0명) 자동으로 숨김 + 지금은 SHOW_ORG_INTEGRITY로 전체 비활성 ── */}
-      {SHOW_ORG_INTEGRITY && masterActive.length > 0 && (
-        <div className="grid grid-cols-2 gap-3">
-          <KpiTile label="마스터 정원" value={masterActive.length} unit="명" color="#0f766e"
-            sub="조직도 시트 기준 재직자 수"
-            onClick={() => openAndScroll('orgIntegrity')} />
-          <KpiTile label="조직 정합성 확인필요" value={masterDiscrepancies.length} unit="건" color="#c4291f"
-            sub={masterDiscrepancies.length === 0 ? '마스터-CAPS 불일치 없음' : '눌러서 명단 보기'}
-            onClick={() => openAndScroll('orgIntegrity')} />
-        </div>
-      )}
-
-      {/* ── 상세 아코디언 (기본 접힘 — 타일 클릭 시 해당 항목만 펼쳐짐) ── */}
-      {/* 본부별 비교 그래프는 각 섹션 안에 그래프→상세 순서로 함께 들어있다 (탭 분리 없음) */}
-      <div className="space-y-3">
-        <AccordionSection
-          innerRef={el => { sectionRefs.current.anomaly = el }}
-          icon="⚠️" title="근태 이상치 상세" subtitle="지각 · 근무시간 미달 · 미태깅"
-          isOpen={openSection === 'anomaly'} onToggle={() => toggleSection('anomaly')}
-        >
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Box className="!bg-blue-600 !text-white flex items-center gap-4">
-              <div className="w-16 h-16 shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={[{ value: normalRate.normal }, { value: Math.max(0, normalRate.total - normalRate.normal) }]}
-                      dataKey="value" innerRadius={22} outerRadius={32} startAngle={90} endAngle={-270} stroke="none"
-                    >
-                      {PIE_COLORS.map((c, i) => <Cell key={i} fill={i === 0 ? '#ffffff' : 'rgba(255,255,255,0.25)'} />)}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div>
-                <p className="text-[11px] opacity-80">정상 출근율</p>
-                <p className="text-2xl font-bold tabular-nums">{normalRate.pct.toFixed(1)}%</p>
-                <p className="text-[11px] opacity-70 tabular-nums">({normalRate.normal}/{normalRate.total})</p>
-              </div>
-            </Box>
-            <Box className="flex flex-col justify-center gap-2">
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide">이상 건수 합계</p>
-              <AnomalyMetricBadges m={{ ...anomalyTotals, leave: 0 }} size="lg" />
-            </Box>
-            <Box>
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">부서별 TOP3</p>
-              {divAnomaly.length === 0 ? <p className="text-xs text-gray-300">이상 없음</p> : (
-                <ul className="space-y-1">
-                  {divAnomaly.slice(0, 3).map(r => (
-                    <li key={r.key} className="flex items-center justify-between text-xs">
-                      <span className="text-gray-600 truncate">{r.label}</span>
-                      <span className="font-semibold text-gray-800 tabular-nums">{r.total}건</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Box>
-          </div>
-
-          {period.granularity !== 'day' && (
-            <div>
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">본부별 비교</p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <DivisionCompareChart title="지각" color="#b4650a" unit="건" data={compareLate} compact />
-                <DivisionCompareChart title="근무시간 미달" color="#c4291f" unit="건" data={compareShortage} compact />
-                <DivisionCompareChart title="미태깅" color="#c4291f" unit="건" data={compareNotag} compact />
-              </div>
-            </div>
-          )}
-
-          {empAnomaly.length === 0 ? <EmptyNote text="이 기간엔 이상치가 없습니다." /> : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-gray-100 text-gray-400">
-                    <th className="text-left py-2 font-medium">부서</th>
-                    <th className="text-left py-2 font-medium">이름</th>
-                    <th className="text-right py-2 font-medium">지각</th>
-                    <th className="text-right py-2 font-medium">근무시간 미달</th>
-                    <th className="text-right py-2 font-medium">미태깅</th>
-                    <th className="text-right py-2 font-medium">총합계</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {empAnomaly.map(r => (
-                    <tr key={r.key} className="hover:bg-gray-50/70">
-                      <td className="py-1.5 text-gray-500">{r.division}</td>
-                      <td className="py-1.5 font-medium text-gray-800">{r.label}</td>
-                      <td className="py-1.5 text-right tabular-nums">{r.late || '—'}</td>
-                      <td className="py-1.5 text-right tabular-nums">{r.shortage || '—'}</td>
-                      <td className="py-1.5 text-right tabular-nums">{r.notag || '—'}</td>
-                      <td className="py-1.5 text-right font-semibold tabular-nums">{r.total}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </AccordionSection>
-
-        <AccordionSection
-          innerRef={el => { sectionRefs.current.holiday = el }}
-          icon="☀️" title="휴일근무 상세" subtitle="휴일 실근무 시간 · 인원"
-          isOpen={openSection === 'holiday'} onToggle={() => toggleSection('holiday')}
-        >
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Box className="md:col-span-2">
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">
-                부서별 휴일근무 시간 (합계 {fmtH(totalHolidayH)})
-              </p>
-              {divHoliday.length === 0 ? <p className="text-xs text-gray-300">휴일근무 내역 없음</p> : (
-                <div className="h-40">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={divHoliday} layout="vertical" margin={{ left: 8, right: 16 }}>
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
-                      <XAxis type="number" tick={{ fontSize: 10 }} />
-                      <YAxis type="category" dataKey="label" width={90} tick={{ fontSize: 10 }} />
-                      <Tooltip formatter={(v: unknown) => [fmtH(Number(v ?? 0)), '휴일근무']} />
-                      <Bar dataKey="hours" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </Box>
-            <Box>
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">오늘 휴일근무</p>
-              {todayHoliday.length === 0 ? <p className="text-xs text-gray-300 py-4 text-center">오늘은 휴일근무 인원이 없습니다.</p> : (
-                <ul className="space-y-1.5 max-h-40 overflow-y-auto">
-                  {todayHoliday.map(e => (
-                    <li key={e.employeeId} className="flex items-center justify-between text-xs">
-                      <span className="text-gray-700">{e.name} <span className="text-gray-300 text-[10px]">{e.division}</span></span>
-                      <span className="text-purple-600 font-semibold tabular-nums">{fmtH(e.hours)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Box>
-          </div>
-
-          {empHoliday.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-gray-100 text-gray-400">
-                    <th className="text-left py-2 font-medium">부서</th>
-                    <th className="text-left py-2 font-medium">이름</th>
-                    <th className="text-right py-2 font-medium">휴일근무 시간</th>
-                    <th className="text-right py-2 font-medium">일수</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {empHoliday.map(r => (
-                    <tr key={r.key} className="hover:bg-gray-50/70">
-                      <td className="py-1.5 text-gray-500">{r.division}</td>
-                      <td className="py-1.5 font-medium text-gray-800">{r.label}</td>
-                      <td className="py-1.5 text-right tabular-nums font-semibold">{fmtH(r.hours)}</td>
-                      <td className="py-1.5 text-right tabular-nums">{r.count}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </AccordionSection>
-
-        <AccordionSection
-          innerRef={el => { sectionRefs.current.ot = el }}
-          icon="⏱️" title="연장근로 상세"
-          subtitle={period.granularity === 'day' ? '오늘 초과근무 발생 인원' : `${otTileLabel} — 법정 ${overLimitHours}시간 관리 대상`}
-          isOpen={openSection === 'ot'} onToggle={() => toggleSection('ot')}
-        >
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Box className="md:col-span-2">
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">
-                일자별 초과근무 인원 (기간 합계 {fmtH(totalOtH)})
-              </p>
-              <div className="h-40">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dailyOt} margin={{ top: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                    <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={0} angle={dailyOt.length > 10 ? -45 : 0} textAnchor={dailyOt.length > 10 ? 'end' : 'middle'} height={dailyOt.length > 10 ? 40 : 20} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                    <Tooltip formatter={(v: unknown) => [`${Number(v ?? 0)}명`, '초과근무']} />
-                    <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </Box>
-            <Box>
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">오늘 초과근무</p>
-              {todayOt.length === 0 ? <p className="text-xs text-gray-300 py-4 text-center">배정된 초과근무가 없습니다.</p> : (
-                <ul className="space-y-1.5 max-h-40 overflow-y-auto">
-                  {todayOt.map(e => (
-                    <li key={e.employeeId} className="flex items-center justify-between text-xs">
-                      <span className="text-gray-700">{e.name} <span className="text-gray-300 text-[10px]">{e.division}</span></span>
-                      <span className="text-blue-600 font-semibold tabular-nums">{fmtH(e.hours)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Box>
-          </div>
-
-          {period.granularity !== 'day' && (
-            <DivisionCompareChart title={`본부별 ${otTileLabel}`} color="#2f6fed" unit="명" data={compareOt} />
-          )}
-
-          {period.granularity !== 'day' && (
-            <div>
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">
-                {otTileLabel} ({overLimitRows.length}명) — 기준 {overLimitHours}h 초과분만 표시
-              </p>
-              {overLimitRows.length === 0 ? <EmptyNote text={`기준(${overLimitHours}h) 초과 인원이 없습니다.`} /> : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b border-gray-100 text-gray-400">
-                        <th className="text-left py-2 font-medium">부서</th>
-                        <th className="text-left py-2 font-medium">이름</th>
-                        <th className="text-right py-2 font-medium">{period.granularity === 'week' ? '주간' : '월간'} 총 근로시간</th>
-                        <th className="text-right py-2 font-medium">초과분</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {overLimitRows.map(r => (
-                        <tr key={r.employeeId} className="hover:bg-gray-50/70">
-                          <td className="py-1.5 text-gray-500">{r.division}</td>
-                          <td className="py-1.5 font-medium text-gray-800">{r.name}</td>
-                          <td className="py-1.5 text-right font-semibold tabular-nums">{fmtH(r.hours)}</td>
-                          <td className="py-1.5 text-right tabular-nums text-red-600 font-semibold">+{fmtH(r.overBy)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-gray-100 text-gray-400">
-                  <th className="text-left py-2 font-medium">부서</th>
-                  <th className="text-right py-2 font-medium">인원</th>
-                  <th className="text-right py-2 font-medium">연장/야간/휴일 합계</th>
-                  {period.granularity !== 'day' && <th className="text-right py-2 font-medium">{overLimitHours}h 초과</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {metrics.map(m => (
-                  <tr key={m.division} className="hover:bg-gray-50/70">
-                    <td className="py-1.5 text-gray-700 font-medium">{m.division}</td>
-                    <td className="py-1.5 text-right tabular-nums">{m.headcount}</td>
-                    <td className="py-1.5 text-right tabular-nums">{fmtH(m.otHours)}</td>
-                    {period.granularity !== 'day' && (
-                      <td className="py-1.5 text-right tabular-nums">
-                        {(overLimitByDivision.get(m.division) ?? 0) > 0 ? `${overLimitByDivision.get(m.division)}명` : '—'}
-                      </td>
-                    )}
-                  </tr>
+            {rankedTopCards.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap text-[12.5px]">
+                <span className="font-bold text-[var(--ink)]">
+                  이번 {period.granularity === 'day' ? '일' : '주'} 확인 필요 TOP{rankedTopCards.length}
+                </span>
+                {rankedTopCards.map((c, i) => (
+                  <span key={c.division} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md"
+                    style={{ background: c.severity === 'action' ? 'var(--neg-bg)' : 'var(--cau-bg)', color: c.severity === 'action' ? 'var(--neg)' : 'var(--cau)' }}>
+                    {i + 1}. {c.division} {c.mainValue}{c.mainUnit}
+                  </span>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </AccordionSection>
-
-        <AccordionSection
-          innerRef={el => { sectionRefs.current.leave = el }}
-          icon="🏖️" title="휴가 사용 상세" subtitle="부서 · 인원별 사용 현황"
-          isOpen={openSection === 'leave'} onToggle={() => toggleSection('leave')}
-        >
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Box className="md:col-span-2">
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">
-                부서별 사용일수 (합계 {fmtDays(totalLeaveDays)}일)
-              </p>
-              {divLeave.length === 0 ? <p className="text-xs text-gray-300">사용 내역 없음</p> : (
-                <div className="h-40">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={divLeave} layout="vertical" margin={{ left: 8, right: 16 }}>
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
-                      <XAxis type="number" tick={{ fontSize: 10 }} />
-                      <YAxis type="category" dataKey="label" width={90} tick={{ fontSize: 10 }} />
-                      <Tooltip formatter={(v: unknown) => [`${fmtDays(Number(v ?? 0))}일`, '사용일수']} />
-                      <Bar dataKey="days" fill="#10b981" radius={[0, 4, 4, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </Box>
-            <Box>
-              <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">오늘 휴가 중</p>
-              {todayLeave.length === 0 ? <p className="text-xs text-gray-300 py-4 text-center">오늘은 휴가 인원이 없습니다.</p> : (
-                <ul className="space-y-1.5 max-h-40 overflow-y-auto">
-                  {todayLeave.map(e => (
-                    <li key={e.employeeId} className="flex items-center justify-between text-xs">
-                      <span className="text-gray-700">{e.name} <span className="text-gray-300 text-[10px]">{e.division}</span></span>
-                      <span className="text-emerald-600 font-medium">{e.leaveType}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Box>
-          </div>
-
-          {empLeave.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-gray-100 text-gray-400">
-                    <th className="text-left py-2 font-medium">부서</th>
-                    <th className="text-left py-2 font-medium">이름</th>
-                    <th className="text-right py-2 font-medium">사용일수</th>
-                    <th className="text-right py-2 font-medium">건수</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {empLeave.map(r => (
-                    <tr key={r.key} className="hover:bg-gray-50/70">
-                      <td className="py-1.5 text-gray-500">{r.division}</td>
-                      <td className="py-1.5 font-medium text-gray-800">{r.label}</td>
-                      <td className="py-1.5 text-right tabular-nums">{fmtDays(r.days)}</td>
-                      <td className="py-1.5 text-right tabular-nums">{r.count}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </AccordionSection>
-
-        {SHOW_ORG_INTEGRITY && masterActive.length > 0 && (
-          <AccordionSection
-            innerRef={el => { sectionRefs.current.orgIntegrity = el }}
-            icon="🗂️" title="조직 정합성" subtitle="조직도 시트 인력 마스터 vs CAPS 업로드 대조"
-            isOpen={openSection === 'orgIntegrity'} onToggle={() => toggleSection('orgIntegrity')}
-          >
-            {masterDiscrepancies.length === 0 ? (
-              <EmptyNote text="마스터와 CAPS 데이터가 모두 일치합니다." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-gray-100 text-gray-400">
-                      <th className="text-left py-2 font-medium">구분</th>
-                      <th className="text-left py-2 font-medium">이름</th>
-                      <th className="text-left py-2 font-medium">부서</th>
-                      <th className="text-left py-2 font-medium">사원번호</th>
-                      <th className="text-left py-2 font-medium">내용</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {masterDiscrepancies.map(d => (
-                      <tr key={`${d.type}_${d.rawId}`} className="hover:bg-gray-50/70">
-                        <td className="py-1.5">
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                            d.type === 'MASTER_ACTIVE_NOT_IN_CAPS' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'
-                          }`}>
-                            {d.type === 'MASTER_ACTIVE_NOT_IN_CAPS' ? '마스터→CAPS 미확인' : 'CAPS→마스터 미등록'}
-                          </span>
-                        </td>
-                        <td className="py-1.5 font-medium text-gray-800">{d.name}</td>
-                        <td className="py-1.5 text-gray-500">{d.division}</td>
-                        <td className="py-1.5 text-gray-400 tabular-nums">{d.rawId}</td>
-                        <td className="py-1.5 text-gray-500">{d.detail}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
               </div>
             )}
-          </AccordionSection>
+
+            <DeptSection label="사업부" accent="#e5342f" cards={businessCards} summary={businessSummary} />
+            <DeptSection label="지원부" accent="#3b6fe0" cards={supportCards} summary={supportSummary} />
+
+            {(period.granularity === 'day' || period.granularity === 'week') && (
+              <div className="card">
+                <div className="px-4 py-3 border-b border-[var(--line)]">
+                  <span className="text-sm font-semibold text-[var(--ink)]">상습·반복 이상치</span>
+                  <p className="text-xs text-[var(--ink-3)] mt-1">
+                    {period.granularity === 'day' ? '이번 주(월~오늘)' : '이번 달(1일~오늘)'} 2회 이상 이상치가 발생한 인원
+                  </p>
+                </div>
+                <div className="px-4 py-3">
+                  {repeatOffenders.length === 0 ? (
+                    <p className="text-xs text-[var(--ink-3)] text-center py-2">해당 없음</p>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {repeatOffenders.map(r => (
+                        <div key={r.key} className="flex items-center gap-2 text-[13px]">
+                          <span className="font-semibold text-[var(--ink)] min-w-[64px]">{r.label}</span>
+                          <span className="text-[var(--ink-3)] text-xs min-w-[100px] truncate">{r.division}</span>
+                          <span className="font-bold text-[var(--neg)]">{r.total}회</span>
+                          <span className="text-[var(--ink-3)] text-xs">
+                            (지각 {r.late} · 미달 {r.shortage} · 미태깅 {r.notag})
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
+
+    </div>
     </div>
   )
 }
@@ -1300,4 +1054,8 @@ function fmtH(hours: number): string {
   const hh = Math.floor(m / 60)
   const mm = m % 60
   return mm > 0 ? `${hh}h ${mm}m` : `${hh}h`
+}
+
+function formatWon(amount: number): string {
+  return `약 ${Math.round(amount).toLocaleString('ko-KR')}원`
 }
