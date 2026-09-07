@@ -1,6 +1,7 @@
 'use client'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import Link from 'next/link'
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip,
@@ -351,8 +352,13 @@ export default function OverviewPage() {
   )
 
   // ── 전일/전주 대비 추세(day/week 뷰 전용) — 직전 동일 길이 구간을 같은 방식으로 스코핑.
+  // month 뷰는 이 데이터를 안 쓰는데 period.previous가 "전월 전체"라 범위가 큼 — ytdFrom과
+  // 동일한 패턴으로 안 쓰는 경우 range를 period와 같게 좁혀서 불필요한 대량 fetch를 막는다
+  // (2026-09-07, 일/주/월 전환 체감 지연 조사 결과).
+  const prevFetchFrom = period.granularity === 'month' ? period.from : period.previous.from
+  const prevFetchTo   = period.granularity === 'month' ? period.to   : period.previous.to
   const { records: prevRawRecords, employees: prevRawEmployees, globalExclusionIds: prevGlobalExclusionIds } =
-    useProcessedAttendance(period.previous.from, period.previous.to)
+    useProcessedAttendance(prevFetchFrom, prevFetchTo)
   const prevVisibleEmployees = useMemo(
     () => prevRawEmployees.filter(e => !prevGlobalExclusionIds.has(e.id)),
     [prevRawEmployees, prevGlobalExclusionIds],
@@ -535,7 +541,7 @@ export default function OverviewPage() {
           onClick: () => openAndScroll('ot'),
         },
         {
-          key: 'overtime', label: '연장근로', value: fmtH(total.headcount > 0 ? totalRecognizedOt / total.headcount : 0),
+          key: 'overtime', label: '주당 평균 연장근로', value: fmtH(total.headcount > 0 ? totalRecognizedOt / total.headcount : 0),
           footnote: '주당 평균',
           subRows: [
             { key: '총 연장', value: fmtH(totalRecognizedOt) },
@@ -639,7 +645,7 @@ export default function OverviewPage() {
 
     return {
       division: m.division, headcount: m.headcount, severity,
-      mainValue: rate.toFixed(1), mainUnit: '%',
+      mainValue: `${anomaly.total}`, mainUnit: '건', hideProgress: true,
       progressPct: rate, progressMarkerPct: OVERVIEW_POLICY.attendanceTargetPct,
       captionLeft: `초과 인원 ${divOtCount}명`, captionRight: `기준 ${OVERVIEW_POLICY.attendanceTargetPct}%`,
       cells: [
@@ -657,7 +663,6 @@ export default function OverviewPage() {
   function buildWeekOvertimeCard(m: (typeof metrics)[number]): DeptCardVM {
     const band = divisionRiskBands.find(b => b.division === m.division) ?? { caution: 0, warning: 0, danger: 0, avgHours: 0 }
     const weeklyOtAvg = m.headcount > 0 ? (otByDivision.get(m.division)?.otHours ?? 0) / m.headcount : 0
-    const riskCount = band.caution + band.warning + band.danger
     const severity =
       band.danger > 0 || weeklyOtAvg >= OVERVIEW_POLICY.weeklyOtActionH ? 'action'
       : band.caution + band.warning > 0 || weeklyOtAvg >= OVERVIEW_POLICY.weeklyOtWarningH ? 'warning' : 'normal'
@@ -673,7 +678,7 @@ export default function OverviewPage() {
 
     return {
       division: m.division, headcount: m.headcount, severity,
-      mainValue: `${riskCount}`, mainUnit: '명',
+      mainValue: `${band.danger}`, mainUnit: '명',
       progressPct: (weeklyOtAvg / 20) * 100, progressMarkerPct: (OVERVIEW_POLICY.weeklyOtActionH / 20) * 100,
       captionLeft: `주당 평균 ${fmtH(weeklyOtAvg)}`, captionRight: `기준 ${OVERVIEW_POLICY.weeklyOtActionH}h`,
       cells: [
@@ -778,17 +783,49 @@ export default function OverviewPage() {
   const businessCards = BUSINESS_DIVISIONS.map(d => metricsByDivision.get(d)).filter((m): m is (typeof metrics)[number] => !!m).map(cardBuilder).map(withDataGuard)
   const supportCards  = SUPPORT_DIVISIONS.map(d => metricsByDivision.get(d)).filter((m): m is (typeof metrics)[number] => !!m).map(cardBuilder).map(withDataGuard)
 
+  // ── 부서 카드 인사이트 메모(day/week 전용) — division+granularity+기간 단위로 저장.
+  // 다른 주/날짜로 이동하면 그 기간에 저장된 메모만 보이고, 돌아오면 다시 보인다.
+  const [overviewNotes, setOverviewNotes] = useState<Map<string, string>>(new Map())
+  useEffect(() => {
+    if (period.granularity !== 'day' && period.granularity !== 'week') { setOverviewNotes(new Map()); return }
+    let cancelled = false
+    fetch(`/api/overview-notes?granularity=${period.granularity}&from=${period.from}&to=${period.to}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(json => {
+        if (cancelled || !json) return
+        setOverviewNotes(new Map((json.notes as { division: string; note: string }[]).map(n => [n.division, n.note])))
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [period.granularity, period.from, period.to])
+
+  async function saveOverviewNote(division: string, note: string) {
+    await fetch('/api/overview-notes', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ division, granularity: period.granularity, periodFrom: period.from, periodTo: period.to, note }),
+    })
+    setOverviewNotes(prev => new Map(prev).set(division, note))
+  }
+
   // ── 부서 랭킹 TOP3(day/week 전용) — 10개 카드를 다 안 훑어도 어디부터 볼지 한눈에.
-  // severity 우선 정렬(조치필요>주의>정상), 동률만 mainValue로 세분화. 전부 normal이면 안 보여줌.
-  // day는 mainValue가 출근율(낮을수록 나쁨→오름차순), week는 위험인원수(높을수록 나쁨→내림차순).
+  // day는 카드에 실제로 보이는 이상치 총건수 그대로 내림차순(출근율 기준 severity와는 무관 —
+  // 화면에 보이는 숫자와 랭킹 기준이 어긋나면 헷갈린다는 피드백으로 통일함, 2026-09-07).
+  // week는 기존대로 severity 우선(조치필요>주의) 후 52h 초과자 수로 세분화 — danger가 곧
+  // mainValue라 이미 일치함.
   const SEVERITY_RANK: Record<string, number> = { action: 2, warning: 1, normal: 0, nodata: -1 }
-  const tieBreakDir = period.granularity === 'day' ? 1 : -1
-  const rankedTopCards = (period.granularity === 'day' || period.granularity === 'week')
-    ? [...businessCards, ...supportCards]
-        .filter(c => c.severity !== 'nodata' && c.severity !== 'normal')
-        .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || tieBreakDir * (Number(a.mainValue) - Number(b.mainValue)))
-        .slice(0, 3)
-    : []
+  const rankedTopCards =
+    period.granularity === 'day'
+      ? [...businessCards, ...supportCards]
+          .filter(c => c.severity !== 'nodata' && Number(c.mainValue) > 0)
+          .sort((a, b) => Number(b.mainValue) - Number(a.mainValue))
+          .slice(0, 3)
+    : period.granularity === 'week'
+      ? [...businessCards, ...supportCards]
+          .filter(c => c.severity !== 'nodata' && c.severity !== 'normal')
+          .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || Number(b.mainValue) - Number(a.mainValue))
+          .slice(0, 3)
+      : []
 
   /** 구획(사업부/지원부) 헤더 우측 요약 3항목 — 카드 그리드와 같은 소스에서 그 구획 divisions만 다시 롤업. */
   function summaryForGroup(divisions: readonly string[]): DeptSectionSummaryItem[] {
@@ -1001,8 +1038,16 @@ export default function OverviewPage() {
               </div>
             )}
 
-            <DeptSection label="사업부" accent="#e5342f" cards={businessCards} summary={businessSummary} />
-            <DeptSection label="지원부" accent="#3b6fe0" cards={supportCards} summary={supportSummary} />
+            <DeptSection
+              label="사업부" accent="#e5342f" cards={businessCards} summary={businessSummary}
+              notes={overviewNotes}
+              onSaveNote={period.granularity === 'day' || period.granularity === 'week' ? saveOverviewNote : undefined}
+            />
+            <DeptSection
+              label="지원부" accent="#3b6fe0" cards={supportCards} summary={supportSummary}
+              notes={overviewNotes}
+              onSaveNote={period.granularity === 'day' || period.granularity === 'week' ? saveOverviewNote : undefined}
+            />
 
             {(period.granularity === 'day' || period.granularity === 'week') && (
               <div className="card">
@@ -1019,7 +1064,12 @@ export default function OverviewPage() {
                     <div className="flex flex-col gap-2">
                       {repeatOffenders.map(r => (
                         <div key={r.key} className="flex items-center gap-2 text-[13px]">
-                          <span className="font-semibold text-[var(--ink)] min-w-[64px]">{r.label}</span>
+                          <Link
+                            href={`/admin/employees/${r.key.split('_')[0]}`}
+                            className="font-semibold text-[var(--ink)] min-w-[64px] hover:underline hover:text-[var(--pri)]"
+                          >
+                            {r.label}
+                          </Link>
                           <span className="text-[var(--ink-3)] text-xs min-w-[100px] truncate">{r.division}</span>
                           <span className="font-bold text-[var(--neg)]">{r.total}회</span>
                           <span className="text-[var(--ink-3)] text-xs">

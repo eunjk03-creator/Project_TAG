@@ -162,6 +162,20 @@ model ExportHistory {
   @@map("export_history")
 }
 
+// ─── 경영진 현황 부서 카드 인사이트 메모 (기간별 저장) ──────────────
+model OverviewNote {
+  id          String   @id @default(uuid())
+  division    String
+  granularity String                      // 'day' | 'week'
+  periodFrom  String   @map("period_from")
+  periodTo    String   @map("period_to")
+  note        String
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([division, granularity, periodFrom, periodTo])
+  @@map("overview_notes")
+}
+
 // ─── 관리자 수정 이력 (새로고침 후에도 유지) ──────────────
 model AttendanceOverride {
   id           String   @id @default(uuid())

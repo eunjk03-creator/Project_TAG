@@ -5,12 +5,15 @@ export interface DeptSectionSummaryItem { label: string; value: string }
 
 /** 사업부/지원부 구획 하나 — 좌측 accent 바 + 구획명 + {n}개·{m}명, 우측 기간별 요약 3항목. */
 export function DeptSection({
-  label, accent, cards, summary,
+  label, accent, cards, summary, notes, onSaveNote,
 }: {
   label: string
   accent: string
   cards: DeptCardVM[]
   summary: DeptSectionSummaryItem[]
+  /** division → 저장된 인사이트 메모(현재 보고 있는 기간 기준) */
+  notes?: Map<string, string>
+  onSaveNote?: (division: string, note: string) => Promise<void>
 }) {
   const headcount = cards.reduce((s, c) => s + c.headcount, 0)
   return (
@@ -30,7 +33,13 @@ export function DeptSection({
         </div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-[11px] items-stretch">
-        {cards.map(c => <DeptCard key={c.division} vm={c} />)}
+        {cards.map(c => (
+          <DeptCard
+            key={c.division} vm={c}
+            note={notes?.get(c.division)}
+            onSaveNote={onSaveNote ? (text: string) => onSaveNote(c.division, text) : undefined}
+          />
+        ))}
       </div>
     </div>
   )

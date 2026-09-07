@@ -1,5 +1,6 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { ChevronDown } from 'lucide-react'
 
 export type DeptCardSeverity = 'normal' | 'warning' | 'action' | 'nodata'
@@ -32,6 +33,8 @@ export interface DeptCardVM {
   mainUnit?: string
   progressPct: number
   progressMarkerPct?: number
+  /** true면 진행바+마커를 안 그림(일 뷰: 이상치 총건수만 보여줄 때 %진행바가 의미 없음) */
+  hideProgress?: boolean
   captionLeft: string
   captionRight: string
   cells: DeptCardCell[]
@@ -56,12 +59,36 @@ const BADGE: Record<DeptCardSeverity, { bg: string; fg: string; label: string }>
   nodata:  { bg: '#f1f2f4', fg: '#b8bac0', label: '데이터 없음' },
 }
 
-export function DeptCard({ vm }: { vm: DeptCardVM }) {
+export function DeptCard({ vm, note, onSaveNote }: {
+  vm: DeptCardVM
+  /** 이번에 보고 있는 기간(day/week)에 저장된 이 부서의 인사이트 메모 */
+  note?: string
+  onSaveNote?: (text: string) => Promise<void>
+}) {
   const [open, setOpen] = useState(true)
+  const [noteDraft, setNoteDraft] = useState(note ?? '')
+  const [noteSaving, setNoteSaving] = useState(false)
+  const [noteSaved, setNoteSaved] = useState(false)
   const badge = BADGE[vm.severity]
 
+  // DeptCard 인스턴스는 division 기준으로 재사용되고 기간(period)만 바뀔 수 있어서, note prop이
+  // 바뀌면(다른 주/날짜로 이동) 편집 중이던 draft도 그 기간 값으로 다시 맞춰준다.
+  useEffect(() => { setNoteDraft(note ?? '') }, [note])
+
+  async function handleSaveNote() {
+    if (!onSaveNote) return
+    setNoteSaving(true)
+    try {
+      await onSaveNote(noteDraft)
+      setNoteSaved(true)
+      setTimeout(() => setNoteSaved(false), 1500)
+    } finally {
+      setNoteSaving(false)
+    }
+  }
+
   return (
-    <section className="bg-white border border-[var(--line)] rounded-[13px] overflow-hidden flex flex-col h-[400px] hover:border-[var(--ink-4)] transition-colors">
+    <section className="bg-white border border-[var(--line)] rounded-[13px] overflow-hidden flex flex-col min-h-[400px] hover:border-[var(--ink-4)] transition-colors">
       <div className="h-[3px] shrink-0" style={{ background: BAND[vm.severity] }} />
 
       <div className="px-[15px] pt-[13px] pb-3 shrink-0">
@@ -76,12 +103,14 @@ export function DeptCard({ vm }: { vm: DeptCardVM }) {
           <span className="flex-1" />
           <span className="text-[9.5px] font-bold px-[7px] py-0.5 rounded shrink-0" style={{ background: badge.bg, color: badge.fg }}>{badge.label}</span>
         </div>
-        <div className="relative h-[5px] rounded-full bg-[var(--line-2)] mt-2 overflow-hidden">
-          <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, vm.progressPct))}%`, background: MAIN_COLOR[vm.severity] }} />
-          {vm.progressMarkerPct !== undefined && (
-            <div className="absolute -top-0.5 w-0.5 h-[9px] bg-[var(--ink)] rounded-sm" style={{ left: `${Math.max(0, Math.min(100, vm.progressMarkerPct))}%` }} />
-          )}
-        </div>
+        {!vm.hideProgress && (
+          <div className="relative h-[5px] rounded-full bg-[var(--line-2)] mt-2 overflow-hidden">
+            <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, vm.progressPct))}%`, background: MAIN_COLOR[vm.severity] }} />
+            {vm.progressMarkerPct !== undefined && (
+              <div className="absolute -top-0.5 w-0.5 h-[9px] bg-[var(--ink)] rounded-sm" style={{ left: `${Math.max(0, Math.min(100, vm.progressMarkerPct))}%` }} />
+            )}
+          </div>
+        )}
         <div className="flex items-center justify-between mt-1">
           <span className="text-[9.5px] text-[var(--ink-3)] truncate">{vm.captionLeft}</span>
           <span className="text-[9.5px] text-[var(--ink-3)] shrink-0">{vm.captionRight}</span>
@@ -122,7 +151,12 @@ export function DeptCard({ vm }: { vm: DeptCardVM }) {
             <p className="text-[11px] text-[var(--ink-4)] text-center py-3">해당 없음</p>
           ) : vm.rows.map(r => (
             <div key={r.key} className="flex items-center px-[15px] py-[7px] border-b border-[var(--line-2)] last:border-b-0 gap-1.5">
-              <span className="text-[11px] font-bold text-[var(--ink)] truncate">{r.name}</span>
+              <Link
+                href={`/admin/employees/${r.key.split('_')[0]}`}
+                className="text-[11px] font-bold text-[var(--ink)] truncate hover:underline hover:text-[var(--pri)]"
+              >
+                {r.name}
+              </Link>
               {r.tag && (
                 <span className="text-[9.5px] font-semibold px-1 rounded shrink-0" style={{ background: r.tag.bg, color: r.tag.fg }}>{r.tag.text}</span>
               )}
@@ -141,10 +175,35 @@ export function DeptCard({ vm }: { vm: DeptCardVM }) {
         </div>
       )}
 
-      <div className="mt-auto flex items-center justify-between px-[15px] py-2 bg-[#fafbfc] border-t border-[var(--line-2)] shrink-0">
+      <div className="flex items-center justify-between px-[15px] py-2 bg-[#fafbfc] border-t border-[var(--line-2)] shrink-0">
         <span className="text-[10px] text-[var(--ink-3)]">{vm.footerLabel}</span>
         <span className="text-[10.5px] font-extrabold text-[var(--ink-2)]">{vm.footerValue}</span>
       </div>
+
+      {onSaveNote && (
+        <div className="px-[15px] py-[10px] border-t border-[var(--line-2)] shrink-0">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[9.5px] font-bold text-[var(--ink-3)]">인사이트 메모</span>
+            <div className="flex items-center gap-1.5">
+              {noteSaved && <span className="text-[9.5px] text-[var(--pos)]">✓ 저장됨</span>}
+              <button
+                onClick={handleSaveNote}
+                disabled={noteSaving || noteDraft === (note ?? '')}
+                className="text-[9.5px] font-semibold px-[7px] py-0.5 rounded border border-[var(--line)] text-[var(--ink-2)] disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {noteSaving ? '저장 중…' : '저장'}
+              </button>
+            </div>
+          </div>
+          <textarea
+            value={noteDraft}
+            onChange={e => setNoteDraft(e.target.value)}
+            placeholder="이 기간 현황에 대한 설명을 적어두세요"
+            rows={2}
+            className="w-full text-[10.5px] leading-snug border border-[var(--line)] rounded-md px-2 py-1.5 resize-none focus:outline-none focus:border-[var(--pri)]"
+          />
+        </div>
+      )}
     </section>
   )
 }

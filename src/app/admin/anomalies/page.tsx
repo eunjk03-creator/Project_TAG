@@ -1,20 +1,17 @@
 'use client'
 import { useState, useMemo, useRef, useEffect } from 'react'
 import type { ReactNode } from 'react'
-import { useAttendanceLogic } from '@/hooks/useAttendanceLogic'
 import { usePolicy } from '@/context/PolicyContext'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { useDateRange } from '@/context/DateRangeContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
-import { useFullRawRecords } from '@/hooks/useProcessedAttendance'
-import { useSlack } from '@/context/SlackContext'
+import { useProcessedAttendance } from '@/hooks/useProcessedAttendance'
 import { DateRangePicker } from '@/components/admin/DateRangePicker'
 import { DailyDetailModal } from '@/components/admin/DailyDetailModal'
 import type { SavePayload } from '@/components/admin/DailyDetailModal'
 import { AnomalyResolutionModal } from '@/components/admin/AnomalyResolutionModal'
 import type { ResolutionTarget, TimeOverride } from '@/components/admin/AnomalyResolutionModal'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
-import { clockOverrideFields } from '@/utils/attendanceCalc'
 import type { ProcessedRecord, SieveFlag, EditHistoryEntry, Employee, ResolutionData } from '@/types/tag'
 
 // ── Badge taxonomy — synced with dashboard design system ──────────────────
@@ -112,14 +109,10 @@ function RecordedTime({ r }: { r: ProcessedRecord }): ReactNode {
 
 export default function AnomaliesPage() {
   const { policy }                  = usePolicy()
-  const { openDrawer, excludeFromOtIds, employeeAttrMap } = useEmployeeExceptions()
+  const { openDrawer }              = useEmployeeExceptions()
   const { dateRange, setDateRange } = useDateRange()
   const { recordOverrides, setRecordOverrides, resolutions, setResolutions } = useAttendanceData()
-  const { employees: liveEmployees, dataVersion } = useAttendanceSource()
-  // 이 화면은 전 직원 원본이 실제로 필요함(회사 전체 이상치 집계) — 그리드처럼 주간으로
-  // 좁힐 수 없어 전체를 받는다(useFullRawRecords, /api/attendance-raw-records?full=1).
-  const liveRecords = useFullRawRecords(dataVersion)
-  const { slackNoteMap } = useSlack()
+  const { employees: liveEmployees } = useAttendanceSource()
   const EMPLOYEES = liveEmployees  // used by sort/lookup helpers below
 
   // ── Top toggle ────────────────────────────────────────────────────────────
@@ -157,26 +150,14 @@ export default function AnomaliesPage() {
     return () => clearTimeout(id)
   }, [toast])
 
-  // ── Override-aware data pipeline ──────────────────────────────────────────
-  const overriddenRawRecords = useMemo(() => {
-    if (Object.keys(recordOverrides).length === 0) return liveRecords
-    return liveRecords.map(r => {
-      const ov = recordOverrides[`${r.employeeId}_${r.date}`]
-      if (!ov) return r
-      return {
-        ...r,
-        clockIn:      ov.clockIn,
-        clockOut:     ov.clockOut,
-        erpOtApplied: ov.erpOtApplied !== null ? ov.erpOtApplied : r.erpOtApplied,
-        ...clockOverrideFields(ov),
-      }
-    })
-  }, [recordOverrides, liveRecords])
-
-  const otExemptIds = useMemo(() => new Set([
-    ...excludeFromOtIds,
-    ...liveEmployees.filter(e => e.isLeader).map(e => e.id),
-  ]), [excludeFromOtIds, liveEmployees])
+  // ── 근태 데이터 — daily_attendance(정규화 테이블, 이미 processRecord로 계산 완료)에서
+  // 날짜 범위만큼만 받아온다. 예전엔 회사 전체 원본(약 4.7만 건)을 통째로 fetch해서 날짜
+  // 바꿀 때마다 processRecord()를 클라이언트에서 전부 재실행했는데(useFullRawRecords+
+  // useAttendanceLogic), DB 정규화 이후로는 daily_attendance가 이미 같은 processRecord()
+  // 엔진으로 계산된 값을 들고 있어서 그럴 필요가 없다 — /admin, /admin/overview와 동일한
+  // 패턴(useProcessedAttendance)으로 통일(2026-09-07, 날짜 필터 체감 지연 원인 조사 결과).
+  // recordOverrides/예외규칙 반영도 이 훅이 내부적으로 처리한다(admin 화면과 동일 로직).
+  const { records: processed } = useProcessedAttendance(dateRange.from, dateRange.to)
 
   const ALL_DIVISIONS = useMemo(
     () => [...new Set(liveEmployees.map(e => e.division))],
@@ -191,10 +172,6 @@ export default function AnomaliesPage() {
     }
     return map
   }, [liveEmployees])
-
-  const { processed } = useAttendanceLogic(
-    overriddenRawRecords, policy, dateRange.from, dateRange.to, otExemptIds, slackNoteMap, employeeAttrMap,
-  )
 
   const scopedEmployeeIds = useMemo(() => {
     let emps = liveEmployees
