@@ -531,7 +531,6 @@ function buildOtMap(
     const injeongKey  = Object.keys(r).find(k => k.replace(/\s+/g, '') === '인정시간')  ?? '인정시간'
     const startKey    = Object.keys(r).find(k => k.replace(/\s+/g, '') === '시작일')    ?? '시작일'
     const endKey      = Object.keys(r).find(k => k.replace(/\s+/g, '') === '종료일')    ?? '종료일'
-    const endTimeKey  = Object.keys(r).find(k => k.replace(/\s+/g, '') === '종료시간')  ?? '종료시간'
     const applyKey    = Object.keys(r).find(k => k.replace(/\s+/g, '') === '신청일')    ?? '신청일'
 
     const code  = String(r[codeKey]  ?? '').normalize('NFKC').trim()
@@ -551,12 +550,11 @@ function buildOtMap(
       if (applyDate) {
         const endDate      = normalizeDate(r[endKey]) || startDate
         const nextDay      = addOneDayUTC(startDate)
-        const endTimeStr   = String(r[endTimeKey] ?? '').trim()
-        const endTimeMins  = /^\d{1,2}:\d{2}$/.test(endTimeStr) ? toMinutes(endTimeStr) : null
-        // 자정 넘김 예외: 종료일이 시작일+1 "이고" 종료시각이 06:00 이내(익일 새벽)인 경우만
-        // 인정 — 그 이후(예: 익일 09시)까지 찍혀있으면 사실상 다음날 근무를 끼워넣은 것으로
-        // 보고 제외한다(정책상 야간 종료시각 06:00 기준, 2026-08-02 사용자 확인).
-        const crossesMidnight = endDate === nextDay && endTimeMins !== null && endTimeMins <= 6 * 60
+        // 자정 넘김 예외: 종료일이 시작일+1이면(실제로 자정을 넘겨 근무) 신청일이 다음날이어도
+        // 인정한다. 한때 종료시각 06:00 컷오프를 추가했었으나(2026-08-02) 06:00을 넘겨 퇴근한
+        // 정상 야근 건까지 미인정 처리되는 회귀가 발견되어(2026-09-08) 원래 규칙으로 되돌림 —
+        // 종료시각과 무관하게 종료일 기준으로만 판단.
+        const crossesMidnight = endDate === nextDay
         const validApplyDate  = applyDate === startDate || (crossesMidnight && applyDate === nextDay)
         if (!validApplyDate) continue
       }
