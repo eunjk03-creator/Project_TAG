@@ -89,17 +89,46 @@ function reassemble(row: DailyAttendanceRow): ProcessedRecord {
 export async function getProcessedRecords(opts?: {
   from?: string
   to?:   string
+  /** true면 employees/finalAttrMap을 아예 안 구한다 — records만 필요한 호출부 전용
+   *  (/api/attendance-records가 유일한 예: employees/finalAttrMap을 만들어도 그 결과는
+   *  visibleEmployees쪽에만 쓰이고 records엔 전혀 영향 안 주는데, 매 요청마다
+   *  buildEmployeeRoster()(caps_daily_logs distinct, 67k+행 스캔)만 1~1.6초가 걸려서
+   *  이 값을 안 쓰는 호출부에까지 그 비용을 물렸다 — 2026-09-08 실측, 화면 이동 로딩
+   *  체감의 실제 최대 원인). export 라우트들처럼 employees/finalAttrMap이 필요하면
+   *  이 옵션을 빼고 그대로 쓸 것. */
+  recordsOnly?: boolean
 }): Promise<{ employees: Employee[]; records: ProcessedRecord[]; finalAttrMap: Map<string, EmployeeAttributeOverrides> }> {
-  // 1~3번은 서로 의존관계가 없다(직원 목록/예외규칙/기간별 daily_attendance 조회가 각각
-  // 독립적) — 예전엔 순차 await라 요청마다 DB 왕복이 3번 이어졌는데(2026-09-08, 화면 이동
-  // 시 로딩 체감 원인으로 발견 — Overview 페이지 하나가 useProcessedAttendance를 4번 병렬
-  // 호출해서 이 3연속 왕복이 다시 4배로 겹쳐졌다), Promise.all로 한 번에 보내 왕복 1회분
-  // 시간으로 줄인다.
   const conditions: Prisma.Sql[] = []
   if (opts?.from) conditions.push(Prisma.sql`work_date >= ${opts.from}`)
   if (opts?.to)   conditions.push(Prisma.sql`work_date <= ${opts.to}`)
   const whereClause = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty
 
+  // 범위만 SQL로 조회 — 이게 진짜 성능 이득 지점. Prisma ORM(findMany)이 6만+ 행을
+  // JS 객체로 매핑하는 데만 6~700ms 오버헤드가 실측돼서(2026-08-30), raw SQL로 직접 조회 —
+  // 같은 데이터를 훨씬 적은 비용으로 가져온다. 컬럼은 camelCase로 alias해서 reassemble()이
+  // Prisma 모델을 받을 때와 동일하게 동작하게 맞춤.
+  const rowsQuery = prisma.$queryRaw<DailyAttendanceRow[]>(Prisma.sql`
+    SELECT
+      employee_id AS "employeeId", work_date AS "workDate", day_type AS "dayType",
+      clock_in AS "clockIn", clock_out AS "clockOut", effective_clock_in AS "effectiveClockIn",
+      regular_hours AS "regularHours", overtime_hours AS "overtimeHours", night_hours AS "nightHours",
+      holiday_hours AS "holidayHours", erp_ot_applied AS "erpOtApplied", leave_type AS "leaveType",
+      erp_leave_amount AS "erpLeaveAmount", is_unpaid_leave AS "isUnpaidLeave", is_leader AS "isLeader",
+      final_status AS "finalStatus", flag, extra
+    FROM daily_attendance
+    ${whereClause}
+  `)
+
+  if (opts?.recordsOnly) {
+    const rows = await rowsQuery
+    return { employees: [], records: rows.map(reassemble), finalAttrMap: new Map() }
+  }
+
+  // 아래 셋은 서로 의존관계가 없다(직원 목록/예외규칙/기간별 daily_attendance 조회가 각각
+  // 독립적) — 예전엔 순차 await라 요청마다 DB 왕복이 3번 이어졌는데(2026-09-08, 화면 이동
+  // 시 로딩 체감 원인으로 발견 — Overview 페이지 하나가 useProcessedAttendance를 4번 병렬
+  // 호출해서 이 3연속 왕복이 다시 4배로 겹쳐졌다), Promise.all로 한 번에 보내 왕복 1회분
+  // 시간으로 줄인다.
   const [employees, dbRules, rows] = await Promise.all([
     // 직원 목록 — caps_daily_logs에서 직원당 1행만 distinct로 가져와 재구성(경량 경로).
     // buildEmployeesAndRawRecords()(전체 6만+행 파싱)를 쓰면 daily_attendance 조회엔 필요
@@ -107,21 +136,7 @@ export async function getProcessedRecords(opts?: {
     buildEmployeeRoster(),
     // 예외규칙 (직책자 맵 등에 씀)
     prisma.exceptionRule.findMany(),
-    // 범위만 SQL로 조회 — 이게 진짜 성능 이득 지점. Prisma ORM(findMany)이 6만+ 행을
-    // JS 객체로 매핑하는 데만 6~700ms 오버헤드가 실측돼서(2026-08-30), raw SQL로 직접 조회 —
-    // 같은 데이터를 훨씬 적은 비용으로 가져온다. 컬럼은 camelCase로 alias해서 reassemble()이
-    // Prisma 모델을 받을 때와 동일하게 동작하게 맞춤.
-    prisma.$queryRaw<DailyAttendanceRow[]>(Prisma.sql`
-      SELECT
-        employee_id AS "employeeId", work_date AS "workDate", day_type AS "dayType",
-        clock_in AS "clockIn", clock_out AS "clockOut", effective_clock_in AS "effectiveClockIn",
-        regular_hours AS "regularHours", overtime_hours AS "overtimeHours", night_hours AS "nightHours",
-        holiday_hours AS "holidayHours", erp_ot_applied AS "erpOtApplied", leave_type AS "leaveType",
-        erp_leave_amount AS "erpLeaveAmount", is_unpaid_leave AS "isUnpaidLeave", is_leader AS "isLeader",
-        final_status AS "finalStatus", flag, extra
-      FROM daily_attendance
-      ${whereClause}
-    `),
+    rowsQuery,
   ])
   if (employees.length === 0) return { employees: [], records: [], finalAttrMap: new Map() }
 

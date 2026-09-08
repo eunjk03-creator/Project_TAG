@@ -15,12 +15,12 @@ export async function GET(req: NextRequest) {
     const from = searchParams.get('from') ?? undefined
     const to   = searchParams.get('to')   ?? undefined
 
-    // getProcessedRecords()가 돌려주는 employees는 export 라우트들(직원 이름/부서 표기용)을
-    // 위한 것 — 이 화면용 훅(useScopedProcessedRecordsWithStatus)은 records만 쓰고 employees는
-    // 버린다(AttendanceSourceContext가 이미 들고 있음). 그런데도 매 호출마다 400명+ 전체를
-    // JSON에 실어 보내던 게 순수 낭비였다(2026-09-08, 화면 이동 로딩 체감 원인 중 하나로 발견 —
-    // Overview 페이지는 이 요청을 4번 동시에 보내므로 4배로 낭비됨). 여기선 빼고 응답한다.
-    const { records } = await getProcessedRecords({ from, to })
+    // 이 라우트의 유일한 호출부(useScopedProcessedRecordsWithStatus)는 records만 쓰고
+    // employees/finalAttrMap은 안 쓴다(AttendanceSourceContext가 이미 employees를 들고 있음).
+    // recordsOnly로 employees/exceptionRule 조회 자체를 건너뛴다 — buildEmployeeRoster()
+    // (caps_daily_logs distinct, 67k+행 스캔)만 요청마다 1~1.6초였다(2026-09-08 실측,
+    // 화면 이동 로딩 체감의 실제 최대 원인).
+    const { records } = await getProcessedRecords({ from, to, recordsOnly: true })
     return NextResponse.json({ records, fetchedAt: new Date().toISOString() })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

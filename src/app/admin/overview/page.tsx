@@ -348,9 +348,13 @@ export default function OverviewPage() {
 
   // ── 연차 누적 사용률용 연간(1/1~기준일) 데이터 — usePeriodRange가 잡아주는 단일 월
   // 범위만으로는 "올해 들어 지금까지 쓴 비율"을 계산할 수 없어서 별도로 더 넓게 fetch한다.
-  // month가 아닐 땐 어차피 안 쓰이므로 범위를 period와 동일하게 둬서 낭비하지 않는다.
+  // month가 아닐 땐 아래 결과가 전부 버려지는데(월 뷰 전용 가드), 예전엔 range를 period.from과
+  // 동일하게 둬서 "낭비 없음"이라 여겼지만 실제로는 spanFrom~spanTo(위 161줄) 쪽 fetch와
+  // 완전히 같은 범위를 또 한 번 통째로 중복 요청하는 것이었다(2026-09-08, 화면 이동 로딩
+  // 체감의 실측 원인 — YTD 범위 fetch는 7~8초/28MB까지 나옴). period가 아닐 땐 결과가
+  // 어차피 안 쓰이므로 최소 비용(하루치)으로 collapse.
   const yearStart = `${period.to.slice(0, 4)}-01-01`
-  const ytdFrom = period.granularity === 'month' ? yearStart : period.from
+  const ytdFrom = period.granularity === 'month' ? yearStart : period.to
   const { records: ytdRawRecords, employees: ytdRawEmployees, globalExclusionIds: ytdGlobalExclusionIds } =
     useProcessedAttendance(ytdFrom, period.to)
   const ytdVisibleEmployees = useMemo(
@@ -391,7 +395,13 @@ export default function OverviewPage() {
 
   // ── 상습·반복 이상치(day→이번 주, week→이번 달) — "보고 있는 날짜" 기준으로 창을 잡아서
   // 과거 날짜를 탐색해도(shift) 그 시점 기준 "이번 주/달"이 되도록 한다(실제 캘린더 오늘 고정 X).
-  const repeatWindowFrom = period.granularity === 'day' ? weekStart(period.from) : monthStart(period.from)
+  // month 뷰에선 아래 repeatOffenders 자체가 안 쓰이는데(day/week 전용), month일 때
+  // monthStart(period.from)~period.to가 그대로 spanFrom~spanTo(위 161줄)와 동일해져서
+  // 똑같은 범위를 또 중복 fetch하고 있었다(ytdFrom과 같은 클래스의 버그, 2026-09-08 발견) —
+  // 안 쓰는 month에선 최소 비용(하루치)으로 collapse.
+  const repeatWindowFrom = period.granularity === 'day' ? weekStart(period.from)
+    : period.granularity === 'week' ? monthStart(period.from)
+    : period.to
   const repeatWindowTo   = period.granularity === 'day' ? period.from : period.to
   const { records: repeatRawRecords, employees: repeatRawEmployees, globalExclusionIds: repeatGlobalExclusionIds } =
     useProcessedAttendance(repeatWindowFrom, repeatWindowTo)
