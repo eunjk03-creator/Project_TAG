@@ -12,6 +12,7 @@ import type { SavePayload } from '@/components/admin/DailyDetailModal'
 import { AnomalyResolutionModal } from '@/components/admin/AnomalyResolutionModal'
 import type { ResolutionTarget, TimeOverride } from '@/components/admin/AnomalyResolutionModal'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
+import { clockOverrideFields } from '@/utils/attendanceCalc'
 import type { ProcessedRecord, SieveFlag, EditHistoryEntry, Employee, ResolutionData } from '@/types/tag'
 
 // ── Badge taxonomy — synced with dashboard design system ──────────────────
@@ -156,7 +157,8 @@ export default function AnomaliesPage() {
   // useAttendanceLogic), DB 정규화 이후로는 daily_attendance가 이미 같은 processRecord()
   // 엔진으로 계산된 값을 들고 있어서 그럴 필요가 없다 — /admin, /admin/overview와 동일한
   // 패턴(useProcessedAttendance)으로 통일(2026-09-07, 날짜 필터 체감 지연 원인 조사 결과).
-  // recordOverrides/예외규칙 반영도 이 훅이 내부적으로 처리한다(admin 화면과 동일 로직).
+  // recordOverrides/예외규칙 반영(clockOverrideFields 포함, master 병합분)도 이 훅이
+  // 내부적으로 처리한다(admin 화면과 동일 로직) — 이 화면에서 따로 안 해도 됨.
   const { records: processed } = useProcessedAttendance(dateRange.from, dateRange.to)
 
   const ALL_DIVISIONS = useMemo(
