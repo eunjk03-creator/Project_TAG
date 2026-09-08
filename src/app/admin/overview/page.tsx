@@ -14,6 +14,7 @@ import { useManagementMetrics } from '@/hooks/useManagementMetrics'
 import { usePeriodRange, weekStart, monthStart } from '@/hooks/usePeriodRange'
 import { usePolicy } from '@/context/PolicyContext'
 import { PeriodSelector } from '@/components/admin/PeriodSelector'
+import { PeriodMultiPicker } from '@/components/admin/overview/PeriodMultiPicker'
 import { AnomalyMetricBadges } from '@/components/admin/AnomalyMetricBadges'
 import { KpiTile } from '@/components/admin/KpiTile'
 import { DivisionTeamGrid } from '@/components/admin/DivisionTeamGrid'
@@ -25,10 +26,10 @@ import { useOrgMasterHeadcount } from '@/hooks/useOrgMasterHeadcount'
 import { useMasterActiveRoster } from '@/hooks/useMasterActiveRoster'
 import {
   buildDivisionAnomalyRollup, buildEmployeeAnomalyRollup, computeNormalRate,
-  buildLeaveUsageRollup, buildTodayLeaveList,
+  buildLeaveUsageRollup,
   buildDailyOvertimeSeries, buildTodayOvertimeList,
   buildHolidayWorkRollup, buildTodayHolidayList, buildHolidayWorkDetails,
-  buildOffsiteRollup, buildTodayOffsiteList,
+  buildOffsiteRollup,
   computeOverLimitEmployees, computeWeeklyRiskBuckets, buildEmployeeRecognizedHours, buildDivisionRecognizedOt,
   buildDivisionNormalRateRollup, buildDivisionRiskBands,
   buildEmployeeLeaveUsage, buildDivisionLeaveUsage,
@@ -36,7 +37,7 @@ import {
   OVERVIEW_POLICY, LEAVE_BENCHMARK, MONTHLY_ALLOCATION,
 } from '@/utils/overviewAggregations'
 import { DIVISION_ORDER } from '@/data/orgChart'
-import type { Employee } from '@/types/tag'
+import type { Employee, DateRange } from '@/types/tag'
 
 const BUSINESS_DIVISIONS = DIVISION_ORDER.slice(0, 5)
 const SUPPORT_DIVISIONS  = DIVISION_ORDER.slice(5)
@@ -139,8 +140,24 @@ export default function OverviewPage() {
   const { policy } = usePolicy()
   const period = usePeriodRange()
 
+  // ── 복수 기간 선택(일/주 뷰 전용) — null이면 period.from/to 그대로(지금과 100% 동일).
+  // 캘린더에서 뭔가 고르면 이 배열이 채워지고, ‹›/오늘/단위전환을 누르면 다시 null로
+  // 리셋된다(periodForSelector에서 래핑, 아래 참고). 여러 블록을 골라도 fetch는 항상
+  // 1번만(전체를 감싸는 span으로 받아서 클라이언트에서 블록 소속 여부만 거름) — 요청
+  // 개수가 늘수록 느려지는 걸 지난 라운드에 확인해서 이렇게 설계함.
+  const [manualBlocks, setManualBlocks] = useState<DateRange[] | null>(null)
+  const activeBlocks = manualBlocks ?? [{ from: period.from, to: period.to }]
+  const spanFrom = useMemo(() => activeBlocks.reduce((m, b) => b.from < m ? b.from : m, activeBlocks[0].from), [activeBlocks])
+  const spanTo   = useMemo(() => activeBlocks.reduce((m, b) => b.to   > m ? b.to   : m, activeBlocks[0].to),   [activeBlocks])
+  const periodForSelector = {
+    ...period,
+    shift:          (dir: 1 | -1) => { setManualBlocks(null); period.shift(dir) },
+    goToday:        ()             => { setManualBlocks(null); period.goToday() },
+    setGranularity: (g: typeof period.granularity) => { setManualBlocks(null); period.setGranularity(g) },
+  }
+
   const { records, employees, finalAttrMap, globalExclusionIds } =
-    useProcessedAttendance(period.from, period.to)
+    useProcessedAttendance(spanFrom, spanTo)
 
   const visibleEmployees = useMemo(
     () => employees.filter(e => !globalExclusionIds.has(e.id)),
@@ -159,8 +176,8 @@ export default function OverviewPage() {
   )
   const scopedIds = useMemo(() => new Set(scopedEmployees.map(e => e.id)), [scopedEmployees])
   const scopedRecords = useMemo(
-    () => records.filter(r => scopedIds.has(r.employeeId)),
-    [records, scopedIds],
+    () => records.filter(r => scopedIds.has(r.employeeId) && activeBlocks.some(b => r.date >= b.from && r.date <= b.to)),
+    [records, scopedIds, activeBlocks],
   )
   const empMap = useMemo(
     () => new Map<string, Employee>(scopedEmployees.map(e => [e.id, e])),
@@ -224,7 +241,6 @@ export default function OverviewPage() {
   // ── 휴가 사용 ────────────────────────────────────────────────────────────
   const divLeave  = useMemo(() => buildLeaveUsageRollup(scopedRecords, empMap, 'division'), [scopedRecords, empMap])
   const empLeave  = useMemo(() => buildLeaveUsageRollup(scopedRecords, empMap, 'employee'),  [scopedRecords, empMap])
-  const todayLeave = useMemo(() => buildTodayLeaveList(scopedRecords, empMap, todayForView), [scopedRecords, empMap, todayForView])
   const totalLeaveDays = useMemo(() => divLeave.reduce((s, r) => s + r.days, 0), [divLeave])
   const divOffsite = useMemo(() => buildOffsiteRollup(scopedRecords, empMap, 'division'), [scopedRecords, empMap])
 
@@ -289,7 +305,6 @@ export default function OverviewPage() {
   )
 
   // ── 외근 — Zone1 슬롯4(부재현황)용. 휴가와 별개로 집계. ─────────────────────
-  const todayOffsite = useMemo(() => buildTodayOffsiteList(scopedRecords, empMap, todayForView), [scopedRecords, empMap, todayForView])
   const empOffsite = useMemo(() => buildOffsiteRollup(scopedRecords, empMap, 'employee'), [scopedRecords, empMap])
   const totalOffsiteCount = useMemo(() => empOffsite.reduce((s, r) => s + r.count, 0), [empOffsite])
 
@@ -488,7 +503,7 @@ export default function OverviewPage() {
           key: 'main', label: '출근율', isMain: true, value: normalRate.pct.toFixed(1), unit: '%',
           subRows: [
             { key: '기준 대비', value: `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%p`, tone: delta >= 0 ? 'positive' : 'negative' },
-            ...(prevScopedRecords.length > 0 ? [{
+            ...(prevScopedRecords.length > 0 && activeBlocks.length === 1 ? [{
               key: '전일 대비', value: `${vsPrevDelta >= 0 ? '+' : ''}${vsPrevDelta.toFixed(1)}%p`,
               tone: vsPrevTone,
             }] : []),
@@ -498,7 +513,7 @@ export default function OverviewPage() {
           onClick: () => openAndScroll('anomaly'),
         },
         {
-          key: 'urgent', label: '당일 긴급 이상치', value: `${anomalyTotals.total}`, unit: '건',
+          key: 'urgent', label: activeBlocks.length > 1 ? '선택 기간 이상치' : '당일 긴급 이상치', value: `${anomalyTotals.total}`, unit: '건',
           breakdown3: [
             { label: '지각', value: `${anomalyTotals.late}`, color: '#d17600' },
             { label: '근무미달', value: `${anomalyTotals.shortage}`, color: '#e5342f' },
@@ -507,10 +522,14 @@ export default function OverviewPage() {
           onClick: () => openAndScroll('anomaly'),
         },
         {
-          key: 'absence', label: '당일 현장 부재', value: `${todayLeave.length + todayOffsite.length}`, unit: '명',
+          // empLeave/totalOffsiteCount는 scopedRecords 전체 기반이라(단일 하루만 선택된 지금과
+          // 동일하게) 여러 기간을 합쳐도 그대로 맞는 값 — todayLeave/todayOffsite(하루 고정)
+          // 대신 이걸 쓴다(2026-09-08, 복수 기간 선택 대응).
+          key: 'absence', label: activeBlocks.length > 1 ? '선택 기간 현장 부재' : '당일 현장 부재',
+          value: `${empLeave.length + totalOffsiteCount}`, unit: '명',
           subRows: [
-            { key: '휴가', value: `${todayLeave.length}명` },
-            { key: '외근', value: `${todayOffsite.length}명` },
+            { key: '휴가', value: `${empLeave.length}명` },
+            { key: '외근', value: `${totalOffsiteCount}명` },
           ],
           onClick: () => openAndScroll('leave'),
         },
@@ -617,10 +636,10 @@ export default function OverviewPage() {
       },
     ]
   }, [
-    period.granularity, monthBasis, normalRate, divAnomaly, anomalyTotals, todayLeave, todayOffsite,
+    period.granularity, monthBasis, normalRate, divAnomaly, anomalyTotals, empLeave, totalOffsiteCount,
     weeklyRisk, divisionRiskBands, metrics, divHoliday, totalHolidayH, total, totalDivisionsCount,
     divisionLeaveCumulative, cumulativeBenchmarkPct, leaveTotals, overLimitRows, employeeLeaveSingle, monthLabel,
-    prevScopedRecords, prevScopedEmployees, finalAttrMap, policy,
+    prevScopedRecords, prevScopedEmployees, finalAttrMap, policy, activeBlocks,
   ])
 
   // ── 부서 카드(division → DeptCardVM) — 상태(일/주연장/주휴일/월누적/월단월)별로 콘텐츠가
@@ -898,7 +917,16 @@ export default function OverviewPage() {
       <div className="ptitle">
         <h2>경영진 현황</h2>
         <span className="sp" />
-        <PeriodSelector period={period} />
+        {(period.granularity === 'day' || period.granularity === 'week') && (
+          <PeriodMultiPicker
+            granularity={period.granularity}
+            blocks={activeBlocks}
+            onChange={setManualBlocks}
+            minDate="2026-01-01"
+            maxDate="2026-12-31"
+          />
+        )}
+        <PeriodSelector period={periodForSelector} />
       </div>
       <p className="text-xs text-[var(--ink-3)] -mt-3">이상치 · 휴일근무 · 초과근무 · 휴가를 한눈에</p>
 
@@ -1041,12 +1069,12 @@ export default function OverviewPage() {
             <DeptSection
               label="사업부" accent="#e5342f" cards={businessCards} summary={businessSummary}
               notes={overviewNotes}
-              onSaveNote={period.granularity === 'day' || period.granularity === 'week' ? saveOverviewNote : undefined}
+              onSaveNote={(period.granularity === 'day' || period.granularity === 'week') && activeBlocks.length === 1 ? saveOverviewNote : undefined}
             />
             <DeptSection
               label="지원부" accent="#3b6fe0" cards={supportCards} summary={supportSummary}
               notes={overviewNotes}
-              onSaveNote={period.granularity === 'day' || period.granularity === 'week' ? saveOverviewNote : undefined}
+              onSaveNote={(period.granularity === 'day' || period.granularity === 'week') && activeBlocks.length === 1 ? saveOverviewNote : undefined}
             />
 
             {(period.granularity === 'day' || period.granularity === 'week') && (

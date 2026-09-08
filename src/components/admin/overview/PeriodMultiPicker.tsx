@@ -1,0 +1,294 @@
+'use client'
+import { useState, useRef, useEffect, useMemo } from 'react'
+import type { DateRange } from '@/types/tag'
+
+const MO_KR  = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
+const DOW_KR = ['일','월','화','수','목','금','토']
+
+function toDS(d: Date): string {
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0')
+}
+function addDays(s: string, n: number): string {
+  const d = new Date(s + 'T12:00:00')
+  d.setDate(d.getDate() + n)
+  return toDS(d)
+}
+function weekMonday(s: string): string {
+  const d = new Date(s + 'T12:00:00')
+  const dow = d.getDay()
+  d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
+  return toDS(d)
+}
+function weekOfMonth(monday: string): number {
+  return Math.ceil(new Date(monday + 'T12:00:00').getDate() / 7)
+}
+
+interface WeekInfo { monday: string; sunday: string; month: number; wom: number }
+
+function buildWeeks(dataStart: string, dataEnd: string): WeekInfo[] {
+  const list: WeekInfo[] = []
+  let mon = weekMonday(dataStart)
+  if (mon < dataStart) mon = addDays(mon, 7)
+  const cap = weekMonday(dataEnd)
+  while (mon <= cap) {
+    list.push({
+      monday: mon,
+      sunday: addDays(mon, 6),
+      month:  new Date(mon + 'T12:00:00').getMonth() + 1,
+      wom:    weekOfMonth(mon),
+    })
+    mon = addDays(mon, 7)
+  }
+  return list
+}
+
+function sameBlock(a: DateRange, b: DateRange): boolean {
+  return a.from === b.from && a.to === b.to
+}
+
+/** 경영진 현황 일/주 뷰 전용 — DateRangePicker(그리드 화면, 연속 범위 1개)와 시각 스타일은
+ *  같지만, granularity 단위(하루/한 주)로 블록을 여러 개 토글 선택할 수 있다. 칩 목록이나
+ *  "적용" 버튼 없이 캘린더에 칠해진 파란 칸 자체가 선택 상태 — 단순함을 위해 일부러 뺐다
+ *  (2026-09-08, 사용자 요청으로 단순화). */
+export function PeriodMultiPicker({
+  granularity,
+  blocks,
+  onChange,
+  minDate = '2026-01-01',
+  maxDate = '2026-12-31',
+}: {
+  granularity: 'day' | 'week'
+  blocks:      DateRange[]
+  onChange:    (blocks: DateRange[]) => void
+  minDate?:    string
+  maxDate?:    string
+}) {
+  const [open, setOpen] = useState(false)
+  const [cal,  setCal]  = useState(() => {
+    const d = new Date(minDate + 'T12:00:00')
+    return { year: d.getFullYear(), month: d.getMonth() + 1 }
+  })
+
+  const trigRef = useRef<HTMLButtonElement>(null)
+  const popRef  = useRef<HTMLDivElement>(null)
+
+  const DATA_MONTHS = useMemo(() => {
+    const startM = parseInt(minDate.slice(5, 7), 10)
+    const endM   = parseInt(maxDate.slice(5, 7), 10)
+    const months: number[] = []
+    for (let m = startM; m <= endM; m++) months.push(m)
+    return months
+  }, [minDate, maxDate])
+
+  const ALL_WEEKS = useMemo(() => buildWeeks(minDate, maxDate), [minDate, maxDate])
+
+  useEffect(() => {
+    if (!open) return
+    const d = new Date((blocks[0]?.from ?? minDate) + 'T12:00:00')
+    setCal({ year: d.getFullYear(), month: d.getMonth() + 1 })
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!open) return
+    function onMD(e: MouseEvent) {
+      if (!popRef.current?.contains(e.target as Node) &&
+          !trigRef.current?.contains(e.target as Node))
+        setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onMD)
+    document.addEventListener('keydown',   onKey)
+    return () => {
+      document.removeEventListener('mousedown', onMD)
+      document.removeEventListener('keydown',   onKey)
+    }
+  }, [open])
+
+  const rCal = cal.month === 12
+    ? { year: cal.year + 1, month: 1 }
+    : { year: cal.year,     month: cal.month + 1 }
+
+  function prevMonth() {
+    setCal(c => c.month === 1 ? { year: c.year - 1, month: 12 } : { ...c, month: c.month - 1 })
+  }
+  function nextMonth() {
+    setCal(c => c.month === 12 ? { year: c.year + 1, month: 1 } : { ...c, month: c.month + 1 })
+  }
+
+  function toggleBlock(block: DateRange) {
+    const idx = blocks.findIndex(b => sameBlock(b, block))
+    if (idx >= 0) {
+      if (blocks.length === 1) return // 최소 1블록 유지
+      onChange(blocks.filter((_, i) => i !== idx))
+    } else {
+      onChange([...blocks, block].sort((a, b) => a.from.localeCompare(b.from)))
+    }
+  }
+
+  function clickDay(ds: string) {
+    if (granularity === 'week') {
+      const mon = weekMonday(ds)
+      toggleBlock({ from: mon, to: addDays(mon, 6) })
+    } else {
+      toggleBlock({ from: ds, to: ds })
+    }
+  }
+
+  function presetMonth(m: number) {
+    const year = parseInt(minDate.slice(0, 4), 10)
+    const from = `${year}-${String(m).padStart(2, '0')}-01`
+    const raw  = toDS(new Date(year, m, 0))
+    toggleBlock({ from, to: raw > maxDate ? maxDate : raw })
+  }
+
+  function presetWeek(w: WeekInfo) {
+    toggleBlock({ from: w.monday, to: w.sunday })
+  }
+
+  const label = blocks.length <= 1
+    ? `${blocks[0]?.from ?? ''} ~ ${blocks[0]?.to ?? ''}`
+    : `${blocks[0].from} ~ ${blocks[0].to} 외 ${blocks.length - 1}건`
+
+  function renderCalMonth(year: number, month: number) {
+    const dow0 = new Date(year, month - 1, 1).getDay()
+    const days = new Date(year, month, 0).getDate()
+    const cells: (string | null)[] = Array(dow0).fill(null)
+    for (let d = 1; d <= days; d++)
+      cells.push(`${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+    while (cells.length % 7 !== 0) cells.push(null)
+
+    return (
+      <div className="min-w-[196px]">
+        <p className="text-xs font-bold text-center text-gray-700 mb-2">{year}년 {month}월</p>
+        <div className="grid grid-cols-7">
+          {DOW_KR.map((d, i) => (
+            <div key={d} className="h-7 flex items-center justify-center">
+              <span className={`text-[9px] font-semibold ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-gray-400'}`}>{d}</span>
+            </div>
+          ))}
+          {cells.map((ds, idx) => {
+            if (!ds) return <div key={`_${idx}`} className="h-8" />
+            const dis      = ds < minDate || ds > maxDate
+            const inBlock  = !dis && blocks.some(b => ds >= b.from && ds <= b.to)
+            const dow      = new Date(ds + 'T12:00:00').getDay()
+            const dayNum   = new Date(ds + 'T12:00:00').getDate()
+
+            return (
+              <div key={ds} className="relative h-8 flex items-center justify-center">
+                <button
+                  disabled={dis}
+                  onClick={() => !dis && clickDay(ds)}
+                  className={`relative z-10 w-7 h-7 rounded-full flex items-center justify-center
+                    text-[11px] font-medium transition-colors
+                    ${dis
+                      ? 'text-gray-200 cursor-not-allowed'
+                      : inBlock
+                        ? 'bg-blue-600 text-white font-bold hover:bg-blue-700 cursor-pointer'
+                        : `cursor-pointer hover:bg-gray-100 ${dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-700'}`
+                    }`}
+                >
+                  {dayNum}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative inline-block">
+      <button
+        ref={trigRef}
+        onClick={() => setOpen(v => !v)}
+        title="여러 기간을 골라서 합쳐 보기"
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium
+          transition-all shadow-sm select-none ${
+          open
+            ? 'border-blue-500 bg-blue-50 text-blue-700'
+            : 'border-gray-200 bg-white text-gray-700 hover:border-blue-400 hover:bg-blue-50/40'
+        }`}
+      >
+        <span>📅</span>
+        <span className="tabular-nums">{label}</span>
+        <svg className={`w-3 h-3 text-gray-400 transition-transform ml-0.5 ${open ? 'rotate-180' : ''}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div ref={popRef}
+          className="absolute top-full left-0 mt-1.5 z-[200] bg-white rounded-2xl border border-gray-200 shadow-2xl overflow-hidden"
+          style={{ width: 528 }}
+        >
+          <div className="flex items-start gap-4 px-4 pt-4 pb-3 border-b border-gray-100">
+            <div className="shrink-0">
+              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">월별</p>
+              <div className="flex gap-1.5 flex-wrap max-w-[200px]">
+                {DATA_MONTHS.map(m => {
+                  const from   = `${minDate.slice(0, 4)}-${String(m).padStart(2, '0')}-01`
+                  const active = blocks.some(b => b.from === from)
+                  return (
+                    <button key={m} onClick={() => presetMonth(m)}
+                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${
+                        active ? 'bg-blue-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600'
+                      }`}
+                    >
+                      {MO_KR[m - 1]}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="w-px self-stretch bg-gray-200 shrink-0" />
+
+            <div className="flex-1 min-w-0">
+              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">주별</p>
+              <div className="flex gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+                {ALL_WEEKS.map(w => {
+                  const active = blocks.some(b => b.from === w.monday && b.to === w.sunday)
+                  return (
+                    <button key={w.monday} onClick={() => presetWeek(w)}
+                      className={`shrink-0 px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
+                        active ? 'bg-blue-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600'
+                      }`}
+                    >
+                      {w.month}월{w.wom}주
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="p-4">
+            <div className="flex items-center mb-3">
+              <button onClick={prevMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-500 transition-colors">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <p className="flex-1 text-center text-[11px] font-medium text-gray-400">
+                {granularity === 'week' ? '주를 눌러서 추가·해제하세요' : '날짜를 눌러서 추가·해제하세요'}
+              </p>
+              <button onClick={nextMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-500 transition-colors">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex gap-8 justify-between">
+              {renderCalMonth(cal.year, cal.month)}
+              {renderCalMonth(rCal.year, rCal.month)}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
