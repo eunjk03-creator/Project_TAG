@@ -71,8 +71,9 @@ export function PeriodMultiPicker({
     return { year: d.getFullYear(), month: d.getMonth() + 1 }
   })
 
-  const trigRef = useRef<HTMLButtonElement>(null)
-  const popRef  = useRef<HTMLDivElement>(null)
+  const trigRef      = useRef<HTMLButtonElement>(null)
+  const popRef       = useRef<HTMLDivElement>(null)
+  const weekScrollRef = useRef<HTMLDivElement>(null)
 
   const DATA_MONTHS = useMemo(() => {
     const startM = parseInt(minDate.slice(5, 7), 10)
@@ -89,6 +90,16 @@ export function PeriodMultiPicker({
     const d = new Date((blocks[0]?.from ?? minDate) + 'T12:00:00')
     setCal({ year: d.getFullYear(), month: d.getMonth() + 1 })
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "주별" 가로 스크롤 목록이 항상 1월부터 시작해서(고정) 지금 캘린더가 9월을 보여줘도
+  // 매번 손으로 스크롤해야 했던 문제 — 캘린더 달이 바뀔 때마다 그 달의 주로 자동 스크롤한다
+  // (2026-09-08 발견).
+  useEffect(() => {
+    if (!open) return
+    const targetMonday = weekMonday(`${cal.year}-${String(cal.month).padStart(2, '0')}-01`)
+    const btn = weekScrollRef.current?.querySelector<HTMLButtonElement>(`[data-monday="${targetMonday}"]`)
+    btn?.scrollIntoView({ block: 'nearest', inline: 'start' })
+  }, [open, cal])
 
   useEffect(() => {
     if (!open) return
@@ -249,11 +260,11 @@ export function PeriodMultiPicker({
 
             <div className="flex-1 min-w-0">
               <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">주별</p>
-              <div className="flex gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+              <div ref={weekScrollRef} className="flex gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
                 {ALL_WEEKS.map(w => {
                   const active = blocks.some(b => b.from === w.monday && b.to === w.sunday)
                   return (
-                    <button key={w.monday} onClick={() => presetWeek(w)}
+                    <button key={w.monday} data-monday={w.monday} onClick={() => presetWeek(w)}
                       className={`shrink-0 px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
                         active ? 'bg-blue-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600'
                       }`}

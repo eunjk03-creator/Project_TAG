@@ -14,6 +14,9 @@ export interface DeptCardCell {
 export interface DeptCardPersonRow {
   key: string
   name: string
+  /** 여러 날짜가 합쳐진 뷰(복수 기간 선택)에서 "이 줄이 몇 일자 건인지" 표시 — 단일 기간
+   *  선택 시엔 안 씀(그 하루뿐이라 표시할 필요 없음, 2026-09-08 추가) */
+  date?: string
   /** 밴드 칩(주간 위험군) · 날짜 칩(휴일근로) · 입사연도 칩(연차) 등 */
   tag?: { text: string; bg: string; fg: string }
   /** 일간 전용 3열 숫자(지각/미달/미태) */
@@ -157,6 +160,9 @@ export function DeptCard({ vm, note, onSaveNote }: {
               >
                 {r.name}
               </Link>
+              {r.date && (
+                <span className="text-[9.5px] text-[var(--ink-4)] tabular-nums shrink-0">{r.date.slice(5)}</span>
+              )}
               {r.tag && (
                 <span className="text-[9.5px] font-semibold px-1 rounded shrink-0" style={{ background: r.tag.bg, color: r.tag.fg }}>{r.tag.text}</span>
               )}

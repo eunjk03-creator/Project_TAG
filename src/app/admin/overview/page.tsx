@@ -13,6 +13,7 @@ import { useProcessedAttendance } from '@/hooks/useProcessedAttendance'
 import { useManagementMetrics } from '@/hooks/useManagementMetrics'
 import { usePeriodRange, weekStart, monthStart } from '@/hooks/usePeriodRange'
 import { usePolicy } from '@/context/PolicyContext'
+import { flagToAnomalyCategories } from '@/utils/attendanceCalc'
 import { PeriodSelector } from '@/components/admin/PeriodSelector'
 import { PeriodMultiPicker } from '@/components/admin/overview/PeriodMultiPicker'
 import { AnomalyMetricBadges } from '@/components/admin/AnomalyMetricBadges'
@@ -653,13 +654,30 @@ export default function OverviewPage() {
     const leaveCount = divLeave.find(l => l.label === m.division)?.count ?? 0
     const offsiteCount = divOffsite.find(o => o.label === m.division)?.count ?? 0
 
-    const people = empAnomaly.filter(r => r.division === m.division)
-    let budget = anomaly.total
+    // 여러 날짜를 합쳐서 볼 땐(activeBlocks 2개 이상) 인원별 합산 집계 대신 "언제 발생했는지"를
+    // 알 수 있게 발생 건별(직원+날짜) 행으로 풀어서 보여준다 — 합산 카운트만 있으면 여러 날짜
+    // 중 어느 날 일어난 건지 구분이 안 된다는 피드백(2026-09-08). 1개만 선택된 기존 상태는
+    // 하루뿐이라 애초에 구분할 필요가 없어 그대로 유지(동일 결과, 회귀 없음).
     const rows: DeptCardPersonRow[] = []
-    for (const p of people) {
-      if (budget <= 0) break
-      rows.push({ key: p.key, name: p.label, cols: [p.late || '—', p.shortage || '—', p.notag || '—'] })
-      budget -= p.total
+    if (activeBlocks.length > 1) {
+      const divOccurrences = scopedRecords.filter(r => r.flag && empMap.get(r.employeeId)?.division === m.division)
+      for (const r of divOccurrences) {
+        const emp  = empMap.get(r.employeeId)
+        const cats = new Set(flagToAnomalyCategories(r.flag!))
+        rows.push({
+          key: `${r.employeeId}_${r.date}`, name: emp?.name ?? r.employeeId, date: r.date,
+          cols: [cats.has('late') ? '●' : '—', cats.has('shortage') ? '●' : '—', cats.has('notag') ? '●' : '—'],
+        })
+      }
+      rows.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''))
+    } else {
+      const people = empAnomaly.filter(r => r.division === m.division)
+      let budget = anomaly.total
+      for (const p of people) {
+        if (budget <= 0) break
+        rows.push({ key: p.key, name: p.label, cols: [p.late || '—', p.shortage || '—', p.notag || '—'] })
+        budget -= p.total
+      }
     }
 
     return {
