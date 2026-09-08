@@ -58,6 +58,19 @@ const POLICY_CATS: PolicyCat[] = [
       { key: 'holidayExcessRate', label: '휴일 초과 배율', desc: '8시간 초과 휴일 근무 가산율 (법적 고정)', type: 'number', unit: '×', step: 0.1, locked: true },
     ],
   },
+  {
+    id: 'overview-kpi', label: '종합현황 KPI 기준',
+    fields: [
+      { key: 'attendanceTargetPct',          label: '출근율 목표',           desc: '일간 출근율 KPI의 "기준 대비" 계산 기준값', type: 'number', unit: '%' },
+      { key: 'attendanceWarnDeltaPp',        label: '출근율 주의 임계',       desc: '목표 대비 이 값(%p)까지는 주의, 그 아래는 조치 필요 (음수로 입력)', type: 'number', unit: '%p' },
+      { key: 'weeklyOtWarningH',             label: '주간 연장 주의 기준',     desc: '부서 주당 평균 연장근로가 이 시간 이상이면 주의', type: 'number', unit: 'h', step: 0.5 },
+      { key: 'weeklyOtActionH',              label: '주간 연장 조치 기준',     desc: '부서 주당 평균 연장근로가 이 시간 이상이면 조치 필요', type: 'number', unit: 'h', step: 0.5 },
+      { key: 'holidayWarningCount',          label: '휴일근로 주의 건수',      desc: '부서 휴일근로가 이 건수 이상이면 주의', type: 'number', unit: '건' },
+      { key: 'holidayActionCount',           label: '휴일근로 조치 건수',      desc: '부서 휴일근로가 이 건수 이상이면 조치 필요', type: 'number', unit: '건' },
+      { key: 'leaveTargetWarnDeltaPp',       label: '연차 누적 주의 임계',     desc: '누적 사용률 목표 대비 이 값(%p)까지는 주의, 그 아래는 조치 필요 (음수로 입력)', type: 'number', unit: '%p' },
+      { key: 'monthlyAllocationWarnDeltaPp', label: '연차 단월 주의 임계',     desc: '단월 배분(8.3%) 대비 이 값(%p)까지는 주의, 그 아래는 조치 필요 (음수로 입력)', type: 'number', unit: '%p', step: 0.1 },
+    ],
+  },
   { id: 'system', label: '시스템 관리', fields: [] },
 ]
 

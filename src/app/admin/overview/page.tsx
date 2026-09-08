@@ -35,7 +35,7 @@ import {
   buildDivisionNormalRateRollup, buildDivisionRiskBands,
   buildEmployeeLeaveUsage, buildDivisionLeaveUsage,
   buildMasterDiscrepancyRollup,
-  OVERVIEW_POLICY, LEAVE_BENCHMARK, MONTHLY_ALLOCATION,
+  LEAVE_BENCHMARK, MONTHLY_ALLOCATION,
 } from '@/utils/overviewAggregations'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee, DateRange } from '@/types/tag'
@@ -504,7 +504,7 @@ export default function OverviewPage() {
   // ── 고정 3열 KPI(v9 핵심 규칙: 탭을 바꿔도 이 3칸의 틀은 그대로) ──────────────────
   const kpiTiles = useMemo<KpiTileVM[]>(() => {
     if (period.granularity === 'day') {
-      const delta = normalRate.pct - OVERVIEW_POLICY.attendanceTargetPct
+      const delta = normalRate.pct - policy.attendanceTargetPct
       const divsWithAnomaly = divAnomaly.filter(d => d.total > 0).length
       const prevNormalRate = computeNormalRate(prevScopedRecords)
       const vsPrevDelta = normalRate.pct - prevNormalRate.pct
@@ -654,12 +654,12 @@ export default function OverviewPage() {
   ])
 
   // ── 부서 카드(division → DeptCardVM) — 상태(일/주연장/주휴일/월누적/월단월)별로 콘텐츠가
-  // 완전히 다르다. 심각도 임계값은 전부 OVERVIEW_POLICY 상수 참조(하드코딩 매직넘버 금지). ──
+  // 완전히 다르다. 심각도 임계값은 전부 PolicySettings(policy) 참조(하드코딩 매직넘버 금지). ──
   function buildDayCard(m: (typeof metrics)[number]): DeptCardVM {
     const anomaly = divAnomaly.find(a => a.label === m.division) ?? { late: 0, shortage: 0, notag: 0, total: 0 }
     const rate = divNormalRate.find(r => r.division === m.division)?.pct ?? 0
-    const delta = rate - OVERVIEW_POLICY.attendanceTargetPct
-    const severity = delta >= 0 ? 'normal' : delta >= OVERVIEW_POLICY.attendanceWarnDeltaPp ? 'warning' : 'action'
+    const delta = rate - policy.attendanceTargetPct
+    const severity = delta >= 0 ? 'normal' : delta >= policy.attendanceWarnDeltaPp ? 'warning' : 'action'
     const divOtCount = todayOt.filter(e => e.division === m.division).length
     const leaveCount = divLeave.find(l => l.label === m.division)?.count ?? 0
     const offsiteCount = divOffsite.find(o => o.label === m.division)?.count ?? 0
@@ -693,8 +693,8 @@ export default function OverviewPage() {
     return {
       division: m.division, headcount: m.headcount, severity,
       mainValue: `${anomaly.total}`, mainUnit: '건', hideProgress: true,
-      progressPct: rate, progressMarkerPct: OVERVIEW_POLICY.attendanceTargetPct,
-      captionLeft: `초과 인원 ${divOtCount}명`, captionRight: `기준 ${OVERVIEW_POLICY.attendanceTargetPct}%`,
+      progressPct: rate, progressMarkerPct: policy.attendanceTargetPct,
+      captionLeft: `초과 인원 ${divOtCount}명`, captionRight: `기준 ${policy.attendanceTargetPct}%`,
       cells: [
         { label: '지각', value: anomaly.late ? `${anomaly.late}` : '—', color: '#d17600' },
         { label: '미달', value: anomaly.shortage ? `${anomaly.shortage}` : '—', color: '#e5342f' },
@@ -711,8 +711,8 @@ export default function OverviewPage() {
     const band = divisionRiskBands.find(b => b.division === m.division) ?? { caution: 0, warning: 0, danger: 0, avgHours: 0 }
     const weeklyOtAvg = m.headcount > 0 ? (otByDivision.get(m.division)?.otHours ?? 0) / m.headcount : 0
     const severity =
-      band.danger > 0 || weeklyOtAvg >= OVERVIEW_POLICY.weeklyOtActionH ? 'action'
-      : band.caution + band.warning > 0 || weeklyOtAvg >= OVERVIEW_POLICY.weeklyOtWarningH ? 'warning' : 'normal'
+      band.danger > 0 || weeklyOtAvg >= policy.weeklyOtActionH ? 'action'
+      : band.caution + band.warning > 0 || weeklyOtAvg >= policy.weeklyOtWarningH ? 'warning' : 'normal'
 
     const people = weeklyRisk.rows.filter(r => r.division === m.division).sort((a, b) => b.hours - a.hours)
     const rows: DeptCardPersonRow[] = people.slice(0, 6).map(p => ({
@@ -726,8 +726,8 @@ export default function OverviewPage() {
     return {
       division: m.division, headcount: m.headcount, severity,
       mainValue: `${band.danger}`, mainUnit: '명',
-      progressPct: (weeklyOtAvg / 20) * 100, progressMarkerPct: (OVERVIEW_POLICY.weeklyOtActionH / 20) * 100,
-      captionLeft: `주당 평균 ${fmtH(weeklyOtAvg)}`, captionRight: `기준 ${OVERVIEW_POLICY.weeklyOtActionH}h`,
+      progressPct: (weeklyOtAvg / 20) * 100, progressMarkerPct: (policy.weeklyOtActionH / 20) * 100,
+      captionLeft: `주당 평균 ${fmtH(weeklyOtAvg)}`, captionRight: `기준 ${policy.weeklyOtActionH}h`,
       cells: [
         { label: '주의 45-50h', value: band.caution ? `${band.caution}` : '—' },
         { label: '경고 50-52h', value: band.warning ? `${band.warning}` : '—' },
@@ -742,8 +742,8 @@ export default function OverviewPage() {
   function buildWeekHolidayCard(m: (typeof metrics)[number]): DeptCardVM {
     const row = divHoliday.find(h => h.label === m.division) ?? { count: 0, hours: 0 }
     const severity =
-      row.count >= OVERVIEW_POLICY.holidayActionCount ? 'action'
-      : row.count >= OVERVIEW_POLICY.holidayWarningCount ? 'warning' : 'normal'
+      row.count >= policy.holidayActionCount ? 'action'
+      : row.count >= policy.holidayWarningCount ? 'warning' : 'normal'
     const details = holidayWorkDetails.filter(d => d.division === m.division).sort((a, b) => b.hours - a.hours)
     const rows: DeptCardPersonRow[] = details.slice(0, 6).map(d => ({
       key: `${d.employeeId}_${d.date}`, name: d.name,
@@ -768,7 +768,7 @@ export default function OverviewPage() {
   function buildMonthCumulativeCard(m: (typeof metrics)[number]): DeptCardVM {
     const row = divisionLeaveCumulative.find(d => d.division === m.division) ?? { ratePct: 0, usedDays: 0, grantedDays: 0, headcount: m.headcount, division: m.division }
     const delta = row.ratePct - cumulativeBenchmarkPct
-    const severity = delta >= 0 ? 'normal' : delta >= OVERVIEW_POLICY.leaveTargetWarnDeltaPp ? 'warning' : 'action'
+    const severity = delta >= 0 ? 'normal' : delta >= policy.leaveTargetWarnDeltaPp ? 'warning' : 'action'
     const remain = Math.max(0, row.grantedDays - row.usedDays)
     const people = employeeLeaveCumulative.filter(r => r.division === m.division)
     const rows: DeptCardPersonRow[] = people.slice(0, 6).map(p => ({
@@ -796,7 +796,7 @@ export default function OverviewPage() {
     const row = divisionLeaveSingle.find(d => d.division === m.division) ?? { ratePct: 0, usedDays: 0, grantedDays: 0 }
     const cumRow = divisionLeaveCumulative.find(d => d.division === m.division)
     const delta = row.ratePct - MONTHLY_ALLOCATION
-    const severity = delta >= 0 ? 'normal' : delta >= OVERVIEW_POLICY.monthlyAllocationWarnDeltaPp ? 'warning' : 'action'
+    const severity = delta >= 0 ? 'normal' : delta >= policy.monthlyAllocationWarnDeltaPp ? 'warning' : 'action'
     const people = employeeLeaveSingle.filter(r => r.division === m.division && r.usedDays > 0).sort((a, b) => b.usedDays - a.usedDays)
     const rows: DeptCardPersonRow[] = people.slice(0, 6).map(p => ({
       key: p.employeeId, name: p.name,

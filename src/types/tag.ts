@@ -54,6 +54,25 @@ export interface PolicySettings {
   /** 전사 평균 시급(원) — 경영진 현황의 초과근무 비용 환산 전용. 0이면 "미설정"으로 취급해
    *  가짜 금액을 보여주지 않는다(급여 실시급 데이터 연동 전까지의 임시 근사치). */
   avgHourlyWage: number
+
+  // ── 종합현황(Overview) KPI 심각도 임계값 — 기존 overviewAggregations.ts의
+  // OVERVIEW_POLICY 하드코딩 상수를 정책값으로 승격한 것.
+  /** 일간 출근율 목표(%) */
+  attendanceTargetPct: number
+  /** 출근율 "기준 대비" 이 값(%p)까지는 주의, 그 아래는 조치 필요 (음수) */
+  attendanceWarnDeltaPp: number
+  /** 부서 주당 평균 연장근로 이 시간(h) 이상 → 조치 필요 */
+  weeklyOtActionH: number
+  /** 부서 주당 평균 연장근로 이 시간(h) 이상 → 주의 */
+  weeklyOtWarningH: number
+  /** 부서 휴일근로 이 건수 이상 → 조치 필요 */
+  holidayActionCount: number
+  /** 부서 휴일근로 이 건수 이상 → 주의 */
+  holidayWarningCount: number
+  /** 누적 연차 사용률 목표 대비 이 값(%p)까지는 주의, 그 아래는 조치 필요 (음수) */
+  leaveTargetWarnDeltaPp: number
+  /** 단월 연차 배분(8.3%) 대비 이 값(%p)까지는 주의, 그 아래는 조치 필요 (음수) */
+  monthlyAllocationWarnDeltaPp: number
 }
 
 export const DEFAULT_POLICY: PolicySettings = {
@@ -88,6 +107,15 @@ export const DEFAULT_POLICY: PolicySettings = {
   fixedScheduleBStart: '08:30',
   offsiteStdEndTime: '18:00',
   avgHourlyWage: 0,
+
+  attendanceTargetPct: 85,
+  attendanceWarnDeltaPp: -4,
+  weeklyOtActionH: 12,
+  weeklyOtWarningH: 9,
+  holidayActionCount: 3,
+  holidayWarningCount: 1,
+  leaveTargetWarnDeltaPp: -10,
+  monthlyAllocationWarnDeltaPp: -1.5,
 }
 
 export type DayType = 'WEEKDAY' | 'WEEKEND' | 'HOLIDAY'

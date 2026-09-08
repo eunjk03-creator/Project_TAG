@@ -595,18 +595,9 @@ export function buildMasterDiscrepancyRollup(
 // 일=출근율 / 주(연장·휴일)=52h위험군+연장근로+휴일근로 / 월(누적·단월)=연차사용률.
 // ══════════════════════════════════════════════════════════════════════════
 
-/** 확정 전 정책 임계값 — README가 "설정값으로 빼는 걸 권장"한 대로 한곳에 모아둠.
- *  나중에 PolicyContext로 옮길 때 이 객체만 그쪽 값으로 바꿔치면 된다. */
-export const OVERVIEW_POLICY = {
-  attendanceTargetPct:         85,   // 일간 출근율 기준
-  attendanceWarnDeltaPp:       -4,   // 기준 대비 -4%p까지 주의, 그 아래는 조치 필요
-  weeklyOtActionH:             12,   // 주당 평균 연장 12h 이상 → 조치 필요
-  weeklyOtWarningH:            9,    // 9h 이상 → 주의
-  holidayActionCount:          3,    // 부서 휴일근로 3건 이상 → 조치 필요
-  holidayWarningCount:         1,    // 1건 이상 → 주의
-  leaveTargetWarnDeltaPp:      -10,  // 누적 목표 대비 -10%p까지 주의
-  monthlyAllocationWarnDeltaPp: -1.5, // 단월 배분(8.3%) 대비 -1.5%p까지 주의
-} as const
+// v9 KPI 심각도 임계값(출근율 목표, 연장/휴일근로 경고선 등)은 PolicySettings로 승격됨
+// (2026-09-08) — types/tag.ts의 attendanceTargetPct 등 필드 참고. 설정 화면(admin/settings)에서
+// 편집 가능하며, usePolicy()의 policy 객체에서 바로 읽어 쓰면 된다.
 
 /** 1~12월 누적 연차 사용 목표(%) — 회계연도 균등 배분 가정. */
 export const LEAVE_BENCHMARK = [8, 17, 25, 33, 42, 50, 58, 67, 75, 83, 92, 100]

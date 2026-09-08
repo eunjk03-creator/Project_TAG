@@ -15,6 +15,8 @@ type ScalarKey = 'flexStart' | 'flexEnd' | 'lunchStart' | 'lunchEnd' | 'standard
   | 'insufficientGraceMins' | 'pregnantReducedStdHours' | 'pregnantAnomalyFloorMins'
   | 'tenAmStarterFlexEnd' | 'fixedScheduleAStart' | 'fixedScheduleABreakMins'
   | 'fixedScheduleBStart' | 'offsiteStdEndTime' | 'avgHourlyWage'
+  | 'attendanceTargetPct' | 'attendanceWarnDeltaPp' | 'weeklyOtActionH' | 'weeklyOtWarningH'
+  | 'holidayActionCount' | 'holidayWarningCount' | 'leaveTargetWarnDeltaPp' | 'monthlyAllocationWarnDeltaPp'
 
 const SCALAR_KEYS: ScalarKey[] = [
   'flexStart', 'flexEnd', 'lunchStart', 'lunchEnd', 'standardHours',
@@ -25,6 +27,8 @@ const SCALAR_KEYS: ScalarKey[] = [
   'insufficientGraceMins', 'pregnantReducedStdHours', 'pregnantAnomalyFloorMins',
   'tenAmStarterFlexEnd', 'fixedScheduleAStart', 'fixedScheduleABreakMins',
   'fixedScheduleBStart', 'offsiteStdEndTime', 'avgHourlyWage',
+  'attendanceTargetPct', 'attendanceWarnDeltaPp', 'weeklyOtActionH', 'weeklyOtWarningH',
+  'holidayActionCount', 'holidayWarningCount', 'leaveTargetWarnDeltaPp', 'monthlyAllocationWarnDeltaPp',
 ]
 
 const NUMERIC_KEYS = new Set<ScalarKey>([
@@ -34,6 +38,8 @@ const NUMERIC_KEYS = new Set<ScalarKey>([
   'amPmLeaveMinStayMins', 'amQuarterLeaveMinStayMins', 'pmQuarterLeaveMinStayMins',
   'insufficientGraceMins', 'pregnantReducedStdHours', 'pregnantAnomalyFloorMins',
   'fixedScheduleABreakMins', 'avgHourlyWage',
+  'attendanceTargetPct', 'attendanceWarnDeltaPp', 'weeklyOtActionH', 'weeklyOtWarningH',
+  'holidayActionCount', 'holidayWarningCount', 'leaveTargetWarnDeltaPp', 'monthlyAllocationWarnDeltaPp',
 ])
 
 function toDateOnlyString(d: Date): string {
