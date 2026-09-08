@@ -97,17 +97,49 @@ interface IngestResponse {
 
 // 반기 CAPS 파일 하나가 수만 행이라, caps/erp를 한 번의 POST에 통째로 담으면 Vercel
 // 서버리스 요청 본문 제한(~4.5MB)에 걸려 413으로 조용히 실패한다(로컬은 이 제한이 없어서
-// 재현이 안 됐음). caps/erp를 각각 이 크기로 쪼개 순차 요청 — caps 청크 → erp 청크 순서로
+// 재현이 안 됐음). caps/erp를 각각 청크로 쪼개 순차 요청 — caps 청크 → erp 청크 순서로
 // 보낸다(같은 요청에 둘 다 채우면 최악의 경우 청크 두 개 크기가 합쳐져 다시 초과할 수 있어서
-// 아예 종류별로 분리). 청크마다 영향받은 직원만 증분 재계산되는 기존 ingest 라우트 동작은
-// 그대로라 최종 결과는 동일하고, 같은 직원이 여러 청크에 걸치면 재계산이 중복 실행될 수
-// 있는 정도의 비용만 감수한다.
-const INGEST_CHUNK_SIZE = 3000
+// 아예 종류별로 분리).
+//
+// ingest 라우트는 청크에 등장한 직원만 골라 "그 직원의 전체 이력"을 재계산한다(날짜 범위
+// 스코핑 없음, recomputeFromNormalized.ts 참고). row-count로만 청크를 나누면 파일이
+// 날짜순 정렬이라 3000행짜리 청크 하나에도 거의 전 직원(400명+)이 다 걸려서, 청크마다
+// "사실상 전 직원 전체 이력 재계산"이 반복되고 그게 Vercel 60초 함수 제한에 걸려 504가 났다
+// (2026-09-08, 서브 배포에서 실측: 재계산 1건이 caps 저장 후 58초 만에 끝남 — 턱걸이).
+// 재계산 비용은 row 수가 아니라 "몇 명분 전체 이력을 다시 훑느냐"에 좌우되므로, 직원 수
+// 기준으로 청크를 나눠 청크당 재계산 비용을 예측 가능한 선으로 묶는다. 413 방지용 row 상한은
+// 안전망으로 유지.
+const EMPLOYEES_PER_CHUNK = 30
+const MAX_ROWS_PER_CHUNK  = 3000
 
-function chunkRows<T>(rows: T[], size: number): T[][] {
-  const out: T[][] = []
-  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size))
-  return out
+/** rawId(사원번호)로 그룹핑한 뒤 "직원 수" 기준으로 청크를 나눈다 — 같은 직원의 행은 항상
+ *  한 청크 안에 모이고(재계산 중복 실행이 없어짐), 청크 하나가 담는 서로 다른 직원 수가
+ *  employeesPerChunk를 넘지 않는다. maxRows는 413 방지용 안전망(한 직원이 유별나게 행이
+ *  많아도 한 청크가 너무 커지지 않게). */
+function chunkByEmployee<T>(
+  rows: T[], idOf: (row: T) => string, employeesPerChunk: number, maxRows: number,
+): T[][] {
+  const groups = new Map<string, T[]>()
+  for (const r of rows) {
+    const id = idOf(r)
+    const g = groups.get(id)
+    if (g) g.push(r); else groups.set(id, [r])
+  }
+
+  const chunks: T[][] = []
+  let current: T[] = []
+  let employeesInCurrent = 0
+  for (const group of groups.values()) {
+    if (current.length > 0 && (employeesInCurrent >= employeesPerChunk || current.length + group.length > maxRows)) {
+      chunks.push(current)
+      current = []
+      employeesInCurrent = 0
+    }
+    current.push(...group)
+    employeesInCurrent++
+  }
+  if (current.length > 0) chunks.push(current)
+  return chunks
 }
 
 async function postIngestChunk(
@@ -134,8 +166,8 @@ async function ingest(
   caps: CapsRow[], erp: ErpUnifiedRow[],
   onProgress?: (step: number, total: number) => void,
 ): Promise<{ result: IngestResponse | null; error: string | null }> {
-  const capsChunks = chunkRows(caps, INGEST_CHUNK_SIZE)
-  const erpChunks  = chunkRows(erp, INGEST_CHUNK_SIZE)
+  const capsChunks = chunkByEmployee(caps, r => String(r.사원번호 ?? '').trim(), EMPLOYEES_PER_CHUNK, MAX_ROWS_PER_CHUNK)
+  const erpChunks  = chunkByEmployee(erp,  r => String(r.사원번호 ?? '').trim(), EMPLOYEES_PER_CHUNK, MAX_ROWS_PER_CHUNK)
   const totalSteps = capsChunks.length + erpChunks.length || 1
 
   const acc: IngestResponse = { ok: true, affectedEmployees: 0, processedRecords: 0, skippedCount: 0, erpOtMatchCount: 0 }
@@ -365,13 +397,14 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
   }, [runIngest])
 
   // ── deleteRecordsByKeys: 업로드한 파일 되돌리기 ─────────────────────────
-  // ingest()와 동일한 이유로 청크 분할 — 반기 파일 되돌리기는 키 수만 건이라 한 번에 보내면
-  // 마찬가지로 413에 걸린다.
+  // ingest()와 동일한 이유(413 + 재계산 비용은 직원 수 기준)로 직원 수 기준 청크 분할.
+  // 키 형식은 `${사원번호}_${이름}_${근무일자}` — 첫 '_' 앞이 사원번호(route.ts DELETE
+  // 핸들러가 파싱하는 방식과 동일).
   const deleteRecordsByKeys = useCallback(async (keys: Set<string>): Promise<{ deletedCount: number }> => {
     setIsProcessing(true)
     setDbSaveError(null)
     try {
-      const chunks = chunkRows([...keys], INGEST_CHUNK_SIZE)
+      const chunks = chunkByEmployee([...keys], k => k.slice(0, k.indexOf('_')), EMPLOYEES_PER_CHUNK, MAX_ROWS_PER_CHUNK)
       let deletedCount = 0
       for (const part of chunks) {
         const res = await fetch('/api/attendance-ingest', {
