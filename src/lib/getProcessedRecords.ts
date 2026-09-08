@@ -90,17 +90,44 @@ export async function getProcessedRecords(opts?: {
   from?: string
   to?:   string
 }): Promise<{ employees: Employee[]; records: ProcessedRecord[]; finalAttrMap: Map<string, EmployeeAttributeOverrides> }> {
-  // 1. 직원 목록 — caps_daily_logs에서 직원당 1행만 distinct로 가져와 재구성(경량 경로).
-  // buildEmployeesAndRawRecords()(전체 6만+행 파싱)를 쓰면 daily_attendance 조회엔 필요
-  // 없는 rawRecords/leaveMap/otMap까지 매번 다시 만들어서 훨씬 느리다.
-  const employees = await buildEmployeeRoster()
+  // 1~3번은 서로 의존관계가 없다(직원 목록/예외규칙/기간별 daily_attendance 조회가 각각
+  // 독립적) — 예전엔 순차 await라 요청마다 DB 왕복이 3번 이어졌는데(2026-09-08, 화면 이동
+  // 시 로딩 체감 원인으로 발견 — Overview 페이지 하나가 useProcessedAttendance를 4번 병렬
+  // 호출해서 이 3연속 왕복이 다시 4배로 겹쳐졌다), Promise.all로 한 번에 보내 왕복 1회분
+  // 시간으로 줄인다.
+  const conditions: Prisma.Sql[] = []
+  if (opts?.from) conditions.push(Prisma.sql`work_date >= ${opts.from}`)
+  if (opts?.to)   conditions.push(Prisma.sql`work_date <= ${opts.to}`)
+  const whereClause = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty
+
+  const [employees, dbRules, rows] = await Promise.all([
+    // 직원 목록 — caps_daily_logs에서 직원당 1행만 distinct로 가져와 재구성(경량 경로).
+    // buildEmployeesAndRawRecords()(전체 6만+행 파싱)를 쓰면 daily_attendance 조회엔 필요
+    // 없는 rawRecords/leaveMap/otMap까지 매번 다시 만들어서 훨씬 느리다.
+    buildEmployeeRoster(),
+    // 예외규칙 (직책자 맵 등에 씀)
+    prisma.exceptionRule.findMany(),
+    // 범위만 SQL로 조회 — 이게 진짜 성능 이득 지점. Prisma ORM(findMany)이 6만+ 행을
+    // JS 객체로 매핑하는 데만 6~700ms 오버헤드가 실측돼서(2026-08-30), raw SQL로 직접 조회 —
+    // 같은 데이터를 훨씬 적은 비용으로 가져온다. 컬럼은 camelCase로 alias해서 reassemble()이
+    // Prisma 모델을 받을 때와 동일하게 동작하게 맞춤.
+    prisma.$queryRaw<DailyAttendanceRow[]>(Prisma.sql`
+      SELECT
+        employee_id AS "employeeId", work_date AS "workDate", day_type AS "dayType",
+        clock_in AS "clockIn", clock_out AS "clockOut", effective_clock_in AS "effectiveClockIn",
+        regular_hours AS "regularHours", overtime_hours AS "overtimeHours", night_hours AS "nightHours",
+        holiday_hours AS "holidayHours", erp_ot_applied AS "erpOtApplied", leave_type AS "leaveType",
+        erp_leave_amount AS "erpLeaveAmount", is_unpaid_leave AS "isUnpaidLeave", is_leader AS "isLeader",
+        final_status AS "finalStatus", flag, extra
+      FROM daily_attendance
+      ${whereClause}
+    `),
+  ])
   if (employees.length === 0) return { employees: [], records: [], finalAttrMap: new Map() }
 
-  // 2. 예외규칙 + 직책자 맵
-  const dbRules = await prisma.exceptionRule.findMany()
   const { finalAttrMap } = buildFinalAttrMap(employees, dbRules)
 
-  // 3. 퇴사자 완전 제외(직원 목록 기준) — buildRecordSet()과 동일 규칙. 레코드 자체는
+  // 퇴사자 완전 제외(직원 목록 기준) — buildRecordSet()과 동일 규칙. 레코드 자체는
   // upsertAttendanceRows 시점(buildRecordSet)에서 이미 걸러진 채로 저장돼 있으므로
   // 여기서 레코드를 다시 필터링할 필요는 없다.
   const resignedExcludedIds = new Set(
@@ -112,27 +139,6 @@ export async function getProcessedRecords(opts?: {
       .map(e => e.id),
   )
   const visibleEmployees = employees.filter(e => !resignedExcludedIds.has(e.id))
-
-  // 4. 범위만 SQL로 조회 — 이게 진짜 성능 이득 지점. Prisma ORM(findMany)이 6만+ 행을
-  // JS 객체로 매핑하는 데만 6~700ms 오버헤드가 실측돼서(2026-08-30), raw SQL로 직접 조회 —
-  // 같은 데이터를 훨씬 적은 비용으로 가져온다. 컬럼은 camelCase로 alias해서 reassemble()이
-  // Prisma 모델을 받을 때와 동일하게 동작하게 맞춤.
-  const conditions: Prisma.Sql[] = []
-  if (opts?.from) conditions.push(Prisma.sql`work_date >= ${opts.from}`)
-  if (opts?.to)   conditions.push(Prisma.sql`work_date <= ${opts.to}`)
-  const whereClause = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty
-
-  const rows = await prisma.$queryRaw<DailyAttendanceRow[]>(Prisma.sql`
-    SELECT
-      employee_id AS "employeeId", work_date AS "workDate", day_type AS "dayType",
-      clock_in AS "clockIn", clock_out AS "clockOut", effective_clock_in AS "effectiveClockIn",
-      regular_hours AS "regularHours", overtime_hours AS "overtimeHours", night_hours AS "nightHours",
-      holiday_hours AS "holidayHours", erp_ot_applied AS "erpOtApplied", leave_type AS "leaveType",
-      erp_leave_amount AS "erpLeaveAmount", is_unpaid_leave AS "isUnpaidLeave", is_leader AS "isLeader",
-      final_status AS "finalStatus", flag, extra
-    FROM daily_attendance
-    ${whereClause}
-  `)
 
   const records = rows.map(reassemble)
 
