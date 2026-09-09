@@ -8,14 +8,41 @@ import { flagToAnomalyCategories } from '@/utils/attendanceCalc'
 import { PeriodSelector } from '@/components/admin/PeriodSelector'
 import { AnomalyMetricBadges, emptyDivisionAnomalyMetrics, type DivisionAnomalyMetrics } from '@/components/admin/AnomalyMetricBadges'
 import { AnomalyPersonTable } from '@/components/admin/AnomalyPersonTable'
+import { OrgGroupManageTab } from '@/components/admin/OrgGroupManageTab'
 import type { Employee, EmployeeAttributeOverrides, ProcessedRecord } from '@/types/tag'
 
 const BUSINESS_DIVISIONS = DIVISION_ORDER.slice(0, 5)   // 사업조직 — HMR/음료/헬스케어/뷰티/신사업본부
 const SUPPORT_DIVISIONS = DIVISION_ORDER.slice(5)       // 지원조직 — 경영기획/피플/SCM/GTM/HQ
 
-/** "조직도" = 지금처럼 직책·성명·직무 트리, "이상치" = 같은 자리에 이상치 발생자 목록 —
- *  두 정보가 한 화면에 뭉쳐 있으면 못 알아본다는 피드백으로 토글로 분리. */
-type ViewMode = 'chart' | 'anomaly'
+/** "조직도" = 지금처럼 직책·성명·직무 트리(엑셀 동기화 기반, 읽기전용), "이상치" = 같은 자리에
+ *  이상치 발생자 목록, "조직도 관리" = 새 OrgGroup/OrgGroupMember 기반 편집 화면(admin/settings의
+ *  "조직도 관리" 탭에서 이관, 2026-09-09) — roster(엑셀 동기화) 유무와 무관하게 항상 접근 가능해야
+ *  해서 별도 조기 반환 경로로 처리한다. */
+type ViewMode = 'chart' | 'anomaly' | 'manage'
+
+const VIEW_MODE_TOGGLE_BUTTONS: { mode: ViewMode; label: string; activeClass: string }[] = [
+  { mode: 'chart',   label: '조직도',    activeClass: 'bg-white text-blue-600 shadow-sm' },
+  { mode: 'anomaly', label: '이상치',    activeClass: 'bg-white text-red-600 shadow-sm' },
+  { mode: 'manage',  label: '조직도 관리', activeClass: 'bg-white text-emerald-600 shadow-sm' },
+]
+
+function ViewModeToggle({ viewMode, onChange }: { viewMode: ViewMode; onChange: (m: ViewMode) => void }) {
+  return (
+    <div className="flex bg-gray-100 rounded-lg p-0.5">
+      {VIEW_MODE_TOGGLE_BUTTONS.map(b => (
+        <button
+          key={b.mode}
+          onClick={() => onChange(b.mode)}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+            viewMode === b.mode ? b.activeClass : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          {b.label}
+        </button>
+      ))}
+    </div>
+  )
+}
 
 function computeMetrics(records: ProcessedRecord[]): DivisionAnomalyMetrics {
   const m = emptyDivisionAnomalyMetrics()
@@ -421,13 +448,32 @@ export default function OrgChartPage() {
     })
   }
 
+  // "조직도 관리"는 엑셀 동기화 roster와 무관한 별도 데이터(OrgGroup/OrgGroupMember)라
+  // roster 로딩/에러/빈값 게이트보다 먼저 처리 — roster가 없어도 항상 진입 가능해야 한다.
+  if (viewMode === 'manage') {
+    return (
+      <div className="p-6 space-y-5 max-w-[1600px]">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <h1 className="text-lg font-bold text-gray-900">조직도</h1>
+          <ViewModeToggle viewMode={viewMode} onChange={changeViewMode} />
+        </div>
+        <OrgGroupManageTab />
+      </div>
+    )
+  }
+
   if (isLoading) return <div className="p-8 text-sm text-gray-400">불러오는 중…</div>
   if (error) return <div className="p-8 text-sm text-red-600">{error}</div>
   if (!roster || allDivisions.length === 0) {
     return (
-      <div className="p-8">
+      <div className="p-6 space-y-5 max-w-[1600px]">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <h1 className="text-lg font-bold text-gray-900">조직도</h1>
+          <ViewModeToggle viewMode={viewMode} onChange={changeViewMode} />
+        </div>
         <p className="text-sm text-gray-400 text-center py-10">
-          아직 조직도 데이터가 없습니다. 설정 &gt; 조직도 동기화에서 엑셀 파일을 먼저 반영해주세요.
+          아직 조직도(엑셀 동기화) 데이터가 없습니다. 설정 &gt; 조직도 동기화에서 엑셀 파일을
+          먼저 반영하거나, 위 "조직도 관리" 탭에서 확인해주세요.
         </p>
       </div>
     )
@@ -460,25 +506,9 @@ export default function OrgChartPage() {
           ))}
         </div>
         <div className="flex gap-2">
-          {/* ── 조직도/이상치 토글: 본부 카드 본문을 통째로 바꾼다 ── */}
-          <div className="flex bg-gray-100 rounded-lg p-0.5">
-            <button
-              onClick={() => changeViewMode('chart')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                viewMode === 'chart' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              조직도
-            </button>
-            <button
-              onClick={() => changeViewMode('anomaly')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                viewMode === 'anomaly' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              이상치
-            </button>
-          </div>
+          {/* ── 조직도/이상치/조직도 관리 토글: 조직도·이상치는 본부 카드 본문을 통째로 바꾸고,
+              조직도 관리는 이 페이지 최상단에서 별도 조기 반환됨(위 참고) ── */}
+          <ViewModeToggle viewMode={viewMode} onChange={changeViewMode} />
           <button onClick={expandAll} className="px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50">전체 펼치기</button>
           <button onClick={collapseAll} className="px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50">전체 접기</button>
         </div>
