@@ -363,6 +363,7 @@ model EmployeeMaster {
   department      Department?      @relation(fields: [departmentId], references: [id])
   capsLogs        CapsDailyLog[]
   erpApplications ErpApplication[]
+  orgGroupMemberships OrgGroupMember[]
 
   @@index([departmentId])
   @@index([status])
@@ -403,4 +404,58 @@ model OrgChartSnapshot {
   @@unique([tabName])
   @@index([tabDate])
   @@map("org_chart_snapshots")
+}
+
+// ─── 조직도 그룹 트리 — 권한별조회 전제조건 + OT 직책자 판정 단일 소스.
+// docs/superpowers/specs/2026-09-08-org-chart-tree-design.md 참고.
+// 기존 Department(division/team 평면)와 병행 — 이 플랜에서는 Department를 건드리지 않는다.
+enum JobTitle {
+  CEO
+  CSO
+  CFO
+  DIVISION_PRESIDENT   // 부문대표 — 근태 집계 대상 아님
+  DIVISION_HEAD        // 본부장 — 직책자
+  TEAM_LEAD            // 팀장   — 직책자
+  PART_LEAD            // 파트장 — 직책자
+  MEMBER               // 팀원
+  INTERN
+  CONTRACT
+  PART_TIMER
+  OTHER
+}
+
+model OrgGroup {
+  id        String   @id @default(uuid())
+  name      String
+  parentId  String?  @map("parent_id")
+  order     Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  parent    OrgGroup?        @relation("OrgGroupTree", fields: [parentId], references: [id])
+  children  OrgGroup[]       @relation("OrgGroupTree")
+  members   OrgGroupMember[]
+
+  @@index([parentId])
+  @@map("org_groups")
+}
+
+model OrgGroupMember {
+  id                   String    @id @default(uuid())
+  groupId              String    @map("group_id")
+  employeeRawId        String    @map("employee_raw_id")
+  jobTitle             JobTitle  @map("job_title")
+  isPrimary            Boolean   @default(true) @map("is_primary")
+  hasApprovalAuthority Boolean   @default(false) @map("has_approval_authority")
+  validFrom            DateTime  @map("valid_from")
+  validTo              DateTime? @map("valid_to")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  group    OrgGroup       @relation(fields: [groupId], references: [id])
+  employee EmployeeMaster @relation(fields: [employeeRawId], references: [rawId])
+
+  @@index([employeeRawId, validFrom])
+  @@index([groupId])
+  @@map("org_group_members")
 }
