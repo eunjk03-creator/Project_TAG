@@ -3,7 +3,13 @@ export type JobTitleValue =
   | 'TEAM_LEAD' | 'PART_LEAD' | 'MEMBER' | 'INTERN' | 'CONTRACT'
   | 'PART_TIMER' | 'OTHER'
 
-const LEADER_TITLES: ReadonlySet<JobTitleValue> = new Set([
+/**
+ * EmployeeMaster.jobTitle이 이미 이 목록에 있으면 "신뢰할 수 있는 값"으로 보고 그대로 채택한다.
+ * OT/급여상 "직책자"(DIVISION_HEAD/TEAM_LEAD/PART_LEAD) 집합이나 dataParser.ts의 이상치-플래그
+ * 제외 목록과는 다른, 별개의 "이미 확정된 직책으로 인정할 값"의 집합이다 — 이름이 비슷해서
+ * 혼동하기 쉬우니 재사용하지 말 것.
+ */
+const ESTABLISHED_LEADER_TITLES: ReadonlySet<JobTitleValue> = new Set([
   'CEO', 'CSO', 'CFO', 'DIVISION_PRESIDENT', 'DIVISION_HEAD', 'TEAM_LEAD', 'PART_LEAD',
 ])
 
@@ -44,7 +50,7 @@ export function resolveInitialJobTitle(
   hasLeaderExceptionRule: boolean,
 ): JobTitleValue {
   const mapped = mapEmployeeMasterJobTitle(employeeMasterJobTitle)
-  if (LEADER_TITLES.has(mapped)) return mapped
+  if (ESTABLISHED_LEADER_TITLES.has(mapped)) return mapped
   if (hasLeaderExceptionRule) return 'TEAM_LEAD'
   return mapped
 }

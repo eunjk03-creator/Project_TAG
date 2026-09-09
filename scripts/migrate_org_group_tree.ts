@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, type JobTitle } from '@prisma/client'
 import {
   buildGroupNodesFromDepartments, type DeptRow,
 } from '../src/lib/orgGroup/buildTree'
@@ -23,14 +23,21 @@ async function buildPlan() {
 
   const leaderRules = await prisma.exceptionRule.findMany({
     where: { ruleType: 'manager_exemption' },
-    select: { employeeId: true, validFrom: true },
+    select: { employeeId: true, validFrom: true, validTo: true },
   })
   const leaderRawIds = new Set<string>()
+  // rawId -> 해당 manager_exemption 규칙의 원본 validFrom/validTo (둘 다 빈 문자열일 수 있음).
+  // 확인됨: 직원당 manager_exemption 규칙은 최대 1건이라 dedup 불필요 (1:1 매핑).
+  const leaderRuleDatesByRawId = new Map<string, { validFrom: string; validTo: string }>()
   const unparsedLeaderRuleIds: string[] = []
   for (const rule of leaderRules) {
     const parsed = parseExceptionRuleEmployeeId(rule.employeeId)
-    if (parsed) leaderRawIds.add(parsed.rawId)
-    else unparsedLeaderRuleIds.push(rule.employeeId)
+    if (parsed) {
+      leaderRawIds.add(parsed.rawId)
+      leaderRuleDatesByRawId.set(parsed.rawId, { validFrom: rule.validFrom, validTo: rule.validTo })
+    } else {
+      unparsedLeaderRuleIds.push(rule.employeeId)
+    }
   }
 
   const membersToCreate: {
@@ -38,6 +45,7 @@ async function buildPlan() {
     groupKey: string
     jobTitle: string
     validFrom: Date
+    validTo: Date | null
   }[] = []
   const unassigned: string[] = []
   const employeeRawIds = new Set(employees.map(e => e.rawId))
@@ -48,8 +56,20 @@ async function buildPlan() {
     if (!dept) { unassigned.push(emp.rawId); continue }
     const groupKey = dept.team ? `${dept.division}::${dept.team}` : dept.division
     const jobTitle = resolveInitialJobTitle(emp.jobTitle, leaderRawIds.has(emp.rawId))
-    const validFrom = parseValidFrom(emp.hireDate, FALLBACK_VALID_FROM)
-    membersToCreate.push({ rawId: emp.rawId, groupKey, jobTitle, validFrom })
+
+    const leaderRuleDates = leaderRuleDatesByRawId.get(emp.rawId)
+    let validFrom: Date
+    let validTo: Date | null
+    if (leaderRuleDates) {
+      // 매칭되는 manager_exemption 리더 규칙의 발령/해임일을 그대로 승계 (빈 문자열은 "지정 없음"으로 취급).
+      validFrom = parseValidFrom(leaderRuleDates.validFrom, FALLBACK_VALID_FROM)
+      const trimmedValidTo = leaderRuleDates.validTo.trim()
+      validTo = trimmedValidTo.length > 0 ? new Date(trimmedValidTo) : null
+    } else {
+      validFrom = parseValidFrom(emp.hireDate, FALLBACK_VALID_FROM)
+      validTo = null
+    }
+    membersToCreate.push({ rawId: emp.rawId, groupKey, jobTitle, validFrom, validTo })
   }
 
   const leaderRawIdsNotInEmployeeMaster = [...leaderRawIds].filter(id => !employeeRawIds.has(id))
@@ -94,6 +114,18 @@ async function main() {
   }
 
   console.log('\n=== commit 모드 — 실제로 씁니다 ===')
+  const [existingGroupCount, existingMemberCount] = await Promise.all([
+    prisma.orgGroup.count(),
+    prisma.orgGroupMember.count(),
+  ])
+  if (existingGroupCount > 0 || existingMemberCount > 0) {
+    throw new Error(
+      `이 스크립트는 1회성 이관 스크립트입니다. 이미 OrgGroup ${existingGroupCount}건, `
+      + `OrgGroupMember ${existingMemberCount}건이 존재합니다. 재실행이 정말 필요하면 `
+      + '먼저 두 테이블(org_groups, org_group_members)을 모두 비운 뒤 다시 실행하세요.',
+    )
+  }
+
   await prisma.$transaction(async tx => {
     const idByKey = new Map<string, string>()
     const divisionNodes = plan.groupNodes.filter(n => n.parentKey === null)
@@ -121,11 +153,11 @@ async function main() {
         data: {
           groupId,
           employeeRawId: member.rawId,
-          jobTitle: member.jobTitle as never,
+          jobTitle: member.jobTitle as JobTitle,
           isPrimary: true,
           hasApprovalAuthority: false,
           validFrom: member.validFrom,
-          validTo: null,
+          validTo: member.validTo,
         },
       })
     }
