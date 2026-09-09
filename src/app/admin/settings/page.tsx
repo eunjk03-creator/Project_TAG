@@ -7,6 +7,7 @@ import { WorkSchedulesTab } from '@/components/admin/WorkSchedulesTab'
 import { LeaveAdjustmentsTab } from '@/components/admin/LeaveAdjustmentsTab'
 import { SlackIntegrationTab } from '@/components/admin/SlackIntegrationTab'
 import { OrgSyncTab } from '@/components/admin/OrgSyncTab'
+import { OrgGroupManageTab } from '@/components/admin/OrgGroupManageTab'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -172,6 +173,7 @@ export default function SettingsPage() {
             { id: 'holidays',   label: '전사휴무'    },
             { id: 'slack',      label: '슬랙 연동'   },
             { id: 'org-sync',   label: '조직도 동기화' },
+            { id: 'org-groups', label: '조직도 관리' },
           ].map(item => (
             <button
               key={item.id}
@@ -223,6 +225,9 @@ export default function SettingsPage() {
 
           {/* ─── Tab: Org Chart Sync ─── */}
           {activeId === 'org-sync' && <OrgSyncTab />}
+
+          {/* ─── Tab: Org Group Management (조직도 관리) ─── */}
+          {activeId === 'org-groups' && <OrgGroupManageTab />}
 
           {/* ─── Tab: Company Holidays (전사휴무) ─── */}
           {activeId === 'holidays' && (
