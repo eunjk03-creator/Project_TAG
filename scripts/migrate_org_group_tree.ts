@@ -129,7 +129,7 @@ async function main() {
         },
       })
     }
-  })
+  }, { timeout: 120_000 })
   console.log('완료.')
   await prisma.$disconnect()
 }
