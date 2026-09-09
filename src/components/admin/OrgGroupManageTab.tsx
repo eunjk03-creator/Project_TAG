@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback, useMemo } from 'react'
+import Link from 'next/link'
 
 interface Member {
   id: string
@@ -236,7 +237,12 @@ export function OrgGroupManageTab() {
             </span>
           )}
         </td>
-        <td className="py-1 pr-2 text-xs font-medium whitespace-nowrap">{m.name} <span className="text-[10px] text-gray-400 font-normal">{m.employeeRawId}</span></td>
+        <td className="py-1 pr-2 text-xs font-medium whitespace-nowrap">
+          <Link href={`/admin/employees/${encodeURIComponent(m.employeeRawId)}`} className="hover:text-blue-600 hover:underline">
+            {m.name}
+          </Link>
+          {' '}<span className="text-[10px] text-gray-400 font-normal">{m.employeeRawId}</span>
+        </td>
         <td className="py-1">
           <select
             className="text-[11px] border border-gray-200 rounded px-1 py-0.5 max-w-[140px]"
