@@ -48,3 +48,6 @@ next-env.d.ts
 *.xlsx
 
 .vercel
+
+# subagent-driven-development scratch workspace
+.superpowers/
