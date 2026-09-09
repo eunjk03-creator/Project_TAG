@@ -128,12 +128,23 @@ model OrgGroupMember {
 
 - [ ] **Step 3: 마이그레이션 생성 및 적용**
 
+> **2026-09-09 수정:** 원래 여기 `npx prisma migrate dev --name add_org_group_tree`였으나,
+> 실행 중 발견한 사실 때문에 `prisma db push`로 변경함 — `_prisma_migrations` 이력
+> 테이블엔 `20260505071248_init` 딱 1건만 기록되어 있는데 반해, 실제 DB의 `exception_rules`
+> 등 여러 테이블은 이미 현재 `schema.prisma`와 완전히 일치하는 상태였다(그동안
+> `Department`/`EmployeeMaster`/`WorkSchedule`/`CapsDailyLog` 등은 전부 `db push`로
+> 이 공유 DB에 반영되어 왔고, 로컬 마이그레이션 파일들은 이 DB엔 "적용됨"으로 기록된 적이
+> 없음). 이 상태에서 `migrate dev`를 돌리면 drift 감지로 DB 리셋을 제안하는 흐름에 들어갈
+> 위험이 있어, 이 프로젝트가 실제로 지금까지 써온 방식(`db push`)을 그대로 따르기로
+> 사용자 승인 하에 변경. 마이그레이션 이력 부채 자체를 정리하는 건 이 플랜 범위 밖.
+
 ```bash
-npx prisma migrate dev --name add_org_group_tree
+npx prisma db push
 ```
 
-Expected: `prisma/migrations/<timestamp>_add_org_group_tree/migration.sql` 생성, 콘솔에
-"Your database is now in sync with your schema" 출력.
+Expected: 콘솔에 "Your database is now in sync with your schema" 출력, 새 테이블
+`org_groups`/`org_group_members` 생성. (마이그레이션 파일은 생성되지 않음 — `db push`는
+마이그레이션 이력을 안 남기고 스키마만 직접 동기화하는 방식.)
 
 - [ ] **Step 4: 클라이언트 재생성 확인**
 
@@ -164,9 +175,12 @@ Expected: `{"orgGroup":0,"orgGroupMember":0}`
 - [ ] **Step 6: Commit**
 
 ```bash
-git add prisma/schema.prisma prisma/migrations
+git add prisma/schema.prisma
 git commit -m "feat: OrgGroup/OrgGroupMember 조직도 트리 모델 추가"
 ```
+
+(마이그레이션 파일이 없으므로 `prisma/migrations`는 커밋 대상에서 빠짐 — `db push`
+방식이라 정상.)
 
 ---
 
@@ -595,6 +609,9 @@ async function main() {
   }
 
   console.log('\n=== commit 모드 — 실제로 씁니다 ===')
+  // 2026-09-09 수정: 그룹75+멤버277 = 약 352건을 순차 await로 처리하면 Prisma 인터랙티브
+  // 트랜잭션 기본 타임아웃(5000ms)을 원격 Supabase 상대로 넘길 수 있음(Task 4 리뷰에서 발견) —
+  // 타임아웃을 넉넉히 늘림. 로직은 그대로, 옵션만 추가.
   await prisma.$transaction(async tx => {
     const idByKey = new Map<string, string>()
     const divisionNodes = plan.groupNodes.filter(n => n.parentKey === null)
@@ -630,7 +647,7 @@ async function main() {
         },
       })
     }
-  })
+  }, { timeout: 120_000 })
   console.log('완료.')
   await prisma.$disconnect()
 }
