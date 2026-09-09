@@ -7,6 +7,7 @@ import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useScopedProcessedRecords } from '@/hooks/useProcessedAttendance'
 import { computeRealHoursOtForRecord, isLeaderOnDate, flagToAnomalyCategories, parseTimeToMins } from '@/utils/attendanceCalc'
 import { checkEmployeeCompleteness, type EmployeeMasterLike } from '@/lib/employeeCompleteness'
+import { classifyOrgGroupHistory, type OrgGroupHistoryRow } from '@/lib/orgGroup/history'
 import { DateRangePicker } from '@/components/admin/DateRangePicker'
 import type { DateRange } from '@/types/tag'
 
@@ -77,6 +78,7 @@ export default function EmployeeCardPage() {
 
   const [emp, setEmp] = useState<EmployeeMasterRow | null>(null)
   const [loading, setLoading] = useState(true)
+  const [orgHistory, setOrgHistory] = useState<OrgGroupHistoryRow[]>([])
   const [tab, setTab] = useState<TabKey>('sum')
   const [range, setRange] = useState<DateRange>(() => {
     const today = new Date()
@@ -91,6 +93,23 @@ export default function EmployeeCardPage() {
       .then(r => r.ok ? r.json() : null)
       .then(row => { if (!cancelled) { setEmp(row); setLoading(false) } })
       .catch(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [rawId])
+
+  // 조직도 이력(OrgGroupMember) — 2026-09-09부터 조직도 관리 화면에서 만든 배치/이동/직책변경이
+  // 여기 인사 이력에도 같이 보이도록 연동. 아직 OT 계산 소스는 아님(그건 Plan 2) — 표시 전용.
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/org-group-members?employeeRawId=${encodeURIComponent(rawId)}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => {
+        if (cancelled) return
+        setOrgHistory(rows.map((r: { group: { name: string }; groupId: string; jobTitle: string; validFrom: string; validTo: string | null }) => ({
+          groupId: r.groupId, groupName: r.group.name, jobTitle: r.jobTitle,
+          validFrom: r.validFrom, validTo: r.validTo,
+        })))
+      })
+      .catch(() => { if (!cancelled) setOrgHistory([]) })
     return () => { cancelled = true }
   }, [rawId])
 
@@ -130,8 +149,11 @@ export default function EmployeeCardPage() {
       if (!label[r.ruleType]) continue
       items.push({ date: r.validFrom, title: label[r.ruleType], effect: RULE_EFFECT[r.ruleType] })
     }
+    for (const h of classifyOrgGroupHistory(orgHistory)) {
+      items.push({ date: h.date, title: `[조직도] ${h.title}`, effect: h.detail })
+    }
     return items.sort((a, b) => b.date.localeCompare(a.date))
-  }, [emp, rules])
+  }, [emp, rules, orgHistory])
 
   // 근태 상세 — 선택 기간 원본/급여용 소정외 비교
   const leaderRule = useMemo(() => rules.find(r => r.ruleType === 'manager_exemption'), [rules])
