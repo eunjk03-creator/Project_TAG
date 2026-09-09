@@ -41,19 +41,24 @@ function groupLabel(groups: Group[], id: string): string {
   return parts.join(' / ')
 }
 
-const COLUMN_TITLES = ['최상위', '1depth', '2depth', '3depth', '4depth', '5depth', '6depth', '7depth']
+/** 그룹 트리 전체 인원 합(자기 + 모든 하위그룹) — "펼치기 전" 카운트 표시용. */
+function totalHeadcount(byParent: Map<string | null, Group[]>, group: Group): number {
+  let sum = group.members.length
+  for (const child of byParent.get(group.id) ?? []) sum += totalHeadcount(byParent, child)
+  return sum
+}
 
 export function OrgGroupManageTab() {
   const [groups, setGroups] = useState<Group[]>([])
   const [unassigned, setUnassigned] = useState<UnassignedEmployee[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [selectedPath, setSelectedPath] = useState<string[]>([])
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [addingUnder, setAddingUnder] = useState<string | 'root' | null>(null)
   const [newName, setNewName] = useState('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
-  const [addMemberOpen, setAddMemberOpen] = useState(false)
+  const [addMemberFor, setAddMemberFor] = useState<string | null>(null)
   const [addMemberSearch, setAddMemberSearch] = useState('')
   const [addMemberRawId, setAddMemberRawId] = useState('')
   const [addMemberJobTitle, setAddMemberJobTitle] = useState('MEMBER')
@@ -81,10 +86,15 @@ export function OrgGroupManageTab() {
     return m
   }, [groups])
 
-  function selectAt(depth: number, groupId: string) {
-    setSelectedPath(prev => [...prev.slice(0, depth), groupId])
-    setAddMemberOpen(false)
+  function toggleExpand(id: string) {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
   }
+  function expandAll() { setExpanded(new Set(groups.map(g => g.id))) }
+  function collapseAll() { setExpanded(new Set()) }
 
   async function addGroup(parentId: string | null) {
     if (!newName.trim()) return
@@ -95,6 +105,7 @@ export function OrgGroupManageTab() {
       body: JSON.stringify({ name: newName.trim(), parentId }),
     })
     if (!res.ok) { const d = await res.json(); setError(d.error ?? '추가 실패'); return }
+    if (parentId) setExpanded(prev => new Set(prev).add(parentId))
     setNewName(''); setAddingUnder(null)
     load()
   }
@@ -112,12 +123,11 @@ export function OrgGroupManageTab() {
     load()
   }
 
-  async function deleteGroup(id: string, depth: number) {
+  async function deleteGroup(id: string) {
     if (!window.confirm('이 그룹을 삭제할까요?')) return
     setError('')
     const res = await fetch(`/api/org-groups/${id}`, { method: 'DELETE' })
     if (!res.ok) { const d = await res.json(); setError(d.error ?? '삭제 실패'); return }
-    setSelectedPath(prev => prev.slice(0, depth))
     load()
   }
 
@@ -141,133 +151,68 @@ export function OrgGroupManageTab() {
       body: JSON.stringify({ employeeRawId: addMemberRawId, groupId, jobTitle: addMemberJobTitle }),
     })
     if (!res.ok) { const d = await res.json(); setError(d.error ?? '추가 실패'); return }
-    setAddMemberOpen(false); setAddMemberRawId(''); setAddMemberSearch(''); setAddMemberJobTitle('MEMBER')
+    setAddMemberFor(null); setAddMemberRawId(''); setAddMemberSearch(''); setAddMemberJobTitle('MEMBER')
     load()
   }
 
   if (loading) return <div className="text-sm text-gray-400 py-10 text-center">불러오는 중...</div>
 
-  const selected = selectedPath.length > 0 ? groups.find(g => g.id === selectedPath[selectedPath.length - 1]) : null
-
-  // 컬럼 구성: 0열=최상위, i열=selectedPath[i-1]의 자식들. 마지막 선택 그룹에 자식이 있으면 빈 컬럼 하나 더.
-  const columns: Group[][] = [byParent.get(null) ?? []]
-  for (let i = 0; i < selectedPath.length; i++) {
-    columns.push(byParent.get(selectedPath[i]) ?? [])
-  }
-
   const filteredUnassigned = unassigned.filter(u =>
     !addMemberSearch.trim() || u.name.includes(addMemberSearch.trim()) || u.rawId.includes(addMemberSearch.trim()),
   )
 
-  return (
-    <div>
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h2 className="text-base font-semibold text-gray-800">조직도 관리</h2>
-          <p className="text-xs text-gray-400 mt-1">
-            그룹 {groups.length}개 · 배정 인원 {groups.reduce((s, g) => s + g.members.length, 0)}명 · 미배정 {unassigned.length}명
-          </p>
+  function renderNode(g: Group, depth: number) {
+    const children = byParent.get(g.id) ?? []
+    const isOpen = expanded.has(g.id)
+    const total = totalHeadcount(byParent, g)
+
+    return (
+      <div key={g.id}>
+        <div
+          className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 text-sm"
+          style={{ paddingLeft: 8 + depth * 20 }}
+        >
+          <span className="flex items-center gap-1.5 cursor-pointer flex-1 min-w-0" onClick={() => toggleExpand(g.id)}>
+            <span className="text-gray-300 w-3 shrink-0">{isOpen ? '▾' : '▸'}</span>
+            <span className="text-gray-700 truncate">{g.name}</span>
+            <span className="text-xs text-gray-400 shrink-0">({total})</span>
+          </span>
+          <span className="flex items-center gap-2 text-xs shrink-0">
+            <button className="text-gray-400 hover:text-blue-600" onClick={() => { setAddMemberFor(g.id); setExpanded(prev => new Set(prev).add(g.id)) }}>+ 구성원</button>
+            <button className="text-gray-400 hover:text-blue-600" onClick={() => { setAddingUnder(g.id); setNewName(''); setExpanded(prev => new Set(prev).add(g.id)) }}>+ 하위그룹</button>
+            <button className="text-gray-400 hover:text-blue-600" onClick={() => { setRenamingId(g.id); setRenameValue(g.name) }}>이름수정</button>
+            <button className="text-gray-400 hover:text-red-600" onClick={() => deleteGroup(g.id)}>삭제</button>
+          </span>
         </div>
-        <button
-          className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
-          onClick={() => { setAddingUnder('root'); setNewName('') }}
-        >+ 최상위 그룹 추가</button>
-      </div>
 
-      {error && <div className="mb-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
-
-      {addingUnder === 'root' && (
-        <div className="flex gap-2 items-center mb-3">
-          <input
-            autoFocus value={newName} onChange={e => setNewName(e.target.value)}
-            placeholder="새 최상위 그룹명"
-            onKeyDown={e => e.key === 'Enter' && addGroup(null)}
-            className="text-sm border border-gray-200 rounded px-2 py-1 w-48"
-          />
-          <button className="text-xs text-blue-600" onClick={() => addGroup(null)}>추가</button>
-          <button className="text-xs text-gray-400" onClick={() => setAddingUnder(null)}>취소</button>
-        </div>
-      )}
-
-      {/* ── 가로 depth 컬럼 뷰 ── */}
-      <div className="flex gap-3 overflow-x-auto pb-2 mb-6" style={{ maxWidth: '100%' }}>
-        {columns.map((colGroups, depth) => (
-          <div key={depth} className="w-64 shrink-0 bg-white border border-gray-200 rounded-xl overflow-hidden">
-            <div className="px-3 py-2 border-b border-gray-100 text-xs font-semibold text-gray-400">
-              {COLUMN_TITLES[depth] ?? `${depth}depth`}
-            </div>
-            <div className="max-h-[560px] overflow-y-auto">
-              {colGroups.length === 0 ? (
-                <div className="px-3 py-4 text-xs text-gray-300">하위 그룹 없음</div>
-              ) : colGroups.map(g => {
-                const isSelected = selectedPath[depth] === g.id
-                const hasChildren = (byParent.get(g.id) ?? []).length > 0
-                return (
-                  <div key={g.id} className={`border-b border-gray-50 ${isSelected ? 'bg-blue-50' : ''}`}>
-                    <div
-                      className={`flex items-center justify-between gap-1 px-3 py-2 cursor-pointer text-sm ${
-                        isSelected ? 'text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
-                      }`}
-                      onClick={() => selectAt(depth, g.id)}
-                    >
-                      <span className="truncate">{g.name} <span className="text-xs text-gray-400">({g.members.length})</span></span>
-                      {hasChildren && <span className="text-gray-300 shrink-0">›</span>}
-                    </div>
-                    {isSelected && (
-                      <div className="flex gap-2 px-3 pb-2 text-xs">
-                        <button className="text-gray-400 hover:text-blue-600" onClick={e => { e.stopPropagation(); setAddingUnder(g.id); setNewName('') }}>+ 하위그룹</button>
-                        <button className="text-gray-400 hover:text-blue-600" onClick={e => { e.stopPropagation(); setRenamingId(g.id); setRenameValue(g.name) }}>이름수정</button>
-                        <button className="text-gray-400 hover:text-red-600" onClick={e => { e.stopPropagation(); deleteGroup(g.id, depth) }}>삭제</button>
-                      </div>
-                    )}
-                    {isSelected && renamingId === g.id && (
-                      <div className="flex gap-2 items-center px-3 pb-2">
-                        <input
-                          autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && renameGroup(g.id)}
-                          className="text-xs border border-gray-200 rounded px-2 py-1 w-32"
-                        />
-                        <button className="text-xs text-blue-600" onClick={() => renameGroup(g.id)}>저장</button>
-                        <button className="text-xs text-gray-400" onClick={() => setRenamingId(null)}>취소</button>
-                      </div>
-                    )}
-                    {isSelected && addingUnder === g.id && (
-                      <div className="flex gap-2 items-center px-3 pb-2">
-                        <input
-                          autoFocus value={newName} onChange={e => setNewName(e.target.value)}
-                          placeholder="새 하위그룹명"
-                          onKeyDown={e => e.key === 'Enter' && addGroup(g.id)}
-                          className="text-xs border border-gray-200 rounded px-2 py-1 w-32"
-                        />
-                        <button className="text-xs text-blue-600" onClick={() => addGroup(g.id)}>추가</button>
-                        <button className="text-xs text-gray-400" onClick={() => setAddingUnder(null)}>취소</button>
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+        {renamingId === g.id && (
+          <div className="flex gap-2 items-center py-1" style={{ paddingLeft: 8 + (depth + 1) * 20 }}>
+            <input
+              autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && renameGroup(g.id)}
+              className="text-xs border border-gray-200 rounded px-2 py-1 w-40"
+            />
+            <button className="text-xs text-blue-600" onClick={() => renameGroup(g.id)}>저장</button>
+            <button className="text-xs text-gray-400" onClick={() => setRenamingId(null)}>취소</button>
           </div>
-        ))}
-      </div>
+        )}
+        {addingUnder === g.id && (
+          <div className="flex gap-2 items-center py-1" style={{ paddingLeft: 8 + (depth + 1) * 20 }}>
+            <input
+              autoFocus value={newName} onChange={e => setNewName(e.target.value)}
+              placeholder="새 하위그룹명"
+              onKeyDown={e => e.key === 'Enter' && addGroup(g.id)}
+              className="text-xs border border-gray-200 rounded px-2 py-1 w-40"
+            />
+            <button className="text-xs text-blue-600" onClick={() => addGroup(g.id)}>추가</button>
+            <button className="text-xs text-gray-400" onClick={() => setAddingUnder(null)}>취소</button>
+          </div>
+        )}
 
-      {/* ── 선택된 그룹의 구성원 패널 ── */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4">
-        {!selected ? (
-          <p className="text-sm text-gray-400">위에서 그룹을 선택하면 구성원이 여기 표시됩니다.</p>
-        ) : (
-          <>
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-sm font-semibold text-gray-800">{groupLabel(groups, selected.id)}</h3>
-              <button
-                className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
-                onClick={() => setAddMemberOpen(v => !v)}
-              >+ 구성원 추가</button>
-            </div>
-            <p className="text-xs text-gray-400 mb-3">구성원 {selected.members.length}명</p>
-
-            {addMemberOpen && (
-              <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+        {isOpen && (
+          <div>
+            {addMemberFor === g.id && (
+              <div className="my-2 p-3 bg-gray-50 border border-gray-200 rounded-lg" style={{ marginLeft: 8 + (depth + 1) * 20 }}>
                 <p className="text-xs font-semibold text-gray-500 mb-2">미배정 인원 {unassigned.length}명 중에서 선택 (신규입사자 포함)</p>
                 <div className="flex gap-2 mb-2">
                   <input
@@ -299,46 +244,94 @@ export function OrgGroupManageTab() {
                   <button
                     disabled={!addMemberRawId}
                     className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded disabled:bg-gray-300"
-                    onClick={() => addMember(selected.id)}
+                    onClick={() => addMember(g.id)}
                   >이 그룹에 배치</button>
-                  <button className="text-xs text-gray-400" onClick={() => setAddMemberOpen(false)}>취소</button>
+                  <button className="text-xs text-gray-400" onClick={() => setAddMemberFor(null)}>취소</button>
                 </div>
               </div>
             )}
 
-            {selected.members.length === 0 ? (
-              <p className="text-sm text-gray-300">소속 인원이 없습니다.</p>
-            ) : (
-              <ul className="space-y-2">
-                {selected.members.map(m => (
-                  <li key={m.id} className="flex items-center justify-between border border-gray-100 rounded-lg px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-800">{m.name}</span>
-                      <span className="text-xs text-gray-400">{m.employeeRawId}</span>
-                      <span className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded">
-                        {JOB_TITLE_LABEL[m.jobTitle] ?? m.jobTitle}
-                      </span>
-                      {LEADER_TITLES.has(m.jobTitle) && (
-                        <span title={m.hasApprovalAuthority ? '승인 권한 있는 리더' : '승인 권한 없는 리더'}>
-                          {m.hasApprovalAuthority ? '⭐' : '★'}
-                        </span>
-                      )}
-                    </div>
-                    <select
-                      className="text-xs border border-gray-200 rounded px-2 py-1"
-                      value={selected.id}
-                      onChange={e => moveMember(m.employeeRawId, e.target.value)}
-                    >
-                      {groups.map(g => (
-                        <option key={g.id} value={g.id}>{groupLabel(groups, g.id)}</option>
-                      ))}
-                    </select>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
+            {g.members.map(m => (
+              <div
+                key={m.id}
+                className="flex items-center justify-between gap-2 py-1.5 border-b border-gray-50 text-sm"
+                style={{ paddingLeft: 8 + (depth + 1) * 20 + 16 }}
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="text-gray-800 font-medium">{m.name}</span>
+                  <span className="text-xs text-gray-400">{m.employeeRawId}</span>
+                  <span className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded">
+                    {JOB_TITLE_LABEL[m.jobTitle] ?? m.jobTitle}
+                  </span>
+                  {LEADER_TITLES.has(m.jobTitle) && (
+                    <span title={m.hasApprovalAuthority ? '승인 권한 있는 리더' : '승인 권한 없는 리더'}>
+                      {m.hasApprovalAuthority ? '⭐' : '★'}
+                    </span>
+                  )}
+                </span>
+                <select
+                  className="text-xs border border-gray-200 rounded px-2 py-1 shrink-0"
+                  value={g.id}
+                  onChange={e => moveMember(m.employeeRawId, e.target.value)}
+                >
+                  {groups.map(gg => (
+                    <option key={gg.id} value={gg.id}>{groupLabel(groups, gg.id)}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+
+            {children.map(c => renderNode(c, depth + 1))}
+          </div>
         )}
+      </div>
+    )
+  }
+
+  const topLevel = (byParent.get(null) ?? []).sort((a, b) => a.order - b.order)
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-gray-800">조직도 관리</h2>
+          <p className="text-xs text-gray-400 mt-1">
+            그룹 {groups.length}개 · 배정 인원 {groups.reduce((s, g) => s + g.members.length, 0)}명 · 미배정 {unassigned.length}명
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
+            onClick={expandAll}
+          >+ 전체 펼치기</button>
+          <button
+            className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
+            onClick={collapseAll}
+          >- 전체 접기</button>
+          <button
+            className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
+            onClick={() => { setAddingUnder('root'); setNewName('') }}
+          >+ 최상위 그룹 추가</button>
+        </div>
+      </div>
+
+      {error && <div className="mb-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
+
+      {addingUnder === 'root' && (
+        <div className="flex gap-2 items-center mb-3">
+          <input
+            autoFocus value={newName} onChange={e => setNewName(e.target.value)}
+            placeholder="새 최상위 그룹명"
+            onKeyDown={e => e.key === 'Enter' && addGroup(null)}
+            className="text-sm border border-gray-200 rounded px-2 py-1 w-48"
+          />
+          <button className="text-xs text-blue-600" onClick={() => addGroup(null)}>추가</button>
+          <button className="text-xs text-gray-400" onClick={() => setAddingUnder(null)}>취소</button>
+        </div>
+      )}
+
+      <div className="bg-white border border-gray-200 rounded-xl p-3 max-h-[700px] overflow-y-auto">
+        {topLevel.map(g => renderNode(g, 0))}
       </div>
     </div>
   )
