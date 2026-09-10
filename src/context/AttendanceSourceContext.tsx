@@ -142,6 +142,31 @@ function chunkByEmployee<T>(
   return chunks
 }
 
+// 청크를 몇 개씩 동시에 보낼지 — 청크 하나(직원 30명분 재계산)가 21~30초 걸리는 게
+// 실측됐고(2026-09-10, 서브 배포), 전부 순차로 보내면 청크 수만큼 그 시간이 그대로 곱해져
+// 전체 업로드가 5~10분씩 걸렸다. 서로 다른 청크는 대부분 겹치지 않는 직원 그룹이라(같은
+// 직원이 CAPS 청크와 ERP 청크에 동시에 걸리는 드문 경우가 있어도, 각 요청은 그 시점의
+// DB 전체 상태를 다시 읽어 재계산하므로 결과가 어긋나지 않는다 — buildEmployeesAndRawRecords
+// 참고) 동시에 여러 개를 보내도 안전하다. 3개로 시작 — DB 커넥션 풀/서버리스 동시실행
+// 여유를 보고 필요하면 조정.
+const INGEST_CONCURRENCY = 3
+
+/** items를 limit개씩 동시에 처리 — 순서 보장 없음(완료되는 대로), 실패해도 이미 시작된
+ *  나머지는 끝까지 진행하고 첫 에러만 기억해서 마지막에 보고한다. */
+async function runWithConcurrency<T>(
+  items: T[], limit: number, fn: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0
+  async function worker() {
+    for (;;) {
+      const i = nextIndex++
+      if (i >= items.length) return
+      await fn(items[i], i)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
+}
+
 async function postIngestChunk(
   caps: CapsRow[], erp: ErpUnifiedRow[], label: string,
 ): Promise<{ result: IngestResponse | null; error: string | null }> {
@@ -168,35 +193,31 @@ async function ingest(
 ): Promise<{ result: IngestResponse | null; error: string | null }> {
   const capsChunks = chunkByEmployee(caps, r => String(r.사원번호 ?? '').trim(), EMPLOYEES_PER_CHUNK, MAX_ROWS_PER_CHUNK)
   const erpChunks  = chunkByEmployee(erp,  r => String(r.사원번호 ?? '').trim(), EMPLOYEES_PER_CHUNK, MAX_ROWS_PER_CHUNK)
-  const totalSteps = capsChunks.length + erpChunks.length || 1
+
+  const jobs = [
+    ...capsChunks.map(part => ({ kind: 'CAPS', caps: part, erp: [] as ErpUnifiedRow[] })),
+    ...erpChunks.map(part => ({ kind: 'ERP', caps: [] as CapsRow[], erp: part })),
+  ]
+  const totalSteps = jobs.length || 1
 
   const acc: IngestResponse = { ok: true, affectedEmployees: 0, processedRecords: 0, skippedCount: 0, erpOtMatchCount: 0 }
-  let step = 0
+  if (jobs.length === 0) return { result: acc, error: null }
 
-  if (capsChunks.length === 0 && erpChunks.length === 0) {
-    return { result: acc, error: null }
-  }
+  let completed = 0
+  let firstError: string | null = null
 
-  for (const part of capsChunks) {
-    step++
-    const { result, error } = await postIngestChunk(part, [], `CAPS ${step}/${totalSteps}`)
-    if (!result) return { result: null, error }
+  await runWithConcurrency(jobs, INGEST_CONCURRENCY, async (job, i) => {
+    const { result, error } = await postIngestChunk(job.caps, job.erp, `${job.kind} ${i + 1}/${totalSteps}`)
+    if (!result) { firstError = firstError ?? error; return }
     acc.processedRecords  += result.processedRecords
     acc.skippedCount      += result.skippedCount
     acc.erpOtMatchCount   += result.erpOtMatchCount
     acc.affectedEmployees  = Math.max(acc.affectedEmployees, result.affectedEmployees)
-    onProgress?.(step, totalSteps)
-  }
-  for (const part of erpChunks) {
-    step++
-    const { result, error } = await postIngestChunk([], part, `ERP ${step}/${totalSteps}`)
-    if (!result) return { result: null, error }
-    acc.processedRecords  += result.processedRecords
-    acc.skippedCount      += result.skippedCount
-    acc.erpOtMatchCount   += result.erpOtMatchCount
-    acc.affectedEmployees  = Math.max(acc.affectedEmployees, result.affectedEmployees)
-    onProgress?.(step, totalSteps)
-  }
+    completed++
+    onProgress?.(completed, totalSteps)
+  })
+
+  if (firstError) return { result: null, error: firstError }
   return { result: acc, error: null }
 }
 
