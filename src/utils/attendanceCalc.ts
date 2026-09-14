@@ -5,7 +5,7 @@
  * Single source of truth for both the UI table and Excel export.
  * All hour values are decimal (e.g. 8h 30m = 8.5).
  */
-import type { DayType, ErpLeaveType, RawRecord, ProcessedRecord, SieveFlag, Employee, EmployeeAttributeOverrides } from '@/types/tag'
+import type { DayType, ErpLeaveType, RawRecord, ProcessedRecord, SieveFlag, Employee, EmployeeAttributeOverrides, FinalStatus } from '@/types/tag'
 
 export type AnomalyCategory = 'late' | 'shortage' | 'notag'
 
@@ -493,6 +493,7 @@ export function computeRealHoursOt(params: {
  */
 export function computeRealHoursOtForRecord(r: {
   dayType:           DayType
+  finalStatus?:      FinalStatus | string | null
   clockIn?:          string | null
   clockOut?:         string | null
   effectiveClockIn?: string | null
@@ -508,11 +509,16 @@ export function computeRealHoursOtForRecord(r: {
   const isErpLeaveApproved = r.leaveType ? !isSlackInjected : true
   // r.clockIn 우선 — 이 함수는 "조기보정 없는 실제 출근시각"이 기준이라, processRecord.ts가
   // 일반 근무일에도 채워두는 effectiveClockIn(반차 등 정책상 스냅 포함)을 그냥 쓰면 안 된다.
-  // 다만 외근(직출·직퇴)은 CAPS 입실 태그 자체가 없어 clockIn이 null인 게 정상인 케이스라,
-  // 그때만 applyOffsiteEntry가 계산해 둔 effectiveClockIn(보정 출근시각)으로 대체한다 —
-  // 안 그러면 태그가 없다는 이유로 실근무/승인근무 등이 전부 0(화면엔 "—")으로 빈다.
+  // 다만 외근(직출·직퇴)은 applyOffsiteEntry가 09:00~18:00 기준으로 계산해 둔
+  // effectiveClockIn(보정 출근시각)이 "진짜 기준"이라 항상 그쪽을 우선한다 — clockIn이
+  // null(직출, 태그 자체 없음)인 경우뿐 아니라, 외근이지만 늦게라도 태그를 찍은 경우(예: 16:30
+  // 직출 후 복귀해서 뒤늦게 입실 태그)도 raw clockIn을 쓰면 안 된다. raw clockIn을 그대로
+  // 쓰면 "9시부터 외근"이라는 정책상 인정 시각이 사라지고 실제 태그 시각부터로 재계산돼서
+  // 실근무가 8h 미만으로 잡히고 법정연장(OT)이 통째로 0으로 사라진다 — applyOffsiteEntry가
+  // 저장한 r.overtimeHours(정답)와 여기서 재계산한 값이 어긋나는 원인이었다(2026-09-14 발견).
+  const isOffsite = r.finalStatus === '외근'
   const base = computeRealHoursOt({
-    clockIn: r.clockIn ?? r.effectiveClockIn, clockOut: r.clockOut, leaveType: r.leaveType,
+    clockIn: isOffsite ? (r.effectiveClockIn ?? r.clockIn) : (r.clockIn ?? r.effectiveClockIn), clockOut: r.clockOut, leaveType: r.leaveType,
     erpLeaveAmount: r.erpLeaveAmount, isUnpaidLeave: r.isUnpaidLeave,
     isErpLeaveApproved, erpOtApplied: r.erpOtApplied, isLeader,
     clockInOverridden: r.clockInOverridden,
