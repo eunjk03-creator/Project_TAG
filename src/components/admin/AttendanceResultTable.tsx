@@ -1246,7 +1246,7 @@ export function AttendanceResultTable({
                             value={inlineDraft.reason}
                             onChange={e => setInlineDraft(prev => ({ ...prev, reason: e.target.value }))}
                             placeholder="처리 사유 (예: 미태깅 9~18시 인정)"
-                            className="flex-1 min-w-[180px] px-3 py-1.5 text-xs border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                            className="w-64 px-3 py-1.5 text-xs border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
                           />
                           <button
                             onClick={() => {
