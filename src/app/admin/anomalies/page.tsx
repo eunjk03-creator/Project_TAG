@@ -1,5 +1,5 @@
 'use client'
-import { useState, useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, Fragment } from 'react'
 import type { ReactNode } from 'react'
 import { usePolicy } from '@/context/PolicyContext'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
@@ -37,6 +37,10 @@ const FLAG_BADGE: Record<string, string> = {
 
 
 const ALL_FLAGS: SieveFlag[] = ['LATE', 'NO_CLOCK_IN', 'NO_CLOCK_OUT', 'ATTENDANCE_ANOMALY']
+
+function isNoTagFlag(flag: SieveFlag): boolean {
+  return flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT'
+}
 
 type SortField = 'date' | 'name'
 type SortDir   = 'none' | 'asc' | 'desc'
@@ -125,6 +129,10 @@ export default function AnomaliesPage() {
 
   // ── Track 2: bulk AnomalyResolutionModal (2+ items only) ─────────────────
   const [modalTargets, setModalTargets] = useState<ResolutionTarget[] | null>(null)
+
+  // ── Track 3: 미태깅 단건 인라인 처리 — 테이블에서 모달 없이 바로 처리 ──────
+  // "처리" 버튼을 누르면 그 행 바로 아래에 시각 입력칸이 펼쳐짐(모달 트랙과 별개).
+  const [inlineDraft, setInlineDraft] = useState<{ key: string; in: string; out: string; reason: string } | null>(null)
 
   // ── Selection & toast ─────────────────────────────────────────────────────
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
@@ -358,6 +366,60 @@ export default function AnomaliesPage() {
 
     setToast('처리가 완료되었습니다')
     setDetailCell(null)
+  }
+
+  // ── Track 3: 미태깅 인라인 처리(모달 없이 테이블에서 바로) ────────────────
+  function toggleInline(r: ProcessedRecord) {
+    const key = recKey(r.employeeId, r.date)
+    setInlineDraft(prev => {
+      if (prev?.key === key) return null // 다시 누르면 접기
+      return {
+        key,
+        in:  r.clockIn  ?? '09:00',
+        out: r.clockOut ?? '18:00',
+        reason: '',
+      }
+    })
+  }
+
+  async function handleInlineApply(r: ProcessedRecord) {
+    if (!inlineDraft || inlineDraft.key !== recKey(r.employeeId, r.date)) return
+    const reasonLabel = inlineDraft.reason.trim()
+    if (!reasonLabel) return
+
+    const key    = recKey(r.employeeId, r.date)
+    const newIn  = inlineDraft.in.trim()  || r.clockIn
+    const newOut = inlineDraft.out.trim() || r.clockOut
+    const now    = new Date().toISOString()
+
+    const entry: EditHistoryEntry = {
+      timestamp: now,
+      adminName: 'HR Admin',
+      oldValue:  { clockIn: r.clockIn,  clockOut: r.clockOut },
+      newValue:  { clockIn: newIn,       clockOut: newOut },
+      reason:    reasonLabel,
+    }
+
+    setResolutions(prev => ({ ...prev, [key]: { reasonLabel, memo: '' } }))
+    setRecordOverrides(prev => {
+      const existing = prev[key]
+      return {
+        ...prev,
+        [key]: {
+          clockIn:      newIn,
+          clockOut:     newOut,
+          erpOtApplied: existing?.erpOtApplied ?? null,
+          erpLeaveType: existing?.erpLeaveType ?? '없음',
+          editHistory:  existing ? [...existing.editHistory, entry] : [entry],
+        },
+      }
+    })
+    setSelectedKeys(prev => { const next = new Set(prev); next.delete(key); return next })
+    setInlineDraft(null)
+
+    setToast('저장 중...')
+    await saveOverride(r.employeeId, r.date)
+    setToast('저장 완료')
   }
 
   // ── Track 2: bulk modal open ──────────────────────────────────────────────
@@ -646,10 +708,13 @@ export default function AnomaliesPage() {
                     const isResolved = resolution !== undefined
                     const isSelected = selectedKeys.has(key)
 
-                    const rowBg = isSelected ? 'bg-blue-50' : isResolved ? 'bg-teal-50/30' : 'bg-white'
+                    const rowBg   = isSelected ? 'bg-blue-50' : isResolved ? 'bg-teal-50/30' : 'bg-white'
+                    const isNoTag = r.flag !== null && isNoTagFlag(r.flag)
+                    const isInlineOpen = inlineDraft?.key === key
 
                     return (
-                      <tr key={i} className={`${rowBg} hover:bg-gray-50/60 transition-colors`}>
+                      <Fragment key={i}>
+                      <tr className={`${rowBg} hover:bg-gray-50/60 transition-colors`}>
 
                         <td className="px-4 py-3 w-10">
                           {!isResolved && (
@@ -726,8 +791,28 @@ export default function AnomaliesPage() {
                                 </button>
                               </div>
                             </div>
+                          ) : isNoTag ? (
+                            /* 미태깅 — 모달 없이 이 행 바로 아래에서 인라인 처리(Track 3) */
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => toggleInline(r)}
+                                className={`text-xs px-3 py-1.5 rounded-lg border transition-colors font-medium whitespace-nowrap ${
+                                  isInlineOpen
+                                    ? 'bg-blue-600 text-white border-blue-600'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'
+                                }`}
+                              >
+                                {isInlineOpen ? '접기' : '처리'}
+                              </button>
+                              <button
+                                onClick={() => setDetailCell({ employeeId: r.employeeId, date: r.date })}
+                                className="text-[10px] text-gray-400 hover:text-blue-600 transition-colors hover:underline underline-offset-2 whitespace-nowrap"
+                              >
+                                상세
+                              </button>
+                            </div>
                           ) : (
-                            /* "처리" always opens DailyDetailModal (Track 1) */
+                            /* 지각/근무시간미달 등 — 그대로 DailyDetailModal(Track 1) */
                             <button
                               onClick={() => setDetailCell({ employeeId: r.employeeId, date: r.date })}
                               className="text-xs px-3 py-1.5 rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors font-medium whitespace-nowrap"
@@ -737,6 +822,60 @@ export default function AnomaliesPage() {
                           )}
                         </td>
                       </tr>
+
+                      {/* 미태깅 인라인 처리 폼 — "처리" 클릭 시 이 행 바로 아래에 펼쳐짐 */}
+                      {isInlineOpen && (
+                        <tr className="bg-blue-50/40">
+                          <td colSpan={7} className="px-4 py-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <label className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-gray-500">출근</span>
+                                <input
+                                  type="text"
+                                  value={inlineDraft.in}
+                                  onChange={e => setInlineDraft(prev => prev && { ...prev, in: e.target.value })}
+                                  placeholder="09:00"
+                                  maxLength={5}
+                                  className="w-16 px-2 py-1 text-xs font-mono text-center border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                                />
+                              </label>
+                              <span className="text-gray-300">~</span>
+                              <label className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-gray-500">퇴근</span>
+                                <input
+                                  type="text"
+                                  value={inlineDraft.out}
+                                  onChange={e => setInlineDraft(prev => prev && { ...prev, out: e.target.value })}
+                                  placeholder="18:00"
+                                  maxLength={5}
+                                  className="w-16 px-2 py-1 text-xs font-mono text-center border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                                />
+                              </label>
+                              <input
+                                type="text"
+                                value={inlineDraft.reason}
+                                onChange={e => setInlineDraft(prev => prev && { ...prev, reason: e.target.value })}
+                                placeholder="처리 사유 (예: 미태깅 9~18시 인정)"
+                                className="flex-1 min-w-[180px] px-3 py-1.5 text-xs border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                              />
+                              <button
+                                onClick={() => handleInlineApply(r)}
+                                disabled={!inlineDraft.reason.trim()}
+                                className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                              >
+                                적용
+                              </button>
+                              <button
+                                onClick={() => setInlineDraft(null)}
+                                className="text-xs text-gray-400 hover:text-gray-600 whitespace-nowrap"
+                              >
+                                취소
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     )
                   })}
 
