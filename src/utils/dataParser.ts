@@ -264,6 +264,54 @@ const LEAVE_AMOUNT: Partial<Record<ErpLeaveType, number>> = {
   // '출장', '재택근무' are not time-off deductions — no amount
 }
 
+// ── ERP employee resolution ──────────────────────────────────────────────
+
+/**
+ * An ERP leave/OT row whose (rawId, ERP성명) composite key doesn't match any CAPS
+ * employee, even after the rawId-based fallback in resolveErpEmployeeKey(). Surfaced
+ * to admins (see /api/erp-unmatched) instead of being silently dropped.
+ */
+export interface UnmatchedErpEntry {
+  rawId:     string
+  erpName:   string
+  kind:      'ot' | 'leave'
+  code:      string
+  amount:    number   // ot: hours: leave: days
+  startDate: string
+  reason:    'no_caps' | 'ambiguous'
+  candidates?: { id: string; name: string }[]
+}
+
+/**
+ * Resolves an ERP row's (rawId, ERP성명) to a real employeeMap key.
+ *
+ * 1. Exact composite key ("${rawId}_${erpName}") — the common case.
+ * 2. Admin-confirmed alias (erp_employee_alias 테이블에서 로드된 aliasMap).
+ * 3. rawId fallback: CAPS/ERP 둘 다 EmployeeMaster.raw_id를 향한 진짜 FK라 rawId는
+ *    항상 일치한다 — 이름 철자만 다른 경우(예: CAPS "김성은_모바일" vs ERP "김성은")
+ *    rawId 하나로 후보가 정확히 1명이면 그걸로 확정한다.
+ * 4. rawId로 후보가 0명이면 CAPS 등록 자체가 없는 것(reason: 'no_caps'),
+ *    2명 이상이면 모호한 매칭(reason: 'ambiguous') — 둘 다 관리자 확인 필요.
+ */
+function resolveErpEmployeeKey(
+  rawId:       string,
+  erpName:     string,
+  employeeMap: Map<string, Employee>,
+  rawIdIndex:  Map<string, Employee[]>,
+  aliasMap:    Map<string, string>,
+): { key: string; reason?: undefined } | { key: null; reason: 'no_caps' | 'ambiguous'; candidates?: Employee[] } {
+  const compositeKey = `${rawId}_${erpName}`
+  if (employeeMap.has(compositeKey)) return { key: compositeKey }
+
+  const aliasTarget = aliasMap.get(compositeKey)
+  if (aliasTarget && employeeMap.has(aliasTarget)) return { key: aliasTarget }
+
+  const candidates = rawIdIndex.get(rawId) ?? []
+  if (candidates.length === 1) return { key: candidates[0].id }
+  if (candidates.length === 0) return { key: null, reason: 'no_caps' }
+  return { key: null, reason: 'ambiguous', candidates }
+}
+
 // ── Leave map ─────────────────────────────────────────────────────────────
 
 /** Returns a numeric priority for ERP approval statuses (higher = more authoritative). */
@@ -298,9 +346,16 @@ function leavePriority(status: string): number {
 function buildLeaveMap(
   rows:           ErpUnifiedRow[],
   employeeMap:    Map<string, Employee>,
+  rawIdIndex:     Map<string, Employee[]>,
+  aliasMap:       Map<string, string>,
+  unmatched:      UnmatchedErpEntry[],
   companyHolsMap: Map<string, string> = new Map(),
 ): Map<string, { type: ErpLeaveType; amount: number; isUnpaid?: boolean; rawCode: string; codes: ErpLeaveType[] }> {
   const accumMap = new Map<string, { amount: number; type: ErpLeaveType; isUnpaid?: boolean; rawCode: string; codes: ErpLeaveType[] }>()
+  // 매칭 실패 행 — Pass 1에서 못 찾은 것들만 모아뒀다가, 함수 끝에서 별도로 가볍게
+  // (일수 기준으로) 훑어서 unmatched에 채운다. 정상 매칭 경로(dedup/half-day 우선순위 등)는
+  // 이 사람들에게 적용해봐야 어차피 버려질 데이터라 그대로 재사용하지 않는다.
+  const unmatchedRows: { rawId: string; erpName: string; row: Record<string, string>; reason: 'no_caps' | 'ambiguous'; candidates?: Employee[] }[] = []
 
   // ── Diagnostic: log ERP column keys from first row (dev only) ──────────
   if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production' && rows.length > 0) {
@@ -319,23 +374,25 @@ function buildLeaveMap(
     const erpName = normalizeName(r['성명'])
     if (!rawId || !erpName) continue
 
-    const compositeKey = `${rawId}_${erpName}`
+    const resolution = resolveErpEmployeeKey(rawId, erpName, employeeMap, rawIdIndex, aliasMap)
 
     // 🔍 이현지 동명이인 ERP 진단 — 매칭 여부와 무관하게 전 건 로그
     if (typeof window !== 'undefined' && erpName.includes('이현지')) {
       console.log(
-        `[이현지 ERP Pass1] rawId="${rawId}" compositeKey="${compositeKey}"`,
-        `inMap=${employeeMap.has(compositeKey)}`,
+        `[이현지 ERP Pass1] rawId="${rawId}" erpName="${erpName}"`,
+        `resolvedKey=${resolution.key ?? `(미매칭:${resolution.reason})`}`,
         `status="${String(r['승인상태'] ?? '').trim()}"`,
         `code="${String(r['근태코드'] ?? '').normalize('NFKC').trim()}"`,
         `start="${normalizeDate(r[Object.keys(r).find(k => k.replace(/\s+/g,'') === '시작일') ?? '시작일'])}"`,
       )
     }
 
-    if (!employeeMap.has(compositeKey)) {
-      console.warn(`[TAG] ⚠ ERP 휴가 미매칭: 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음. 스킵.`)
+    if (resolution.key === null) {
+      console.warn(`[TAG] ⚠ ERP 휴가 미매칭(${resolution.reason}): 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음. 스킵.`)
+      unmatchedRows.push({ rawId, erpName, row: r, reason: resolution.reason, candidates: resolution.candidates })
       continue
     }
+    const compositeKey = resolution.key
 
     const status = String(r['승인상태'] ?? '').trim()
     if (!isAcceptedStatus(status)) continue
@@ -486,6 +543,33 @@ function buildLeaveMap(
     }
   }
 
+  // ── Unmatched rows → alert entries ──────────────────────────────────────
+  // Best-effort readout only (no dedup/half-day priority merge — this never feeds
+  // accumMap so a 신청+승인 duplicate pair just shows as two near-identical alert
+  // rows, which is harmless for a notice).
+  for (const { rawId, erpName, row: r, reason, candidates } of unmatchedRows) {
+    const status = String(r['승인상태'] ?? '').trim()
+    if (!isAcceptedStatus(status)) continue
+    const code = String(r['근태코드'] ?? '').normalize('NFKC').trim()
+    if (OT_CODE_SET.has(code)) continue // OT rows are reported by buildOtMap instead
+    if (String(r['근태구분'] ?? '').trim() === '시간') continue
+    if (!ERP_LEAVE_TYPE_MAP[code]) continue
+
+    const startKey = Object.keys(r).find(k => k.replace(/\s+/g, '') === '시작일') ?? '시작일'
+    const startDate = normalizeDate(r[startKey])
+    if (!startDate) continue
+
+    const iljuKey = Object.keys(r).find(k => k.replace(/\s+/g, '') === '일수') ?? '일수'
+    const amount  = parseFloat(String(r[iljuKey] ?? '').trim())
+
+    unmatched.push({
+      rawId, erpName, kind: 'leave', code,
+      amount: isFinite(amount) && amount > 0 ? amount : 1,
+      startDate, reason,
+      candidates: candidates?.map(c => ({ id: c.id, name: c.name })),
+    })
+  }
+
   return accumMap
 }
 
@@ -507,6 +591,9 @@ function buildLeaveMap(
 function buildOtMap(
   rows:        ErpUnifiedRow[],
   employeeMap: Map<string, Employee>,
+  rawIdIndex:  Map<string, Employee[]>,
+  aliasMap:    Map<string, string>,
+  unmatched:   UnmatchedErpEntry[],
 ): Map<string, { hours: number; code: string }> {
   const map = new Map<string, { hours: number; code: string }>()
 
@@ -516,12 +603,6 @@ function buildOtMap(
     const rawId   = normalizeId(r['사원번호'])
     const erpName = normalizeName(r['성명'])
     if (!rawId || !erpName) continue
-
-    const compositeKey = `${rawId}_${erpName}`
-    if (!employeeMap.has(compositeKey)) {
-      console.warn(`[TAG] ⚠ ERP 연장근로 미매칭: 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음. 스킵.`)
-      continue
-    }
 
     const status = String(r['승인상태'] ?? '').trim()
     if (!isAcceptedStatus(status)) continue
@@ -559,6 +640,21 @@ function buildOtMap(
         if (!validApplyDate) continue
       }
     }
+
+    // 매칭은 마지막에 — 여기까지 도달한 행만 "실제 승인된, 시간 있는 OT 신청"이라
+    // unmatched 알림에 노이즈(반려/취소/0시간 등) 없이 진짜 놓친 시간만 보인다.
+    const resolution = resolveErpEmployeeKey(rawId, erpName, employeeMap, rawIdIndex, aliasMap)
+    if (resolution.key === null) {
+      console.warn(`[TAG] ⚠ ERP 연장근로 미매칭(${resolution.reason}): 사원번호="${rawId}" 성명="${erpName}" → 직원 목록에 없음. 스킵.`)
+      if (hours > 0) {
+        unmatched.push({
+          rawId, erpName, kind: 'ot', code, amount: hours, startDate, reason: resolution.reason,
+          candidates: resolution.candidates?.map(c => ({ id: c.id, name: c.name })),
+        })
+      }
+      continue
+    }
+    const compositeKey = resolution.key
 
     const k    = key(compositeKey, startDate)
     const prev = map.get(k)
@@ -618,6 +714,7 @@ export interface ParseResult {
   rawRecords:     RawRecord[]
   skippedCount:   number
   erpOtMatchCount: number   // records where erpOtApplied = true — 0 means OT map empty or no key match
+  unmatchedErp:   UnmatchedErpEntry[]  // ERP 행이 매칭 실패로 완전히 버려진 것들 — /admin/overview 알림용
 }
 
 export function parseAttendanceData(
@@ -627,15 +724,28 @@ export function parseAttendanceData(
   // Merge 업로드 시 이번 CAPS 배치에 없는 기존 직원도 ERP 휴가/연장 매칭 대상에 포함시키기 위한 목록.
   // (그렇지 않으면 이번에 CAPS를 재업로드하지 않은 직원의 ERP 행이 전부 "직원 목록에 없음"으로 스킵됨)
   knownEmployees: Employee[] = [],
+  // 관리자가 "기존 직원과 매핑"으로 확정한 (rawId_erpName → 실제 Employee.id) 별칭.
+  // rawId 폴백으로도 못 찾는 경우(사번 자체가 다르거나 후보 2명 이상)를 위한 최종 수단.
+  erpAliases:     Map<string, string> = new Map(),
 ): ParseResult {
   const employees   = extractEmployees(capsData)
   const employeeMap = new Map(employees.map(e => [e.id, e]))
   for (const e of knownEmployees) if (!employeeMap.has(e.id)) employeeMap.set(e.id, e)
 
+  const rawIdIndex = new Map<string, Employee[]>()
+  for (const e of employeeMap.values()) {
+    if (!e.rawId) continue
+    const arr = rawIdIndex.get(e.rawId) ?? []
+    arr.push(e)
+    rawIdIndex.set(e.rawId, arr)
+  }
+
+  const unmatchedErp: UnmatchedErpEntry[] = []
+
   // Both maps receive the same unified array; each filters internally by 근태코드
   const companyHolsMap = new Map((policy.companyHolidays ?? []).map(h => [h.date, h.label]))
-  const leaveMap    = buildLeaveMap(erpData, employeeMap, companyHolsMap)
-  const otMap       = buildOtMap(erpData, employeeMap)
+  const leaveMap    = buildLeaveMap(erpData, employeeMap, rawIdIndex, erpAliases, unmatchedErp, companyHolsMap)
+  const otMap       = buildOtMap(erpData, employeeMap, rawIdIndex, erpAliases, unmatchedErp)
 
   const rawRecords: RawRecord[] = []
   let   skippedCount = 0
@@ -904,5 +1014,5 @@ export function parseAttendanceData(
     }
   }
 
-  return { employees, rawRecords, skippedCount, erpOtMatchCount }
+  return { employees, rawRecords, skippedCount, erpOtMatchCount, unmatchedErp }
 }

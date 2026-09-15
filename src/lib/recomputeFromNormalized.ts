@@ -242,7 +242,10 @@ async function buildEmployeesAndRawRecords(rawIds?: string[]): Promise<ParseResu
   const idFilter = rawIds
     ? Prisma.sql`WHERE employee_id IN (${Prisma.join([...new Set(rawIds.filter(Boolean))])})`
     : Prisma.empty
-  const [capsRows, erpRows] = await Promise.all([
+  const aliasIdFilter = rawIds
+    ? Prisma.sql`WHERE raw_id IN (${Prisma.join([...new Set(rawIds.filter(Boolean))])})`
+    : Prisma.empty
+  const [capsRows, erpRows, aliasRows] = await Promise.all([
     prisma.$queryRaw<CapsDailyLogRow[]>(Prisma.sql`
       SELECT employee_id AS "employeeId", name, work_date AS "workDate",
              clock_in AS "clockIn", clock_out AS "clockOut", raw_dept AS "rawDept", job_title AS "jobTitle"
@@ -254,10 +257,16 @@ async function buildEmployeesAndRawRecords(rawIds?: string[]): Promise<ParseResu
              submit_date AS "submitDate", recognized_time AS "recognizedTime", leave_days AS "leaveDays", category
       FROM erp_applications ${idFilter}
     `),
+    prisma.$queryRaw<{ rawId: string; erpName: string; targetEmployeeId: string }[]>(Prisma.sql`
+      SELECT raw_id AS "rawId", erp_name AS "erpName", target_employee_id AS "targetEmployeeId"
+      FROM erp_employee_aliases ${aliasIdFilter}
+    `),
   ])
+  const erpAliases = new Map(aliasRows.map(a => [`${a.rawId}_${a.erpName}`, a.targetEmployeeId]))
+
   // parseAttendanceData의 employee 추출은 CAPS 기준 — CAPS 이력이 없는 사람(ERP만 있음)은
   // 기존 로직에서도 애초에 직원으로 잡히지 않는다. 동일하게 스킵.
-  if (capsRows.length === 0) return { employees: [], rawRecords: [], skippedCount: 0, erpOtMatchCount: 0 }
+  if (capsRows.length === 0) return { employees: [], rawRecords: [], skippedCount: 0, erpOtMatchCount: 0, unmatchedErp: [] }
 
   const capsForParser: CapsRow[] = capsRows.map(r => ({
     사원번호: r.employeeId,
@@ -285,7 +294,7 @@ async function buildEmployeesAndRawRecords(rawIds?: string[]): Promise<ParseResu
   })) as unknown as ErpUnifiedRow[]
 
   const policy = await getPolicyFromDB()
-  return parseAttendanceData(capsForParser, erpForParser, policy)
+  return parseAttendanceData(capsForParser, erpForParser, policy, [], erpAliases)
 }
 
 /**
