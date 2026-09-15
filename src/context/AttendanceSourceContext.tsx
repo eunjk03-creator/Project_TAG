@@ -3,6 +3,7 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback, ty
 import { EMPLOYEES } from '@/data/orgChart'
 import type { Employee, CapsRow, ErpUnifiedRow, ProcessedRecord, PolicySettings } from '@/types/tag'
 import { usePolicy } from '@/context/PolicyContext'
+import { runWithConcurrency } from '@/utils/concurrency'
 
 // ── Context interface ─────────────────────────────────────────────────────
 // processedRecords(전체 연도)도, rawRecords(전체 6만+행)도 여기서 더 이상 들고 있지 않는다 —
@@ -151,22 +152,6 @@ function chunkByEmployee<T>(
 // 결과 ~15개까지는 대기 없이 여유롭고(동시 30개부터 큐잉 시작) 실제 ingest 엔드포인트로도
 // 3개 대비 5개가 더 빠른 걸 확인해서 5개로 올림 — 안전 마진 크게 남겨둠, 더 필요하면 조정.
 const INGEST_CONCURRENCY = 5
-
-/** items를 limit개씩 동시에 처리 — 순서 보장 없음(완료되는 대로), 실패해도 이미 시작된
- *  나머지는 끝까지 진행하고 첫 에러만 기억해서 마지막에 보고한다. */
-async function runWithConcurrency<T>(
-  items: T[], limit: number, fn: (item: T, index: number) => Promise<void>,
-): Promise<void> {
-  let nextIndex = 0
-  async function worker() {
-    for (;;) {
-      const i = nextIndex++
-      if (i >= items.length) return
-      await fn(items[i], i)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
-}
 
 async function postIngestChunk(
   caps: CapsRow[], erp: ErpUnifiedRow[], label: string,

@@ -42,15 +42,23 @@ function rk(employeeId: string, date: string) {
   return `${employeeId}_${date}`
 }
 
+function isNoTagFlag(flag: string | null): boolean {
+  return flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT'
+}
+
+// 표준 근무시간 기준값(정책 기본 소정근무 8h와 동일) — "8시간 자동 부여"가 채우는 값.
+const STANDARD_CLOCK_IN  = '09:00'
+const STANDARD_CLOCK_OUT = '18:00'
+
 export function AnomalyResolutionModal({ targets, initial, onClose, onSave }: Props) {
   const [reason, setReason] = useState(initial?.reasonLabel ?? '')
   const [memo, setMemo]     = useState(initial?.memo ?? '')
 
-  // Per-target time inputs — only relevant for NO_CLOCK_OUT records
+  // Per-target time inputs — 미태깅(NO_CLOCK_IN/NO_CLOCK_OUT) 레코드에만 해당
   const [timeInputs, setTimeInputs] = useState<Record<string, { in: string; out: string }>>(() => {
     const init: Record<string, { in: string; out: string }> = {}
     for (const { record } of targets) {
-      if (record.flag === 'NO_CLOCK_OUT') {
+      if (isNoTagFlag(record.flag)) {
         init[rk(record.employeeId, record.date)] = {
           in:  record.clockIn  ?? '',
           out: record.clockOut ?? '',
@@ -60,15 +68,33 @@ export function AnomalyResolutionModal({ targets, initial, onClose, onSave }: Pr
     return init
   })
 
-  const noClockOutCount = targets.filter(t => t.record.flag === 'NO_CLOCK_OUT').length
-  const canSubmit       = reason.trim().length > 0
+  const noTagTargets = targets.filter(t => isNoTagFlag(t.record.flag))
+  const canSubmit    = reason.trim().length > 0
+
+  // "미태깅 N건에 8시간 자동 부여" — 이미 찍힌 쪽(출근 또는 퇴근)은 그대로 두고, 비어있는
+  // 쪽만 표준 시각(09:00/18:00, 정책 기본 소정근무 8h와 동일)으로 채운다. 실제 태그 시각을
+  // 덮어쓰지 않으므로 NO_CLOCK_IN/NO_CLOCK_OUT 어느 쪽이든 안전하게 적용된다.
+  function applyStandard8HourPreset() {
+    setTimeInputs(prev => {
+      const next = { ...prev }
+      for (const { record } of noTagTargets) {
+        const key = rk(record.employeeId, record.date)
+        next[key] = {
+          in:  record.clockIn  ?? STANDARD_CLOCK_IN,
+          out: record.clockOut ?? STANDARD_CLOCK_OUT,
+        }
+      }
+      return next
+    })
+    setReason(prev => prev.trim() ? prev : '미태깅 8시간 자동 인정')
+  }
 
   function handleSave() {
     if (!canSubmit) return
 
     const overrides: Record<string, TimeOverride> = {}
     for (const { record } of targets) {
-      if (record.flag === 'NO_CLOCK_OUT') {
+      if (isNoTagFlag(record.flag)) {
         const key = rk(record.employeeId, record.date)
         const t   = timeInputs[key]
         if (t) {
@@ -141,14 +167,23 @@ export function AnomalyResolutionModal({ targets, initial, onClose, onSave }: Pr
               autoFocus
               className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white text-gray-700 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
             />
-            {noClockOutCount > 0 && (
-              <p className="text-[11px] text-blue-500 mt-1.5 flex items-center gap-1">
-                <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                미태깅 {noClockOutCount}건 — 아래에서 누락 시간을 직접 입력할 수 있습니다
-              </p>
+            {noTagTargets.length > 0 && (
+              <div className="mt-1.5 flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-[11px] text-blue-500 flex items-center gap-1">
+                  <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  미태깅 {noTagTargets.length}건 — 아래에서 누락 시간을 직접 입력하거나, 오른쪽 버튼으로 한 번에 채울 수 있습니다
+                </p>
+                <button
+                  type="button"
+                  onClick={applyStandard8HourPreset}
+                  className="shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                >
+                  미태깅 {noTagTargets.length}건에 8시간 자동 부여
+                </button>
+              </div>
             )}
           </div>
 
@@ -175,13 +210,13 @@ export function AnomalyResolutionModal({ targets, initial, onClose, onSave }: Pr
             </p>
             <div className="rounded-xl border border-gray-200 overflow-hidden divide-y divide-gray-100">
               {targets.map(({ record, employee }, i) => {
-                const key          = rk(record.employeeId, record.date)
-                const isNoClockOut = record.flag === 'NO_CLOCK_OUT'
-                const needsIn      = isNoClockOut && record.clockIn  === null
-                const needsOut     = isNoClockOut && record.clockOut === null
+                const key      = rk(record.employeeId, record.date)
+                const isNoTag  = isNoTagFlag(record.flag)
+                const needsIn  = isNoTag && record.clockIn  === null
+                const needsOut = isNoTag && record.clockOut === null
 
                 return (
-                  <div key={i} className={`px-4 py-3 ${isNoClockOut ? 'bg-red-50/40' : 'bg-white'}`}>
+                  <div key={i} className={`px-4 py-3 ${isNoTag ? 'bg-red-50/40' : 'bg-white'}`}>
 
                     {/* Row 1: identity + flag + date */}
                     <div className="flex items-center gap-2 flex-wrap">
@@ -200,7 +235,7 @@ export function AnomalyResolutionModal({ targets, initial, onClose, onSave }: Pr
                     </div>
 
                     {/* Row 2 (NO_CLOCK_OUT only): inline time inputs */}
-                    {isNoClockOut && (needsIn || needsOut) && (
+                    {isNoTag && (needsIn || needsOut) && (
                       <div className="mt-2.5 flex items-center gap-4">
                         {needsIn && (
                           <label className="flex items-center gap-1.5">
@@ -231,8 +266,8 @@ export function AnomalyResolutionModal({ targets, initial, onClose, onSave }: Pr
                       </div>
                     )}
 
-                    {/* NO_CLOCK_OUT but both times already present (editing) */}
-                    {isNoClockOut && !needsIn && !needsOut && (
+                    {/* 미태깅인데 프리셋 등으로 이미 양쪽 다 채워진 경우(수정 중) */}
+                    {isNoTag && !needsIn && !needsOut && (
                       <p className="text-[10px] text-gray-400 mt-1.5">
                         출근 {record.clockIn} · 퇴근 {record.clockOut}
                       </p>

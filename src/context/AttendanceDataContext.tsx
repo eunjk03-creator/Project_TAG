@@ -16,7 +16,7 @@ type AttendanceDataContextType = {
   setRecordOverrides: Dispatch<SetStateAction<Record<string, RecordOverride>>>
   resolutions:        Record<string, ResolutionData>
   setResolutions:     Dispatch<SetStateAction<Record<string, ResolutionData>>>
-  saveOverride:       (employeeId: string, workDate: string) => void
+  saveOverride:       (employeeId: string, workDate: string) => Promise<void>
   deletedKeys:        Set<string>
   deleteRecord:       (employeeId: string, workDate: string) => void
 }
@@ -26,7 +26,7 @@ const AttendanceDataContext = createContext<AttendanceDataContextType>({
   setRecordOverrides: () => {},
   resolutions:        {},
   setResolutions:     () => {},
-  saveOverride:       () => {},
+  saveOverride:       () => Promise.resolve(),
   deletedKeys:        new Set(),
   deleteRecord:       () => {},
 })
@@ -91,35 +91,40 @@ export function AttendanceDataProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // ── 저장: 한 건의 수정 내역을 DB에 upsert ─────────────────────────────
-  const saveOverride = useCallback((employeeId: string, workDate: string) => {
+  // Promise를 돌려준다(2026-09-15 추가) — 기존 호출부(admin/page.tsx)는 반환값을 안 쓰니
+  // 그대로 fire-and-forget처럼 동작하고, 여러 건을 한꺼번에 저장하는 새 호출부(anomalies
+  // 일괄처리)는 이 Promise로 완료 시점을 모아서 기다릴 수 있다.
+  const saveOverride = useCallback((employeeId: string, workDate: string): Promise<void> => {
     const key = `${employeeId}_${workDate}`
 
-    // 최신 state를 읽기 위해 함수형 업데이트 패턴 대신 ref를 쓰기가 어려우므로
-    // 호출 시점의 state를 클로저로 캡처 — 저장 직후 호출되므로 충분히 최신 값임
-    setRecordOverrides(overrides => {
-      setResolutions(resols => {
-        const ov = overrides[key]
-        const rs = resols[key]
+    return new Promise<void>(resolve => {
+      // 최신 state를 읽기 위해 함수형 업데이트 패턴 대신 ref를 쓰기가 어려우므로
+      // 호출 시점의 state를 클로저로 캡처 — 저장 직후 호출되므로 충분히 최신 값임
+      setRecordOverrides(overrides => {
+        setResolutions(resols => {
+          const ov = overrides[key]
+          const rs = resols[key]
 
-        fetch('/api/attendance-overrides', {
-          method:  'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            employeeId,
-            workDate,
-            reasonLabel:  rs?.reasonLabel  ?? null,
-            memo:         rs?.memo         ?? null,
-            clockIn:      ov?.clockIn      ?? null,
-            clockOut:     ov?.clockOut     ?? null,
-            erpOtApplied: ov?.erpOtApplied ?? null,
-            erpLeaveType: ov?.erpLeaveType ?? null,
-            editHistory:  ov?.editHistory  ?? [],
-          }),
-        }).catch(() => {})
+          fetch('/api/attendance-overrides', {
+            method:  'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              employeeId,
+              workDate,
+              reasonLabel:  rs?.reasonLabel  ?? null,
+              memo:         rs?.memo         ?? null,
+              clockIn:      ov?.clockIn      ?? null,
+              clockOut:     ov?.clockOut     ?? null,
+              erpOtApplied: ov?.erpOtApplied ?? null,
+              erpLeaveType: ov?.erpLeaveType ?? null,
+              editHistory:  ov?.editHistory  ?? [],
+            }),
+          }).catch(() => {}).finally(() => resolve())
 
-        return resols  // state 변경 없음 — 읽기 전용
+          return resols  // state 변경 없음 — 읽기 전용
+        })
+        return overrides  // state 변경 없음 — 읽기 전용
       })
-      return overrides  // state 변경 없음 — 읽기 전용
     })
   }, [])
 

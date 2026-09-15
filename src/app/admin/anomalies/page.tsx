@@ -13,6 +13,7 @@ import { AnomalyResolutionModal } from '@/components/admin/AnomalyResolutionModa
 import type { ResolutionTarget, TimeOverride } from '@/components/admin/AnomalyResolutionModal'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { clockOverrideFields } from '@/utils/attendanceCalc'
+import { runWithConcurrency } from '@/utils/concurrency'
 import type { ProcessedRecord, SieveFlag, EditHistoryEntry, Employee, ResolutionData } from '@/types/tag'
 
 // ── Badge taxonomy — synced with dashboard design system ──────────────────
@@ -112,7 +113,7 @@ export default function AnomaliesPage() {
   const { policy }                  = usePolicy()
   const { openDrawer }              = useEmployeeExceptions()
   const { dateRange, setDateRange } = useDateRange()
-  const { recordOverrides, setRecordOverrides, resolutions, setResolutions } = useAttendanceData()
+  const { recordOverrides, setRecordOverrides, resolutions, setResolutions, saveOverride } = useAttendanceData()
   const { employees: liveEmployees } = useAttendanceSource()
   const EMPLOYEES = liveEmployees  // used by sort/lookup helpers below
 
@@ -324,7 +325,8 @@ export default function AnomaliesPage() {
   // ── Track 1: DailyDetailModal callback ───────────────────────────────────
   function handleDetailSave(payload: SavePayload) {
     if (!detailCell) return
-    const key = recKey(detailCell.employeeId, detailCell.date)
+    const { employeeId, date } = detailCell
+    const key = recKey(employeeId, date)
 
     if (payload.finalStatus === '소명완료') {
       setResolutions(prev => ({
@@ -349,37 +351,51 @@ export default function AnomaliesPage() {
       }
     })
 
+    // DB 저장 + 서버 재계산 트리거 — 예전엔 이 호출이 빠져있어서 화면(로컬 상태)엔 바로
+    // 반영되는 것처럼 보여도 실제로는 DB에 저장도 재계산도 안 되고, 새로고침하면 사라졌다
+    // (2026-09-15 발견 — admin/page.tsx의 handleModalSave는 이미 하고 있던 걸 여기만 누락).
+    saveOverride(employeeId, date)
+
     setToast('처리가 완료되었습니다')
     setDetailCell(null)
   }
 
   // ── Track 2: bulk modal open ──────────────────────────────────────────────
   function openBulkModal() {
-    const targets: ResolutionTarget[] = activeSelected.map(key => {
-      const sep    = key.indexOf('_')
-      const empId  = key.slice(0, sep)
-      const date   = key.slice(sep + 1)
-      const record = processed.find(r => r.employeeId === empId && r.date === date)!
-      return { record, employee: EMPLOYEES.find(e => e.id === empId) }
-    })
+    const targets: ResolutionTarget[] = activeSelected
+      .map(key => {
+        // key = recKey(employeeId, date) = `${employeeId}_${date}` — employeeId 자체가
+        // "${rawId}_${정규화이름}" 합성이라 이미 '_'를 포함한다. indexOf('_')(첫 번째)로
+        // 자르면 이름에 낀 밑줄에서 끊겨 완전히 다른 empId/date로 잘못 파싱됐다(버그, 2026-09-15
+        // 발견 — 일괄 처리 모달을 열면 record를 못 찾아 undefined.flag로 즉시 크래시).
+        // date는 항상 YYYY-MM-DD(10자, '_' 없음)라 뒤에서 자르는 게 안전 — employees/[rawId]
+        // 페이지의 동일 패턴과 통일.
+        const date   = key.slice(-10)
+        const empId  = key.slice(0, -(10 + 1))
+        const record = processed.find(r => r.employeeId === empId && r.date === date)
+        if (!record) return null
+        return { record, employee: EMPLOYEES.find(e => e.id === empId) }
+      })
+      .filter((t): t is ResolutionTarget => t !== null)
     setModalTargets(targets)
   }
 
   // ── Track 2: bulk save ────────────────────────────────────────────────────
-  function handleBulkSave(data: ResolutionData, timeOverrides: Record<string, TimeOverride>) {
+  async function handleBulkSave(data: ResolutionData, timeOverrides: Record<string, TimeOverride>) {
     if (!modalTargets) return
     const now = new Date().toISOString()
+    const targets = modalTargets
 
     setResolutions(prev => {
       const next = { ...prev }
-      for (const { record } of modalTargets)
+      for (const { record } of targets)
         next[recKey(record.employeeId, record.date)] = data
       return next
     })
 
     setRecordOverrides(prev => {
       const next = { ...prev }
-      for (const { record } of modalTargets) {
+      for (const { record } of targets) {
         const key    = recKey(record.employeeId, record.date)
         const timeOv = timeOverrides[key]
         const newIn  = timeOv ? timeOv.clockIn  : record.clockIn
@@ -407,12 +423,20 @@ export default function AnomaliesPage() {
 
     setSelectedKeys(prev => {
       const next = new Set(prev)
-      for (const { record } of modalTargets) next.delete(recKey(record.employeeId, record.date))
+      for (const { record } of targets) next.delete(recKey(record.employeeId, record.date))
       return next
     })
 
-    setToast(`${modalTargets.length}건이 성공적으로 처리되었습니다`)
+    setToast(`${targets.length}건 저장 중...`)
     setModalTargets(null)
+
+    // DB 저장 + 서버 재계산 트리거 — 단건(handleDetailSave)과 동일하게 이전엔 빠져있던 부분.
+    // 여러 건을 한꺼번에 저장하니 업로드 청크와 같은 이유로 동시 개수를 제한해서 보낸다
+    // (재계산이 무거운 작업이라 전부 한꺼번에 쏘면 DB 커넥션 풀에 부담).
+    await runWithConcurrency(targets, 5, async ({ record }) => {
+      await saveOverride(record.employeeId, record.date)
+    })
+    setToast(`${targets.length}건 저장 완료`)
   }
 
   // ── Misc handlers ─────────────────────────────────────────────────────────
