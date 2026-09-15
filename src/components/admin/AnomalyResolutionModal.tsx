@@ -46,13 +46,15 @@ function isNoTagFlag(flag: string | null): boolean {
   return flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT'
 }
 
-// 표준 근무시간 기준값(정책 기본 소정근무 8h와 동일) — "8시간 자동 부여"가 채우는 값.
-const STANDARD_CLOCK_IN  = '09:00'
-const STANDARD_CLOCK_OUT = '18:00'
+// 프리셋 기본값(정책 기본 소정근무 09:00~18:00과 동일) — 관리자가 자유롭게 바꿔서 적용할 수 있음.
+const DEFAULT_PRESET_IN  = '09:00'
+const DEFAULT_PRESET_OUT = '18:00'
 
 export function AnomalyResolutionModal({ targets, initial, onClose, onSave }: Props) {
   const [reason, setReason] = useState(initial?.reasonLabel ?? '')
   const [memo, setMemo]     = useState(initial?.memo ?? '')
+  const [presetIn, setPresetIn]   = useState(DEFAULT_PRESET_IN)
+  const [presetOut, setPresetOut] = useState(DEFAULT_PRESET_OUT)
 
   // Per-target time inputs — 미태깅(NO_CLOCK_IN/NO_CLOCK_OUT) 레코드에만 해당
   const [timeInputs, setTimeInputs] = useState<Record<string, { in: string; out: string }>>(() => {
@@ -71,22 +73,25 @@ export function AnomalyResolutionModal({ targets, initial, onClose, onSave }: Pr
   const noTagTargets = targets.filter(t => isNoTagFlag(t.record.flag))
   const canSubmit    = reason.trim().length > 0
 
-  // "미태깅 N건에 8시간 자동 부여" — 이미 찍힌 쪽(출근 또는 퇴근)은 그대로 두고, 비어있는
-  // 쪽만 표준 시각(09:00/18:00, 정책 기본 소정근무 8h와 동일)으로 채운다. 실제 태그 시각을
+  // "미태깅 N건에 지정 시각 일괄 적용" — 이미 찍힌 쪽(출근 또는 퇴근)은 그대로 두고, 비어있는
+  // 쪽만 위에서 지정한 시각(presetIn/presetOut, 기본 09:00~18:00)으로 채운다. 실제 태그 시각을
   // 덮어쓰지 않으므로 NO_CLOCK_IN/NO_CLOCK_OUT 어느 쪽이든 안전하게 적용된다.
-  function applyStandard8HourPreset() {
+  function applyBulkTimePreset() {
+    const inTrim  = presetIn.trim()
+    const outTrim = presetOut.trim()
+    if (!inTrim || !outTrim) return
     setTimeInputs(prev => {
       const next = { ...prev }
       for (const { record } of noTagTargets) {
         const key = rk(record.employeeId, record.date)
         next[key] = {
-          in:  record.clockIn  ?? STANDARD_CLOCK_IN,
-          out: record.clockOut ?? STANDARD_CLOCK_OUT,
+          in:  record.clockIn  ?? inTrim,
+          out: record.clockOut ?? outTrim,
         }
       }
       return next
     })
-    setReason(prev => prev.trim() ? prev : '미태깅 8시간 자동 인정')
+    setReason(prev => prev.trim() ? prev : `미태깅 ${inTrim}~${outTrim} 일괄 인정`)
   }
 
   function handleSave() {
@@ -174,15 +179,37 @@ export function AnomalyResolutionModal({ targets, initial, onClose, onSave }: Pr
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                       d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  미태깅 {noTagTargets.length}건 — 아래에서 누락 시간을 직접 입력하거나, 오른쪽 버튼으로 한 번에 채울 수 있습니다
+                  미태깅 {noTagTargets.length}건 — 아래에서 누락 시간을 직접 입력하거나, 시각을 지정해서 한 번에 채울 수 있습니다
                 </p>
-                <button
-                  type="button"
-                  onClick={applyStandard8HourPreset}
-                  className="shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
-                >
-                  미태깅 {noTagTargets.length}건에 8시간 자동 부여
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <input
+                    type="text"
+                    value={presetIn}
+                    onChange={e => setPresetIn(e.target.value)}
+                    placeholder="09:00"
+                    maxLength={5}
+                    aria-label="일괄 적용 출근 시각"
+                    className="w-14 px-1.5 py-1 text-[11px] font-mono text-center border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent placeholder-gray-300"
+                  />
+                  <span className="text-[11px] text-gray-300">~</span>
+                  <input
+                    type="text"
+                    value={presetOut}
+                    onChange={e => setPresetOut(e.target.value)}
+                    placeholder="18:00"
+                    maxLength={5}
+                    aria-label="일괄 적용 퇴근 시각"
+                    className="w-14 px-1.5 py-1 text-[11px] font-mono text-center border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent placeholder-gray-300"
+                  />
+                  <button
+                    type="button"
+                    onClick={applyBulkTimePreset}
+                    disabled={!presetIn.trim() || !presetOut.trim()}
+                    className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {noTagTargets.length}건에 일괄 적용
+                  </button>
+                </div>
               </div>
             )}
           </div>
