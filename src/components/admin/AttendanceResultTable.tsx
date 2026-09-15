@@ -72,6 +72,11 @@ export interface Props {
   otExemptIds?:             Set<string>
   /** 엑셀 내보내기 — 테이블 내부 필터·정렬·토글(인정시간/실제값) 반영된 화면 표시 행 그대로 전달 */
   onExport?:                (filteredRows: GridRow[]) => void
+  /** 미태깅(NO_CLOCK_IN/NO_CLOCK_OUT) 행 전용 — 넘기면 그 행 클릭 시 모달 대신 인라인 시각
+   *  입력 폼이 펼쳐지고, "적용" 시 이 콜백으로 호출된다(저장 로직은 호출부 책임 —
+   *  admin/anomalies 페이지의 인라인 처리와 동일 패턴). 안 넘기면 기존처럼 미태깅 행도
+   *  onRowClick으로 모달이 열린다(하위호환, admin/fast 등 읽기 전용 화면 영향 없음). */
+  onInlineApply?:           (employeeId: string, date: string, clockIn: string | null, clockOut: string | null, reasonLabel: string) => void | Promise<void>
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -435,8 +440,13 @@ export function AttendanceResultTable({
   selectedKeys, onSelectionChange,
   otExemptIds,
   onExport,
+  onInlineApply,
 }: Props) {
   const [showHolidayWork,  setShowHolidayWork]  = useState(false)
+  // 미태깅 인라인 처리 — admin/anomalies 페이지의 동일 기능과 같은 패턴(모달 없이 그 행
+  // 바로 아래에 펼쳐짐). onInlineApply가 없으면(admin/fast 등) 전혀 관여하지 않는다.
+  const [inlineKey, setInlineKey] = useState<string | null>(null)
+  const [inlineDraft, setInlineDraft] = useState<{ in: string; out: string; reason: string }>({ in: '', out: '', reason: '' })
   const [showOver52h,      setShowOver52h]      = useState(false)
   const [columnFilters,    setColumnFilters]    = useState<ColumnFiltersState>([])
   const [sorting,          setSorting]          = useState<SortingState>([
@@ -1148,18 +1158,37 @@ export function AttendanceResultTable({
               </tr>
             ) : (
               table.getRowModel().rows.map((row, i) => {
-                const r     = row.original.record
-                const flag  = r.flag
-                const isHol = r.dayType !== 'WEEKDAY'
+                const r       = row.original.record
+                const flag    = r.flag
+                const isHol   = r.dayType !== 'WEEKDAY'
+                const isNoTag = flag === 'NO_CLOCK_IN' || flag === 'NO_CLOCK_OUT'
+                const key     = `${r.employeeId}_${r.date}`
+                const isInlineOpen = onInlineApply != null && inlineKey === key
                 const rowBg = flag === 'NO_CLOCK_OUT' ? 'bg-red-50'
                   : flag     ? 'bg-amber-50/40'
                   : isHol    ? 'bg-gray-50/50'
                   : i % 2 === 0 ? 'bg-white' : 'bg-gray-50/20'
+                const colCount = table.getVisibleLeafColumns().length + (onSelectionChange ? 1 : 0)
+
+                function handleRowClick() {
+                  // 미태깅 행 + onInlineApply가 연결돼 있으면 모달 대신 인라인 폼 토글.
+                  // 그 외(지각/근무시간미달/정상 등)는 기존처럼 onRowClick(모달).
+                  if (isNoTag && onInlineApply) {
+                    setInlineKey(prev => {
+                      if (prev === key) return null
+                      setInlineDraft({ in: r.clockIn ?? '09:00', out: r.clockOut ?? '18:00', reason: '' })
+                      return key
+                    })
+                    return
+                  }
+                  onRowClick?.(r.employeeId, r.date)
+                }
+
                 return (
+                  <React.Fragment key={row.id}>
                   <tr
-                    key={row.id}
-                    onClick={() => onRowClick?.(r.employeeId, r.date)}
-                    className={`${rowBg} border-b border-gray-100 last:border-0 hover:bg-blue-50/30 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
+                    onClick={handleRowClick}
+                    className={`${rowBg} border-b border-gray-100 last:border-0 hover:bg-blue-50/30 transition-colors ${(onRowClick || (isNoTag && onInlineApply)) ? 'cursor-pointer' : ''}`}
                   >
                     {onSelectionChange && (
                       <td className="px-2 py-2 text-center w-8 sticky left-0 bg-inherit" onClick={e => e.stopPropagation()}>
@@ -1183,6 +1212,78 @@ export function AttendanceResultTable({
                       </td>
                     ))}
                   </tr>
+
+                  {/* 미태깅 인라인 처리 폼 — admin/anomalies와 동일한 UX */}
+                  {isInlineOpen && (
+                    <tr className="bg-blue-50/40 border-b border-gray-100" onClick={e => e.stopPropagation()}>
+                      <td colSpan={colCount} className="px-4 py-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <label className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-gray-500">출근</span>
+                            <input
+                              type="text"
+                              value={inlineDraft.in}
+                              onChange={e => setInlineDraft(prev => ({ ...prev, in: e.target.value }))}
+                              placeholder="09:00"
+                              maxLength={5}
+                              className="w-16 px-2 py-1 text-xs font-mono text-center border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                            />
+                          </label>
+                          <span className="text-gray-300">~</span>
+                          <label className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-gray-500">퇴근</span>
+                            <input
+                              type="text"
+                              value={inlineDraft.out}
+                              onChange={e => setInlineDraft(prev => ({ ...prev, out: e.target.value }))}
+                              placeholder="18:00"
+                              maxLength={5}
+                              className="w-16 px-2 py-1 text-xs font-mono text-center border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                            />
+                          </label>
+                          <input
+                            type="text"
+                            value={inlineDraft.reason}
+                            onChange={e => setInlineDraft(prev => ({ ...prev, reason: e.target.value }))}
+                            placeholder="처리 사유 (예: 미태깅 9~18시 인정)"
+                            className="flex-1 min-w-[180px] px-3 py-1.5 text-xs border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                          />
+                          <button
+                            onClick={() => {
+                              const reasonLabel = inlineDraft.reason.trim()
+                              if (!reasonLabel) return
+                              onInlineApply?.(
+                                r.employeeId, r.date,
+                                inlineDraft.in.trim()  || r.clockIn,
+                                inlineDraft.out.trim() || r.clockOut,
+                                reasonLabel,
+                              )
+                              setInlineKey(null)
+                            }}
+                            disabled={!inlineDraft.reason.trim()}
+                            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                          >
+                            적용
+                          </button>
+                          <button
+                            onClick={() => setInlineKey(null)}
+                            className="text-xs text-gray-400 hover:text-gray-600 whitespace-nowrap"
+                          >
+                            취소
+                          </button>
+                          {onRowClick && (
+                            <button
+                              onClick={() => { setInlineKey(null); onRowClick(r.employeeId, r.date) }}
+                              className="text-[10px] text-gray-400 hover:text-blue-600 hover:underline underline-offset-2 whitespace-nowrap"
+                            >
+                              상세
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 )
               })
             )}

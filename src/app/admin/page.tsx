@@ -25,7 +25,7 @@ import { getDayInfo } from '@/utils/dataParser'
 import { useAttendanceData } from '@/context/AttendanceDataContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useSlack } from '@/context/SlackContext'
-import type { Employee, ProcessedRecord } from '@/types/tag'
+import type { Employee, ProcessedRecord, EditHistoryEntry } from '@/types/tag'
 import { HR_THRESHOLDS, EXEC_THRESHOLDS } from '@/types/tag'
 import type { RiskView, ProcessedRecord as PR } from '@/types/tag'
 import { sortByDivisionOrder } from '@/data/orgChart'
@@ -738,6 +738,41 @@ export default function AdminDashboard() {
     setModalCell(null)
   }
 
+  // ── 테이블(AttendanceResultTable) 미태깅 인라인 처리 — 모달 없이 그 행에서 바로 적용.
+  // handleModalSave와 동일한 저장 경로(setRecordOverrides → saveOverride)를 그대로 재사용,
+  // admin/anomalies 페이지의 인라인 처리와 같은 패턴(2026-09-15).
+  async function handleTableInlineApply(
+    employeeId: string, date: string,
+    clockIn: string | null, clockOut: string | null, reasonLabel: string,
+  ) {
+    const key      = `${employeeId}_${date}`
+    const original = tabFilteredRecords.find(r => r.employeeId === employeeId && r.date === date)
+    const now      = new Date().toISOString()
+
+    const entry: EditHistoryEntry = {
+      timestamp: now,
+      adminName: 'HR Admin',
+      oldValue:  { clockIn: original?.clockIn ?? null, clockOut: original?.clockOut ?? null },
+      newValue:  { clockIn, clockOut },
+      reason:    reasonLabel,
+    }
+
+    setResolutions(prev => ({ ...prev, [key]: { reasonLabel, memo: '' } }))
+    setRecordOverrides(prev => {
+      const existing = prev[key]
+      return {
+        ...prev,
+        [key]: {
+          clockIn, clockOut,
+          erpOtApplied: existing?.erpOtApplied ?? null,
+          erpLeaveType: existing?.erpLeaveType ?? null,
+          editHistory:  existing ? [...existing.editHistory, entry] : [entry],
+        },
+      }
+    })
+    await saveOverride(employeeId, date)
+  }
+
   // ── Notes: load & save ────────────────────────────────────────────────────
   // 메모 전체 로드 (마운트 시 1회 + 데이터 소스 변경 시)
   useEffect(() => {
@@ -1310,6 +1345,7 @@ export default function AdminDashboard() {
               otExemptIds={otExemptIds}
               selectedKeys={tableSelectedKeys}
               onSelectionChange={setTableSelectedKeys}
+              onInlineApply={handleTableInlineApply}
               onExport={filtered => {
                 const fmt6 = (d: string) => d.replace(/-/g, '').slice(2)
                 const filename = `근태결과_${fmt6(dateRange.from)}-${fmt6(dateRange.to)}.xlsx`
