@@ -377,6 +377,39 @@ export function buildDivisionRecognizedOt(
   return [...byDivision.entries()].map(([division, row]) => ({ division, ...row }))
 }
 
+/** buildDivisionRecognizedOt의 개인별 버전 — 부문 다이제스트에서 "누가 얼마나 연장했는지"
+ *  이름별로 보여줄 때 씀. 계산 공식은 완전히 동일(computeDailyRecognizedOtHours 합산),
+ *  otHours>0인 사람만 반환(0시간인 사람을 나열할 필요 없음), 내림차순 정렬. */
+export interface EmployeeRecognizedOt {
+  employeeId: string
+  name:       string
+  division:   string
+  otHours:    number
+}
+
+export function buildEmployeeRecognizedOt(
+  records:      ProcessedRecord[],
+  employees:    Employee[],
+  finalAttrMap: Map<string, EmployeeAttributeOverrides>,
+): EmployeeRecognizedOt[] {
+  const empMap = new Map(employees.map(e => [e.id, e]))
+  const byEmp  = new Map<string, ProcessedRecord[]>()
+  for (const r of records) {
+    const bucket = byEmp.get(r.employeeId)
+    if (bucket) bucket.push(r)
+    else byEmp.set(r.employeeId, [r])
+  }
+  const rows: EmployeeRecognizedOt[] = []
+  for (const [employeeId, recs] of byEmp) {
+    const emp   = empMap.get(employeeId)
+    const attrs = finalAttrMap.get(employeeId)
+    let h = 0
+    for (const r of recs) h += computeDailyRecognizedOtHours(r, isLeaderOnDate(attrs, emp, r.date))
+    if (h > 0) rows.push({ employeeId, name: emp?.name ?? employeeId, division: emp?.division ?? '—', otHours: h })
+  }
+  return rows.sort((a, b) => b.otHours - a.otHours)
+}
+
 // ── 주 52h 위험군 버킷 (45~50h 주의 / 50~52h 경고 / 52h+ 위험) ────────────────
 // computeOverLimitEmployees와 동일한 인정시간 합산(computeDailyRecognizedHours)을 쓰되,
 // 단일 한도 초과자 목록이 아니라 3개 구간으로 나눠 인원수를 센다. 종합현황 Zone1의

@@ -34,6 +34,7 @@ import {
   buildHolidayWorkRollup, buildTodayHolidayList, buildHolidayWorkDetails,
   buildOffsiteRollup,
   computeOverLimitEmployees, computeWeeklyRiskBuckets, buildEmployeeRecognizedHours, buildDivisionRecognizedOt,
+  buildEmployeeRecognizedOt,
   buildDivisionNormalRateRollup, buildDivisionRiskBands,
   buildEmployeeLeaveUsage, buildDivisionLeaveUsage,
   buildMasterDiscrepancyRollup,
@@ -365,6 +366,11 @@ export default function OverviewPage() {
     [scopedRecords, scopedEmployees, finalAttrMap, period.granularity],
   )
   const otByDivision = useMemo(() => new Map(divisionRecognizedOt.map(d => [d.division, d])), [divisionRecognizedOt])
+  // 다이제스트에서 "누가 연장했는지" 이름별로 보여줄 때만 필요 — 부문 선택 시(주간)에만 사용.
+  const employeeRecognizedOt = useMemo(
+    () => period.granularity === 'week' ? buildEmployeeRecognizedOt(scopedRecords, scopedEmployees, finalAttrMap) : [],
+    [scopedRecords, scopedEmployees, finalAttrMap, period.granularity],
+  )
 
   // ── 이상치 카드 그리드의 "인원 목록" 근로시간 컬럼용 — computeOverLimitEmployees와
   // 동일한 인정시간 공식(§4)을 한도초과 여부와 무관하게 전원에게 적용. ─────────────────
@@ -1016,6 +1022,9 @@ export default function OverviewPage() {
         holidayHours: fmtH(totalHolidayH),
         holidayByDivision: selectedDivision ? [] : divHoliday.filter(h => h.count > 0).map(h => ({ label: h.label, count: h.count })),
         topDivisions: selectedDivision ? [] : rankedTopCards.map(c => ({ label: c.division, value: Number(c.mainValue), unit: c.mainUnit ?? '명' })),
+        riskPeople: selectedDivision ? weeklyRisk.rows.map(r => ({ name: r.name, hours: r.hours, bucket: r.bucket })) : [],
+        otPeople: selectedDivision ? employeeRecognizedOt.map(r => ({ name: r.name, hours: r.otHours })) : [],
+        holidayPeople: selectedDivision ? empHoliday.map(r => ({ name: r.label, hours: r.hours })) : [],
         anomalyPeople: selectedDivision ? empAnomaly : [],
         repeatOffenders: repeatOffenders.map(r => ({ name: r.label, division: r.division ?? '—', count: r.total })),
       })
@@ -1044,7 +1053,7 @@ export default function OverviewPage() {
     period.granularity, period.from, period.label, selectedDivision,
     normalRate, policy, prevScopedRecords, prevNormalRateForDigest,
     anomalyTotals, empLeave, totalOffsiteCount, rankedTopCards, empAnomaly, repeatOffenders,
-    divisionRecognizedOt, divHoliday, totalHolidayH, weeklyRisk, prevWeeklyRiskForDigest, total,
+    divisionRecognizedOt, employeeRecognizedOt, empHoliday, divHoliday, totalHolidayH, weeklyRisk, prevWeeklyRiskForDigest, total,
     divisionLeaveCumulative, cumulativeBenchmarkPct, overLimitRows, divAnomaly, totalDivisionsCount, leaveTotals,
   ])
 

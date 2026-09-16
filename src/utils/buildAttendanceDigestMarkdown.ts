@@ -105,10 +105,18 @@ export interface WeeklyDigestInput {
   holidayByDivision: { label: string; count: number }[]
   /** scopeDivision === null일 때만 — 위험군 TOP3 부문 */
   topDivisions: { label: string; value: number; unit: string }[]
+  /** scopeDivision이 있을 때만 — 45h 이상(주의 이상) 명단, 시간 내림차순(캡 없음) */
+  riskPeople: { name: string; hours: number; bucket: 'caution' | 'warning' | 'danger' }[]
+  /** scopeDivision이 있을 때만 — 연장근로 발생 인원 명단, 시간 내림차순(캡 없음) */
+  otPeople: { name: string; hours: number }[]
+  /** scopeDivision이 있을 때만 — 휴일근로 인원 명단(캡 없음) */
+  holidayPeople: { name: string; hours: number }[]
   /** scopeDivision이 있을 때만 — 그 부문의 이상치 있는 개인 전원(캡 없음) */
   anomalyPeople: AnomalyPersonDetail[]
   repeatOffenders: { name: string; division: string; count: number }[]
 }
+
+const BUCKET_LABEL: Record<'caution' | 'warning' | 'danger', string> = { caution: '주의', warning: '경고', danger: '위험' }
 
 export function buildWeeklyDigestMarkdown(d: WeeklyDigestInput): string {
   const title = d.scopeDivision
@@ -118,7 +126,13 @@ export function buildWeeklyDigestMarkdown(d: WeeklyDigestInput): string {
   const lines = [title, '']
   const vsPrev = d.vsPrevDanger !== null ? ` (전주 대비 ${d.vsPrevDanger >= 0 ? '+' : ''}${d.vsPrevDanger}명)` : ''
   lines.push(`• 주 52시간 초과 위험군 ${d.dangerCount}명${vsPrev} — 경고 50–52h ${d.warningCount}명 · 주의 45–50h ${d.cautionCount}명`)
+  if (d.scopeDivision !== null && d.riskPeople.length > 0) {
+    lines.push(`  └ ${d.riskPeople.map(r => `${r.name} ${r.hours.toFixed(1)}h(${BUCKET_LABEL[r.bucket]})`).join(' · ')}`)
+  }
   lines.push(`• 주당 평균 연장근로 ${d.avgOtPerPerson} · 총 연장 ${d.totalOt} · 대상 ${d.otEligible}명 · 예상 수당 ${d.estimatedOtCost ?? '준비중(시급 미설정)'}`)
+  if (d.scopeDivision !== null && d.otPeople.length > 0) {
+    lines.push(`  └ ${d.otPeople.map(p => `${p.name} ${p.hours.toFixed(1)}h`).join(' · ')}`)
+  }
 
   if (d.scopeDivision === null) {
     lines.push(`• 휴일근로 ${d.holidayCount}건 (총 ${d.holidayHours}${d.holidayByDivision.length > 0 ? `, ${d.holidayByDivision.slice(0, 3).map(h => `${h.label} ${h.count}명`).join(' · ')}` : ''})`)
@@ -127,6 +141,9 @@ export function buildWeeklyDigestMarkdown(d: WeeklyDigestInput): string {
     }
   } else {
     lines.push(`• 휴일근로 ${d.holidayCount}건 (총 ${d.holidayHours})`)
+    if (d.holidayPeople.length > 0) {
+      lines.push(`  └ ${d.holidayPeople.map(p => `${p.name} ${p.hours.toFixed(1)}h`).join(' · ')}`)
+    }
     if (d.anomalyPeople.length > 0) {
       lines.push(`• 이번 주 이상치 상세 (${d.anomalyPeople.length}명): ${formatAnomalyPeople(d.anomalyPeople)}`)
     }
