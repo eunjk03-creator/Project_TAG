@@ -58,6 +58,30 @@ model CapsDailyLog {
   @@map("caps_daily_logs")
 }
 
+// ─── CAPS 실시간 태그 이벤트 원본 (ODBC "실시간 DB 전송" 수신 landing zone) ──────
+// CAPS 서버옵션 "외부전송 DB" 탭이 태그 스캔마다 1행씩 직접 INSERT하는 대상 테이블.
+// CapsDailyLog(직원×근무일 집계, EmployeeMaster FK)와 달리 이벤트 단위 원본 그대로라
+// FK를 걸지 않음 — 아직 EmployeeMaster에 없는 사원번호도 일단 받아야 하기 때문.
+// 별도 배치가 이 테이블의 미처리(processedAt IS NULL) 행을 읽어 직원×근무일로 묶어
+// clockIn(최초 출근)/clockOut(최종 퇴근)으로 집계한 뒤 CapsDailyLog에 upsert한다.
+// 컬럼명은 CAPS 화면의 "열 선택" 매핑과 그대로 맞춤(e_date/e_time/e_id/e_name/e_idno/e_mode/g_id).
+model CapsRawEvent {
+  id          String    @id @default(uuid())
+  eDate       String    @map("e_date")   // 일자 (CAPS 원본 포맷 그대로, 보통 YYYYMMDD)
+  eTime       String    @map("e_time")   // 시간 (보통 HHMMSS)
+  eId         String    @map("e_id")     // CAPS 내부 사용자ID
+  eName       String    @map("e_name")   // 이름
+  eIdno       String    @map("e_idno")   // 사원번호 (employee_master.raw_id와 매칭 예정)
+  eMode       String    @map("e_mode")   // 근태내역 코드: 1출근/2퇴근/3외출/4복귀/5입출/6~10식사
+  gId         String?   @map("g_id")     // 단말기ID
+  receivedAt  DateTime  @default(now()) @map("received_at")
+  processedAt DateTime? @map("processed_at")
+
+  @@index([eIdno, eDate])
+  @@index([processedAt])
+  @@map("caps_raw_events")
+}
+
 // ─── ERP 신청 원본 (휴가+연장, 정규화, 실시간 upsert 대상) ───────────
 // src/utils/dataParser.ts의 ErpUnifiedRow와 1:1 매핑. 신청 1건 = 1행(시작일~종료일로
 // 여러 날짜에 걸칠 수 있음) — 일 단위로 쪼개지 않는다(그건 processRecord 쪽 책임).
