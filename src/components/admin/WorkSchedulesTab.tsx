@@ -12,6 +12,7 @@ interface WorkSchedule {
   description:    string
   ruleType:       RuleType
   shortenedHours: number | null
+  customStartTime: string | null
   excludeFromOt:  boolean
   _count?:        { members: number }
 }
@@ -126,6 +127,7 @@ export function WorkSchedulesTab() {
   const [newRuleType, setNewRuleType] = useState<RuleType>('manager_exemption')
   const [newShortenedHours, setNewShortenedHours] = useState(6)
   const [newExcludeFromOt, setNewExcludeFromOt]   = useState(false)
+  const [newCustomStartTime, setNewCustomStartTime] = useState('09:00')
   const [feedback, setFeedback]   = useState<string | null>(null)
 
   const loadList = useCallback(() => {
@@ -161,11 +163,12 @@ export function WorkSchedulesTab() {
         name: newName.trim(), ruleType: newRuleType,
         ...(newRuleType === 'shortened_hours' && { shortenedHours: newShortenedHours }),
         ...(newRuleType === 'manager_exemption' && { excludeFromOt: newExcludeFromOt }),
+        ...(newRuleType === 'custom_schedule' && { shortenedHours: newShortenedHours, customStartTime: newCustomStartTime }),
       }),
     })
     if (res.ok) {
       const row = await res.json()
-      setShowCreate(false); setNewName(''); setNewShortenedHours(6); setNewExcludeFromOt(false)
+      setShowCreate(false); setNewName(''); setNewShortenedHours(6); setNewExcludeFromOt(false); setNewCustomStartTime('09:00')
       loadList()
       setSelectedId(row.id)
     } else {
@@ -210,6 +213,7 @@ export function WorkSchedulesTab() {
         ruleType: detail.ruleType,
         excludeFromOt: detail.excludeFromOt,
         shortenedHours: detail.shortenedHours ?? 0,
+        customStartTime: detail.customStartTime ?? undefined,
         validFrom: '', validTo: '',
         workScheduleId: detail.id,
       })
@@ -338,7 +342,37 @@ export function WorkSchedulesTab() {
                   </div>
                 </div>
               )}
-              {(detail.ruleType === 'shortened_hours' || detail.ruleType === 'manager_exemption') && (
+              {detail.ruleType === 'custom_schedule' && (
+                <>
+                  <div className="fr">
+                    <div className="lead">
+                      <p className="nm">출근 기준 시각</p>
+                      <p className="ds">지각 판정 + 연장근로 기산점</p>
+                    </div>
+                    <input
+                      type="time"
+                      value={detail.customStartTime ?? '09:00'}
+                      onChange={e => setDetail({ ...detail, customStartTime: e.target.value })}
+                      onBlur={() => saveDetail({ customStartTime: detail.customStartTime })}
+                      className="tf"
+                    />
+                  </div>
+                  <div className="fr">
+                    <div className="lead">
+                      <p className="nm">소정근로시간</p>
+                      <p className="ds">기본값 8h에서 변경 — 휴게시간은 표준 공식 그대로</p>
+                    </div>
+                    <input
+                      type="number" min={1} max={8} step={0.5}
+                      value={detail.shortenedHours ?? 8}
+                      onChange={e => setDetail({ ...detail, shortenedHours: Number(e.target.value) })}
+                      onBlur={() => saveDetail({ shortenedHours: detail.shortenedHours })}
+                      className="tf"
+                    />
+                  </div>
+                </>
+              )}
+              {(detail.ruleType === 'shortened_hours' || detail.ruleType === 'manager_exemption' || detail.ruleType === 'custom_schedule') && (
                 <p className="px-5 pb-3 text-[10px] text-[var(--ink-3)] -mt-2">
                   ⚠ 이미 배정된 인원에겐 소급 적용되지 않습니다 — 각자의 예외 규칙에 값이 이미
                   복사돼 있어서, 바뀐 값은 이 근무제에 새로 추가되는 인원부터 적용됩니다.
@@ -435,6 +469,34 @@ export function WorkSchedulesTab() {
                   </span>
                 </div>
               </div>
+            )}
+            {newRuleType === 'custom_schedule' && (
+              <>
+                <div className="fr">
+                  <div className="lead">
+                    <p className="nm">출근 기준 시각</p>
+                    <p className="ds">지각 판정 + 연장근로 기산점</p>
+                  </div>
+                  <input
+                    type="time"
+                    value={newCustomStartTime}
+                    onChange={e => setNewCustomStartTime(e.target.value)}
+                    className="tf"
+                  />
+                </div>
+                <div className="fr">
+                  <div className="lead">
+                    <p className="nm">소정근로시간</p>
+                    <p className="ds">기본값 8h에서 변경 — 휴게시간은 표준 공식 그대로</p>
+                  </div>
+                  <input
+                    type="number" min={1} max={8} step={0.5}
+                    value={newShortenedHours}
+                    onChange={e => setNewShortenedHours(Number(e.target.value))}
+                    className="tf"
+                  />
+                </div>
+              </>
             )}
 
             <div className="dfoot">

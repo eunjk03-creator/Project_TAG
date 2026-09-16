@@ -18,6 +18,7 @@ export async function PATCH(
     if (body.ruleType       !== undefined) data.ruleType       = body.ruleType
     if (body.excludeFromOt  !== undefined) data.excludeFromOt  = body.excludeFromOt
     if (body.shortenedHours !== undefined) data.shortenedHours = body.shortenedHours
+    if (body.customStartTime !== undefined) data.customStartTime = body.customStartTime
     if (body.validFrom      !== undefined) data.validFrom      = body.validFrom
     if (body.validTo        !== undefined) data.validTo        = body.validTo
     if (body.workScheduleId !== undefined) data.workScheduleId = body.workScheduleId

@@ -22,6 +22,7 @@ export type RuleType =
   | 'manager_exemption'   // 직책자: OT/LATE exempt
   | 'shortened_hours'     // 단축근로: reduced std hours
   | 'ten_am_starter'      // 10시 출근자: snap+late threshold at 10:00
+  | 'custom_schedule'     // 커스텀 근무제: 임의 출근기준시각 + 소정근로시간 조합
   | 'dispatched_worker'   // 파견자: skip missing-punch flag
   | 'parental_leave'      // 육아휴직자: all anomalies suppressed
   | 'easy_logis'          // 이지로지스: suppress all anomaly flags
@@ -41,6 +42,8 @@ export interface ExceptionRule {
   ruleType:       RuleType
   excludeFromOt:  boolean
   shortenedHours: number
+  /** custom_schedule 전용 — 출근기준시각 "HH:MM" */
+  customStartTime?: string
   validFrom:      string
   validTo:        string
   /** 이 규칙이 근무제(WorkSchedule)로부터 배정된 것이면 그 근무제 id — 개별 예외규칙이면 null/undefined */
@@ -59,6 +62,7 @@ function fromRow(row: Record<string, unknown>): ExceptionRule {
     ruleType:       (row.ruleType             ?? '') as RuleType,
     excludeFromOt:  Boolean(row.excludeFromOt ?? false),
     shortenedHours: Number(row.shortenedHours ?? 0),
+    customStartTime: row.customStartTime != null ? String(row.customStartTime) : undefined,
     validFrom:      String(row.validFrom      ?? ''),
     validTo:        String(row.validTo        ?? ''),
     workScheduleId: row.workScheduleId != null ? String(row.workScheduleId) : null,
@@ -73,6 +77,7 @@ export const ATTR_RULE_MAP: Partial<Record<keyof EmployeeAttributeOverrides, Rul
   isParentalLeave:    'parental_leave',
   isShortenedHours:   'shortened_hours',
   isTenAMStarter:     'ten_am_starter',
+  isCustomSchedule:   'custom_schedule',
   isDispatchedWorker: 'dispatched_worker',
   isEasyLogis:        'easy_logis',
   isResigned:         'resigned',
@@ -180,6 +185,19 @@ export function EmployeeExceptionsProvider({ children }: { children: ReactNode }
           break
         case 'ten_am_starter':
           merged.set(rule.employeeId, { ...ex, isTenAMStarter: true })
+          break
+        case 'custom_schedule':
+          merged.set(rule.employeeId, {
+            ...ex,
+            isCustomSchedule:   true,
+            customStartTime:    rule.customStartTime || undefined,
+            customScheduleFrom: rule.validFrom || undefined,
+            customScheduleTo:   rule.validTo   || undefined,
+            isShortenedHours:   true,
+            shortenedHoursValue: rule.shortenedHours,
+            shortenedHoursFrom:  rule.validFrom || undefined,
+            shortenedHoursTo:    rule.validTo   || undefined,
+          })
           break
         case 'dispatched_worker':
           merged.set(rule.employeeId, { ...ex, isDispatchedWorker: true,

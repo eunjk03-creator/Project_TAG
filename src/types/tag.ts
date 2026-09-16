@@ -334,6 +334,13 @@ export interface EmployeeAttributeOverrides {
   shortenedHoursTo?:    string
   /** 10시 출근자: snap effectiveIn to 10:00; LATE / OT thresholds shift accordingly */
   isTenAMStarter?:      boolean
+  /** 커스텀 근무제: 출근기준시각(지각+OT기산)을 임의 시각으로 지정. 소정근로시간은
+   *  isShortenedHours/shortenedHoursValue를 그대로 재사용(같이 세팅됨). */
+  isCustomSchedule?:    boolean
+  /** "HH:MM" — flexEndMins를 대체(지각 판정 + OT 기산 스냅 양쪽에 적용) */
+  customStartTime?:     string
+  customScheduleFrom?:  string
+  customScheduleTo?:    string
   /** 파견자: skip NO_CLOCK_OUT flag — missing punch is expected */
   isDispatchedWorker?:  boolean
   dispatchedWorkerFrom?: string

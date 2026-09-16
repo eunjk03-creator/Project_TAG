@@ -19,6 +19,7 @@ export function buildAttrMapFromRules(
     ruleType:      string
     excludeFromOt: boolean
     shortenedHours: number
+    customStartTime?: string | null
     validFrom:     string
     validTo:       string
   }[],
@@ -48,6 +49,21 @@ export function buildAttrMapFromRules(
         break
       case 'ten_am_starter':
         merged.set(rule.employeeId, { ...ex, isTenAMStarter: true })
+        break
+      case 'custom_schedule':
+        // 소정근로시간은 shortened_hours 필드/메커니즘을 그대로 재사용(같이 세팅) —
+        // effectiveStdH(processRecord.ts)가 이미 isShortenedHours를 최우선으로 읽는다.
+        merged.set(rule.employeeId, {
+          ...ex,
+          isCustomSchedule:   true,
+          customStartTime:    rule.customStartTime || undefined,
+          customScheduleFrom: rule.validFrom || undefined,
+          customScheduleTo:   rule.validTo   || undefined,
+          isShortenedHours:   true,
+          shortenedHoursValue: rule.shortenedHours,
+          shortenedHoursFrom:  rule.validFrom || undefined,
+          shortenedHoursTo:    rule.validTo   || undefined,
+        })
         break
       case 'dispatched_worker':
         merged.set(rule.employeeId, {
@@ -103,6 +119,7 @@ export function buildFinalAttrMap(
     ruleType:      string
     excludeFromOt: boolean
     shortenedHours: number
+    customStartTime?: string | null
     validFrom:     string
     validTo:       string
   }[],

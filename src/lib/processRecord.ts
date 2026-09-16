@@ -71,6 +71,12 @@ export function processRecord(
     (!attrOverrides?.shortenedHoursFrom || record.date >= attrOverrides.shortenedHoursFrom) &&
     (!attrOverrides?.shortenedHoursTo   || record.date <= attrOverrides.shortenedHoursTo)
   )
+  // 커스텀 근무제: 출근기준시각(지각+OT기산 스냅)만 대체 — 소정근로시간은 isShortenedHours를
+  // 그대로 재사용(병합 로직에서 같이 세팅됨), 휴게시간은 손대지 않고 표준 4-1-4-1 공식 그대로.
+  const isCustomSchedule = (attrOverrides?.isCustomSchedule ?? false) && (
+    (!attrOverrides?.customScheduleFrom || record.date >= attrOverrides.customScheduleFrom) &&
+    (!attrOverrides?.customScheduleTo   || record.date <= attrOverrides.customScheduleTo)
+  )
 
   const _pregActive = (attrOverrides?.isPregnantReduced ?? false) && (
     (!attrOverrides?.pregnantReducedFrom || record.date >= attrOverrides.pregnantReducedFrom) &&
@@ -106,7 +112,9 @@ export function processRecord(
   const policyFlexStartMins = parseTime(policy.flexStart)
   const policyFlexEndMins   = parseTime(policy.flexEnd)
   const flexStartMins       = policyFlexStartMins
-  const flexEndMins         = isTenAMStarter ? parseTime(policy.tenAmStarterFlexEnd) : policyFlexEndMins
+  const flexEndMins         = isCustomSchedule && attrOverrides?.customStartTime
+    ? parseTime(attrOverrides.customStartTime)
+    : isTenAMStarter ? parseTime(policy.tenAmStarterFlexEnd) : policyFlexEndMins
   const lunchStartMins = parseTime(policy.lunchStart)
   const lunchEndMins   = parseTime(policy.lunchEnd)
   const nightStartMins = parseTime(policy.nightStart)

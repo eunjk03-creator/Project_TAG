@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
         description:    body.description    ?? '',
         ruleType:       body.ruleType,
         shortenedHours: body.shortenedHours ?? null,
+        customStartTime: body.customStartTime ?? null,
         excludeFromOt:  body.excludeFromOt  ?? false,
       },
     })

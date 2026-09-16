@@ -308,6 +308,8 @@ model ExceptionRule {
   ruleType       String   @map("rule_type")
   excludeFromOt  Boolean  @default(false) @map("exclude_from_ot")
   shortenedHours Float    @default(0) @map("shortened_hours")
+  /** custom_schedule 전용 — 출근기준시각 "HH:MM" (지각+OT기산 스냅 대체) */
+  customStartTime String? @map("custom_start_time")
   validFrom      String   @default("") @map("valid_from")
   validTo        String   @default("") @map("valid_to")
   workScheduleId String?  @map("work_schedule_id")
@@ -331,6 +333,7 @@ model WorkSchedule {
   description    String   @default("")
   ruleType       String   @map("rule_type")
   shortenedHours Float?   @map("shortened_hours")
+  customStartTime String? @map("custom_start_time")
   excludeFromOt  Boolean  @default(false) @map("exclude_from_ot")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")

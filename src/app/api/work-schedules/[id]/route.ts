@@ -35,6 +35,7 @@ export async function PATCH(
     if (body.description    !== undefined) data.description    = body.description
     if (body.ruleType       !== undefined) data.ruleType       = body.ruleType
     if (body.shortenedHours !== undefined) data.shortenedHours = body.shortenedHours
+    if (body.customStartTime !== undefined) data.customStartTime = body.customStartTime
     if (body.excludeFromOt  !== undefined) data.excludeFromOt  = body.excludeFromOt
 
     const row = await prisma.workSchedule.update({

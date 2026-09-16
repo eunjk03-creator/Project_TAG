@@ -29,6 +29,11 @@ export const RULE_BADGE: Record<RuleType, { label: string; cls: string; desc: st
     desc:  '10 AM Flex Start',
     cls:   'bg-sky-100 text-sky-700',
   },
+  custom_schedule: {
+    label: '커스텀 근무제',
+    desc:  'Custom Schedule',
+    cls:   'bg-indigo-100 text-indigo-700',
+  },
   dispatched_worker: {
     label: '파견자',
     desc:  'Dispatched Worker',
@@ -110,6 +115,7 @@ interface ModalDraft {
   ruleType:       RuleType
   excludeFromOt:  boolean
   shortenedHours: number
+  customStartTime?: string
   validFrom:      string
   validTo:        string
 }
@@ -199,7 +205,7 @@ function AddModal({
 
   const canSubmit =
     draft.employees.length > 0 &&
-    (draft.ruleType !== 'shortened_hours' ||
+    (!(draft.ruleType === 'shortened_hours' || draft.ruleType === 'custom_schedule') ||
       (draft.validFrom !== '' && draft.validTo !== '' && draft.validFrom <= draft.validTo))
 
   function handleAdd() {
@@ -213,6 +219,7 @@ function AddModal({
         ruleType:       draft.ruleType,
         excludeFromOt:  draft.excludeFromOt,
         shortenedHours: draft.shortenedHours,
+        customStartTime: draft.customStartTime,
         validFrom:      draft.validFrom,
         validTo:        draft.validTo,
       })
@@ -390,6 +397,40 @@ function AddModal({
                 <li>지각 기준: 10:00 이후 출근 시 지각 처리</li>
                 <li>OT 기준: 10:00 + 8h + 점심 + 1h 식대 = 20:00 이후 연장근로</li>
               </ul>
+            </div>
+          )}
+
+          {draft.ruleType === 'custom_schedule' && (
+            <div className="space-y-2.5">
+              <div className="bg-indigo-50 rounded-xl px-4 py-3 flex items-center gap-3">
+                <div className="flex-1">
+                  <p className="text-xs font-semibold text-indigo-700">출근 기준 시각</p>
+                  <p className="text-[10px] text-indigo-400 mt-0.5">지각 판정 + 연장근로 기산점</p>
+                </div>
+                <input
+                  type="time"
+                  value={draft.customStartTime ?? '09:00'}
+                  onChange={e => patch({ customStartTime: e.target.value })}
+                  className="px-2 py-1 text-sm border border-gray-200 rounded-lg
+                    focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="bg-indigo-50 rounded-xl px-4 py-3 flex items-center gap-3">
+                <div className="flex-1">
+                  <p className="text-xs font-semibold text-indigo-700">소정근로시간</p>
+                  <p className="text-[10px] text-indigo-400 mt-0.5">기본값 8h에서 변경 — 휴게시간은 표준 공식 그대로</p>
+                </div>
+                <input
+                  type="number"
+                  min={1} max={8} step={0.5}
+                  value={draft.shortenedHours}
+                  onChange={e => patch({ shortenedHours: Number(e.target.value) })}
+                  className="w-16 px-2 py-1 text-sm border border-gray-200 rounded-lg
+                    focus:outline-none focus:ring-2 focus:ring-blue-500 text-right"
+                />
+                <span className="text-xs text-gray-500 shrink-0">h / 일</span>
+              </div>
+              {renderDateRange('gray')}
             </div>
           )}
 
@@ -861,6 +902,52 @@ export function ExceptionRulesTab() {
                             <input
                               type="number"
                               min={1} max={7} step={0.5}
+                              value={r.shortenedHours}
+                              onChange={e => patchRule(r.id, { shortenedHours: Number(e.target.value) })}
+                              className="w-12 px-1.5 py-1 text-xs border border-gray-200 rounded-lg
+                                focus:outline-none focus:ring-2 focus:ring-blue-500 text-right"
+                            />
+                            <span className="text-[10px] text-gray-500 font-medium">h / 일</span>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-gray-400 whitespace-nowrap">유효:</span>
+                            <input
+                              type="date"
+                              value={r.validFrom}
+                              onChange={e => patchRule(r.id, { validFrom: e.target.value })}
+                              className="px-1.5 py-1 text-[10px] border border-gray-200 rounded-lg
+                                focus:outline-none focus:ring-2 focus:ring-blue-500 tabular-nums"
+                            />
+                            <span className="text-[10px] text-gray-400">~</span>
+                            <input
+                              type="date"
+                              value={r.validTo}
+                              min={r.validFrom}
+                              onChange={e => patchRule(r.id, { validTo: e.target.value })}
+                              className="px-1.5 py-1 text-[10px] border border-gray-200 rounded-lg
+                                focus:outline-none focus:ring-2 focus:ring-blue-500 tabular-nums"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {r.ruleType === 'custom_schedule' && (
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-gray-500 font-medium">출근</span>
+                            <input
+                              type="time"
+                              value={r.customStartTime ?? '09:00'}
+                              onChange={e => patchRule(r.id, { customStartTime: e.target.value })}
+                              className="px-1.5 py-1 text-xs border border-gray-200 rounded-lg
+                                focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min={1} max={8} step={0.5}
                               value={r.shortenedHours}
                               onChange={e => patchRule(r.id, { shortenedHours: Number(e.target.value) })}
                               className="w-12 px-1.5 py-1 text-xs border border-gray-200 rounded-lg
