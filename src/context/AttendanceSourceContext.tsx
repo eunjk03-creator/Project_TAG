@@ -4,6 +4,7 @@ import { EMPLOYEES } from '@/data/orgChart'
 import type { Employee, CapsRow, ErpUnifiedRow, ProcessedRecord, PolicySettings } from '@/types/tag'
 import { usePolicy } from '@/context/PolicyContext'
 import { runWithConcurrency } from '@/utils/concurrency'
+import type { ErpUnmatchedGroup } from '@/utils/erpUnmatchedGrouping'
 
 // ── Context interface ─────────────────────────────────────────────────────
 // processedRecords(전체 연도)도, rawRecords(전체 6만+행)도 여기서 더 이상 들고 있지 않는다 —
@@ -37,6 +38,7 @@ export interface IngestSummary {
   affectedCount:   number
   skippedCount:    number
   erpOtMatchCount: number
+  unmatchedErp:    ErpUnmatchedGroup[]
 }
 
 const AttendanceSourceContext = createContext<AttendanceSourceContextValue | null>(null)
@@ -94,6 +96,7 @@ interface IngestResponse {
   processedRecords: number
   skippedCount: number
   erpOtMatchCount: number
+  unmatchedErp: ErpUnmatchedGroup[]
 }
 
 // 반기 CAPS 파일 하나가 수만 행이라, caps/erp를 한 번의 POST에 통째로 담으면 Vercel
@@ -173,6 +176,20 @@ async function postIngestChunk(
   }
 }
 
+/** 두 청크의 unmatchedErp 그룹을 rawId_erpName 기준으로 합친다(시간은 합산, 날짜는 합집합). */
+function mergeUnmatchedGroups(a: ErpUnmatchedGroup[], b: ErpUnmatchedGroup[]): ErpUnmatchedGroup[] {
+  const map = new Map(a.map(g => [`${g.rawId}_${g.erpName}`, { ...g, dates: [...g.dates] }]))
+  for (const g of b) {
+    const k = `${g.rawId}_${g.erpName}`
+    const existing = map.get(k)
+    if (!existing) { map.set(k, { ...g, dates: [...g.dates] }); continue }
+    existing.otHours   += g.otHours
+    existing.leaveDays += g.leaveDays
+    for (const d of g.dates) if (!existing.dates.includes(d)) existing.dates.push(d)
+  }
+  return [...map.values()]
+}
+
 async function ingest(
   caps: CapsRow[], erp: ErpUnifiedRow[],
   onProgress?: (step: number, total: number) => void,
@@ -186,7 +203,7 @@ async function ingest(
   ]
   const totalSteps = jobs.length || 1
 
-  const acc: IngestResponse = { ok: true, affectedEmployees: 0, processedRecords: 0, skippedCount: 0, erpOtMatchCount: 0 }
+  const acc: IngestResponse = { ok: true, affectedEmployees: 0, processedRecords: 0, skippedCount: 0, erpOtMatchCount: 0, unmatchedErp: [] }
   if (jobs.length === 0) return { result: acc, error: null }
 
   let completed = 0
@@ -199,6 +216,9 @@ async function ingest(
     acc.skippedCount      += result.skippedCount
     acc.erpOtMatchCount   += result.erpOtMatchCount
     acc.affectedEmployees  = Math.max(acc.affectedEmployees, result.affectedEmployees)
+    // 청크마다 사원번호 그룹이 겹치지 않게 나뉘므로(chunkByEmployee) 같은 사람이 두 번
+    // 잡힐 일은 드물지만, 안전하게 rawId_erpName 기준으로 합쳐서 중복 표시를 막는다.
+    acc.unmatchedErp = mergeUnmatchedGroups(acc.unmatchedErp, result.unmatchedErp)
     completed++
     onProgress?.(completed, totalSteps)
   })
@@ -376,7 +396,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
       const { result, error } = await ingest(caps, erp, onProgress)
       if (!result) {
         setDbSaveError(error ?? '업로드 처리에 실패했습니다.')
-        return { employeeCount: 0, affectedCount: 0, skippedCount: 0, erpOtMatchCount: 0 }
+        return { employeeCount: 0, affectedCount: 0, skippedCount: 0, erpOtMatchCount: 0, unmatchedErp: [] }
       }
       await refreshFromServer()
       setDataVersion(v => v + 1)
@@ -385,6 +405,7 @@ export function AttendanceSourceProvider({ children }: { children: ReactNode }) 
         affectedCount:   result.affectedEmployees,
         skippedCount:    result.skippedCount,
         erpOtMatchCount: result.erpOtMatchCount,
+        unmatchedErp:    result.unmatchedErp,
       }
     } finally {
       setIsProcessing(false)

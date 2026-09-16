@@ -24,7 +24,6 @@ import { DeptSection, type DeptSectionSummaryItem } from '@/components/admin/ove
 import type { DeptCardVM, DeptCardPersonRow } from '@/components/admin/overview/DeptCard'
 import { LeaveTrendChart, type MonthlyLeavePoint } from '@/components/admin/overview/LeaveTrendChart'
 import { useOrgMasterHeadcount } from '@/hooks/useOrgMasterHeadcount'
-import { ErpUnmatchedCard } from '@/components/admin/overview/ErpUnmatchedCard'
 import { useMasterActiveRoster } from '@/hooks/useMasterActiveRoster'
 import {
   buildDivisionAnomalyRollup, buildEmployeeAnomalyRollup, computeNormalRate,
@@ -958,8 +957,6 @@ export default function OverviewPage() {
         <PeriodSelector period={periodForSelector} />
       </div>
       <p className="text-xs text-[var(--ink-3)] -mt-3">이상치 · 휴일근무 · 초과근무 · 휴가를 한눈에</p>
-
-      <ErpUnmatchedCard />
 
       {/* ── 본부 필터 ── */}
       <div className="flex items-center gap-2 flex-wrap">

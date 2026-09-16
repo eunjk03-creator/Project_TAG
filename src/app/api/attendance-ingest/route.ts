@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   upsertCapsRows, upsertErpRows, deleteCapsRows, recomputeEmployeesFromNormalizedTables,
 } from '@/lib/recomputeFromNormalized'
+import { groupUnmatchedErp } from '@/utils/erpUnmatchedGrouping'
 import type { CapsRow, ErpUnifiedRow } from '@/types/tag'
 
 export const maxDuration = 60
@@ -28,7 +29,7 @@ export async function POST(req: NextRequest) {
       ...erp.map(r => String(r.사원번호 ?? '').trim()),
     ])].filter(Boolean)
 
-    const { processedCount, skippedCount, erpOtMatchCount } =
+    const { processedCount, skippedCount, erpOtMatchCount, unmatchedErp } =
       await recomputeEmployeesFromNormalizedTables(affectedRawIds)
 
     return NextResponse.json({
@@ -37,6 +38,7 @@ export async function POST(req: NextRequest) {
       processedRecords: processedCount,
       skippedCount,
       erpOtMatchCount,
+      unmatchedErp: groupUnmatchedErp(unmatchedErp),
       caps: capsCounts,
       erp: erpCounts,
     })

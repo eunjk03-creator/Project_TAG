@@ -6,6 +6,8 @@ import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useSlack, type SlackConfig } from '@/context/SlackContext'
 import { normalizeDate } from '@/utils/dataParser'
 import type { CapsRow, ErpUnifiedRow } from '@/types/tag'
+import type { ErpUnmatchedGroup } from '@/utils/erpUnmatchedGrouping'
+import { ErpUnmatchedInlineList } from '@/components/admin/ErpUnmatchedInlineList'
 
 // ── Required columns for each file type ──────────────────────────────────
 const CAPS_REQUIRED = ['사원번호', '이름', '부서', '근무일자', '출근', '퇴근'] as const
@@ -20,7 +22,7 @@ type SlotState =
   | { phase: 'error';  name: string; msg: string }
 
 type ApplyResult =
-  | { ok: true;  empCount: number; affectedCount: number; skipped: number; erpOtMatchCount?: number }
+  | { ok: true;  empCount: number; affectedCount: number; skipped: number; erpOtMatchCount?: number; unmatchedErp?: ErpUnmatchedGroup[] }
   | { ok: false; msg: string }
 
 // ── Low-level file → rows parser ──────────────────────────────────────────
@@ -470,12 +472,12 @@ export function CsvUploader({
     const mergedErp  = allErp.flat()
     setIsSaving(true)
     try {
-      const { employeeCount, affectedCount, skippedCount, erpOtMatchCount } = await mergeRawData(
+      const { employeeCount, affectedCount, skippedCount, erpOtMatchCount, unmatchedErp } = await mergeRawData(
         mergedCaps as unknown as CapsRow[],
         mergedErp  as unknown as ErpUnifiedRow[],
         onProgress,
       )
-      setResult({ ok: true, empCount: employeeCount, affectedCount, skipped: skippedCount, erpOtMatchCount })
+      setResult({ ok: true, empCount: employeeCount, affectedCount, skipped: skippedCount, erpOtMatchCount, unmatchedErp })
       setExpanded(false)
     } catch (e) {
       setResult({ ok: false, msg: (e as Error).message })
@@ -585,21 +587,34 @@ export function CsvUploader({
           </span>
         )}
         {!isSaving && result?.ok && !dbSaveError && (
-          <span className="text-[11px] text-emerald-600 font-medium whitespace-nowrap flex items-center gap-2">
-            ✓ 영향받은 직원 {result.affectedCount}명 · 스킵 {result.skipped}건
-            {result.erpOtMatchCount !== undefined && (
-              <span
-                className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                  result.erpOtMatchCount > 0
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-amber-100 text-amber-700'
-                }`}
-                title="ERP 연장근로 신청 매칭 건수 (0이면 OT 파일 미포함 또는 컬럼 불일치)"
-              >
-                연장신청 {result.erpOtMatchCount}건 매칭
-              </span>
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] text-emerald-600 font-medium whitespace-nowrap flex items-center gap-2">
+              ✓ 영향받은 직원 {result.affectedCount}명 · 스킵 {result.skipped}건
+              {result.erpOtMatchCount !== undefined && (
+                <span
+                  className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                    result.erpOtMatchCount > 0
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-amber-100 text-amber-700'
+                  }`}
+                  title="ERP 연장근로 신청 매칭 건수 (0이면 OT 파일 미포함 또는 컬럼 불일치)"
+                >
+                  연장신청 {result.erpOtMatchCount}건 매칭
+                </span>
+              )}
+              {result.unmatchedErp && result.unmatchedErp.length > 0 && (
+                <span
+                  className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-50 text-red-600"
+                  title="CAPS와 매칭 안 돼 연장근로·휴가가 불인정된 이번 업로드분 신청 — 아래 목록에서 처리"
+                >
+                  미매칭 {result.unmatchedErp.length}건
+                </span>
+              )}
+            </span>
+            {result.unmatchedErp && result.unmatchedErp.length > 0 && (
+              <ErpUnmatchedInlineList initialGroups={result.unmatchedErp} />
             )}
-          </span>
+          </div>
         )}
         {!isSaving && result?.ok && dbSaveError && (
           <span className="text-[11px] text-amber-600 font-medium whitespace-nowrap" title={dbSaveError}>

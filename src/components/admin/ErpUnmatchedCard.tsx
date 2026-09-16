@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import type { ErpUnmatchedGroup } from '@/app/api/erp-unmatched/route'
+import type { ErpUnmatchedGroup } from '@/utils/erpUnmatchedGrouping'
 
 /**
  * "ERP 매칭 실패" 알림 — CAPS 등록 자체가 없거나(reason: no_caps) 이름 철자가 달라

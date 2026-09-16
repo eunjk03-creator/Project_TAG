@@ -18,7 +18,7 @@ import { processRecord } from '@/lib/processRecord'
 import { buildFinalAttrMap } from '@/lib/attendanceDefaults'
 import { buildRecordSet } from '@/lib/buildRecordSet'
 import { upsertAttendanceRows } from '@/lib/upsertAttendanceRows'
-import { parseAttendanceData, extractEmployees, isValidEmpId, normalizeDate, type ParseResult } from '@/utils/dataParser'
+import { parseAttendanceData, extractEmployees, isValidEmpId, normalizeDate, type ParseResult, type UnmatchedErpEntry } from '@/utils/dataParser'
 import { getPolicyFromDB } from '@/lib/policyStore'
 import type { CapsRow, ErpUnifiedRow, Employee } from '@/types/tag'
 
@@ -319,18 +319,21 @@ export interface RecomputeResult {
   processedCount:  number
   skippedCount:    number
   erpOtMatchCount: number
+  unmatchedErp:    UnmatchedErpEntry[]
 }
 
 /** 영향받은 사원번호들의 daily_attendance를 정규화 테이블 기준으로 재계산한다. */
 async function recomputeEmployeesFromNormalizedTables(rawIds: string[]): Promise<RecomputeResult> {
-  const empty: RecomputeResult = { processedCount: 0, skippedCount: 0, erpOtMatchCount: 0 }
+  const empty: RecomputeResult = { processedCount: 0, skippedCount: 0, erpOtMatchCount: 0, unmatchedErp: [] }
   if (rawIds.filter(Boolean).length === 0) return empty
 
-  const [{ employees, rawRecords, skippedCount, erpOtMatchCount }, policy] = await Promise.all([
+  const [{ employees, rawRecords, skippedCount, erpOtMatchCount, unmatchedErp }, policy] = await Promise.all([
     buildEmployeesAndRawRecords(rawIds),
     getPolicyFromDB(),
   ])
-  if (employees.length === 0) return { ...empty, skippedCount, erpOtMatchCount }
+  // CAPS 미등록(employees.length === 0)이 바로 unmatchedErp가 채워지는 경우라 여기서
+  // 놓치면 안 된다 — 업로드 직후 "이 배치에서 아직 못 찾은 사람" 배지가 이 경로로 나온다.
+  if (employees.length === 0) return { ...empty, skippedCount, erpOtMatchCount, unmatchedErp }
 
   const compositeIds = employees.map(e => e.id)
   const [dbRules, overrides, slackExcs] = await Promise.all([
@@ -343,13 +346,13 @@ async function recomputeEmployeesFromNormalizedTables(rawIds: string[]): Promise
   const { records: mergedRecords, slackNoteMap } = buildRecordSet({
     employees, rawRecords, finalAttrMap, overrides, slackExceptions: slackExcs, policy,
   })
-  if (mergedRecords.length === 0) return { ...empty, skippedCount, erpOtMatchCount }
+  if (mergedRecords.length === 0) return { ...empty, skippedCount, erpOtMatchCount, unmatchedErp }
 
   const processed = mergedRecords.map(r =>
     processRecord(r, policy, otExemptIds, slackNoteMap, finalAttrMap.get(r.employeeId)),
   )
   await upsertAttendanceRows(processed)
-  return { processedCount: processed.length, skippedCount, erpOtMatchCount }
+  return { processedCount: processed.length, skippedCount, erpOtMatchCount, unmatchedErp }
 }
 
 export {

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useEmployeeExceptions } from '@/context/EmployeeExceptionsContext'
 import { checkEmployeeCompleteness, deriveHireDateFromRawId, type EmployeeMasterLike } from '@/lib/employeeCompleteness'
+import { ErpUnmatchedCard } from '@/components/admin/ErpUnmatchedCard'
 
 interface DepartmentRow { id: string; division: string; team: string | null }
 interface EmployeeMasterRow {
@@ -140,6 +141,8 @@ export default function EmployeesPage() {
           <div className="kc"><div className="n"><b>{kpi.withRules}</b><span>명</span></div><div className="l">개인 예외 규칙</div></div>
           <div className="kc"><div className="n"><b>{kpi.titleChangedThisMonth}</b><span>명</span></div><div className="l">이번 달 직책 변경</div></div>
         </div>
+
+        <ErpUnmatchedCard />
 
         <div className="card">
           <div className="tbar">
