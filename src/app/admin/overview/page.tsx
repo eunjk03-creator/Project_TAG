@@ -16,7 +16,8 @@ import { usePolicy } from '@/context/PolicyContext'
 import { flagToAnomalyCategories } from '@/utils/attendanceCalc'
 import { PeriodSelector } from '@/components/admin/PeriodSelector'
 import { PeriodMultiPicker } from '@/components/admin/overview/PeriodMultiPicker'
-import { AnomalyMetricBadges } from '@/components/admin/AnomalyMetricBadges'
+import { AnomalyMetricBadges, emptyDivisionAnomalyMetrics } from '@/components/admin/AnomalyMetricBadges'
+import { buildAnomalyDigestMarkdown } from '@/utils/buildAnomalyDigestMarkdown'
 import { KpiTile } from '@/components/admin/KpiTile'
 import { DivisionTeamGrid } from '@/components/admin/DivisionTeamGrid'
 import { KpiTileRow, type KpiTileVM, type KpiSubRow } from '@/components/admin/overview/KpiTileRow'
@@ -36,6 +37,7 @@ import {
   buildEmployeeLeaveUsage, buildDivisionLeaveUsage,
   buildMasterDiscrepancyRollup,
   LEAVE_BENCHMARK, MONTHLY_ALLOCATION,
+  type AnomalyRow,
 } from '@/utils/overviewAggregations'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee, DateRange } from '@/types/tag'
@@ -133,6 +135,42 @@ function DivisionCompareChart({
   )
 }
 
+/** 부문별 이상치 요약 마크다운 미리보기 + 클립보드 복사 — 발송 버튼은 다음 라운드. */
+function AnomalyDigestCard({
+  rows, cadenceLabel, periodLabel,
+}: { rows: AnomalyRow[]; cadenceLabel: string; periodLabel: string }) {
+  const [copied, setCopied] = useState(false)
+  const markdown = useMemo(() => buildAnomalyDigestMarkdown(rows, cadenceLabel, periodLabel), [rows, cadenceLabel, periodLabel])
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(markdown)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // 클립보드 권한이 없는 환경(오래된 브라우저/비보안 컨텍스트) — 조용히 무시,
+      // 텍스트 자체는 미리보기 박스에 이미 보이므로 수동 드래그 복사는 가능.
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-[var(--line)] shadow-sm p-5 space-y-2.5">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-[var(--ink)]">부문별 이상치 공유 — {cadenceLabel}</h3>
+        <button
+          onClick={handleCopy}
+          className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[var(--dark)] text-white hover:opacity-90 transition-opacity"
+        >
+          {copied ? '복사됨!' : '마크다운으로 복사'}
+        </button>
+      </div>
+      <pre className="text-[11.5px] leading-relaxed text-[var(--ink-2)] bg-[var(--canvas)] rounded-xl p-3.5 whitespace-pre-wrap font-sans">
+        {markdown}
+      </pre>
+    </div>
+  )
+}
+
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export default function OverviewPage() {
@@ -184,6 +222,23 @@ export default function OverviewPage() {
     () => new Map<string, Employee>(scopedEmployees.map(e => [e.id, e])),
     [scopedEmployees],
   )
+
+  // ── 부문별 이상치 공유(다이제스트)용 — scopedRecords와 똑같이 기간만 적용하고 본부
+  // 필터는 일부러 빼서, 특정 부문을 선택 중이어도 항상 "전체 부문 비교"를 유지한다.
+  const visibleIds = useMemo(() => new Set(visibleEmployees.map(e => e.id)), [visibleEmployees])
+  const allDivisionRecords = useMemo(
+    () => records.filter(r => visibleIds.has(r.employeeId) && activeBlocks.some(b => r.date >= b.from && r.date <= b.to)),
+    [records, visibleIds, activeBlocks],
+  )
+  const allDivisionEmpMap = useMemo(
+    () => new Map<string, Employee>(visibleEmployees.map(e => [e.id, e])),
+    [visibleEmployees],
+  )
+  const digestDivAnomaly = useMemo(
+    () => buildDivisionAnomalyRollup(allDivisionRecords, allDivisionEmpMap),
+    [allDivisionRecords, allDivisionEmpMap],
+  )
+  const digestCadenceLabel = period.granularity === 'week' ? '주간' : period.granularity === 'month' ? '월간' : '일간'
 
   const approvedKeys = useMemo(() => new Set(Object.keys(resolutions)), [resolutions])
   const masterHeadcountByDivision = useOrgMasterHeadcount()
@@ -1023,6 +1078,54 @@ export default function OverviewPage() {
           <div className="space-y-3">
             {/* 1. 고정 3열 KPI — 탭을 바꿔도 이 틀은 그대로(v9 핵심 규칙) */}
             <KpiTileRow tiles={kpiTiles} />
+
+            {/* 1.5. 선택 부문 상세 — 본부 필터로 특정 부문을 고르면만 노출.
+                divAnomaly/empAnomaly는 이미 scopedRecords(그 부문으로 좁혀짐) 기준이라
+                새 계산 없이 그대로 쓴다. */}
+            {selectedDivision && (
+              <div className="bg-white rounded-2xl border border-[var(--line)] shadow-sm p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-[var(--ink)]">{selectedDivision} 상세</h3>
+                  <span className="text-[11px] text-[var(--ink-3)]">{empAnomaly.length}명 이상치 있음</span>
+                </div>
+                <AnomalyMetricBadges
+                  m={{ ...emptyDivisionAnomalyMetrics(), late: divAnomaly[0]?.late ?? 0, shortage: divAnomaly[0]?.shortage ?? 0, notag: divAnomaly[0]?.notag ?? 0 }}
+                  size="lg" unit="건"
+                />
+                {empAnomaly.length === 0 ? (
+                  <p className="text-[11px] text-[var(--ink-4)] text-center py-4">이 부문에 이상치가 없습니다.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-[10.5px] text-[var(--ink-4)] border-b border-[var(--line-2)]">
+                          <th className="text-left font-medium py-1.5">이름</th>
+                          <th className="text-right font-medium py-1.5">지각</th>
+                          <th className="text-right font-medium py-1.5">근무미달</th>
+                          <th className="text-right font-medium py-1.5">미태깅</th>
+                          <th className="text-right font-medium py-1.5">합계</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {empAnomaly.map(row => (
+                          <tr key={row.key} className="border-b border-[var(--line-2)] last:border-0">
+                            <td className="py-1.5 font-medium text-[var(--ink)]">{row.label}</td>
+                            <td className="py-1.5 text-right tabular-nums">{row.late || '—'}</td>
+                            <td className="py-1.5 text-right tabular-nums">{row.shortage || '—'}</td>
+                            <td className="py-1.5 text-right tabular-nums">{row.notag || '—'}</td>
+                            <td className="py-1.5 text-right tabular-nums font-semibold">{row.total}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 1.6. 부문별 이상치 공유 — 상단 기간선택기가 보여주는 기간 그대로, 본부 필터와
+                무관하게 항상 전체 부문 비교(digestDivAnomaly)를 마크다운으로 미리보기+복사 */}
+            <AnomalyDigestCard rows={digestDivAnomaly} cadenceLabel={digestCadenceLabel} periodLabel={period.label} />
 
             {/* 2. 연차 추이 차트 — 월 단위에서만 */}
             {period.granularity === 'month' && (
