@@ -113,7 +113,9 @@ export interface WeeklyDigestInput {
   holidayPeople: { name: string; hours: number }[]
   /** scopeDivision이 있을 때만 — 그 부문의 이상치 있는 개인 전원(캡 없음) */
   anomalyPeople: AnomalyPersonDetail[]
-  repeatOffenders: { name: string; division: string; count: number }[]
+  /** scopeDivision === null일 때만 — 이번 주(월 아님) 2건 이상 반복자. scopeDivision이
+   *  있을 때는 anomalyPeople이 이미 이번 주 전원을 보여주므로 중복이라 안 쓴다. */
+  weeklyRepeatOffenders: { name: string; division: string; count: number }[]
 }
 
 const BUCKET_LABEL: Record<'caution' | 'warning' | 'danger', string> = { caution: '주의', warning: '경고', danger: '위험' }
@@ -149,9 +151,9 @@ export function buildWeeklyDigestMarkdown(d: WeeklyDigestInput): string {
     }
   }
 
-  if (d.repeatOffenders.length > 0) {
-    const names = d.repeatOffenders.map(r => d.scopeDivision ? `${r.name}(${r.count}건)` : `${r.name}(${r.division},${r.count}건)`).join(' · ')
-    lines.push(`• 이번 달 이상치 2건 이상: ${names} 등 ${d.repeatOffenders.length}명`)
+  if (d.scopeDivision === null && d.weeklyRepeatOffenders.length > 0) {
+    const names = d.weeklyRepeatOffenders.map(r => `${r.name}(${r.division},${r.count}건)`).join(' · ')
+    lines.push(`• 이번 주 이상치 2건 이상: ${names} 등 ${d.weeklyRepeatOffenders.length}명`)
   }
 
   return lines.join('\n')

@@ -1026,7 +1026,11 @@ export default function OverviewPage() {
         otPeople: selectedDivision ? employeeRecognizedOt.map(r => ({ name: r.name, hours: r.otHours })) : [],
         holidayPeople: selectedDivision ? empHoliday.map(r => ({ name: r.label, hours: r.hours })) : [],
         anomalyPeople: selectedDivision ? empAnomaly : [],
-        repeatOffenders: repeatOffenders.map(r => ({ name: r.label, division: r.division ?? '—', count: r.total })),
+        weeklyRepeatOffenders: selectedDivision ? [] : empAnomaly
+          .filter(r => r.total >= 2)
+          .sort((a, b) => b.total - a.total)
+          .slice(0, 5)
+          .map(r => ({ name: r.label, division: r.division ?? '—', count: r.total })),
       })
     }
     const belowTargetDivisions = divisionLeaveCumulative
