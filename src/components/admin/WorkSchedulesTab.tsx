@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import type { Employee } from '@/types/tag'
 import { useEmployeeExceptions, type RuleType } from '@/context/EmployeeExceptionsContext'
 import { useAttendanceSource } from '@/context/AttendanceSourceContext'
-import { RULE_BADGE } from './ExceptionRulesTab'
+import { RULE_BADGE, Toggle } from './ExceptionRulesTab'
 
 // ── WorkSchedule 데이터 모델 (서버 응답 shape) ──────────────────────────────
 interface WorkSchedule {
@@ -124,6 +124,8 @@ export function WorkSchedulesTab() {
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName]     = useState('')
   const [newRuleType, setNewRuleType] = useState<RuleType>('manager_exemption')
+  const [newShortenedHours, setNewShortenedHours] = useState(6)
+  const [newExcludeFromOt, setNewExcludeFromOt]   = useState(false)
   const [feedback, setFeedback]   = useState<string | null>(null)
 
   const loadList = useCallback(() => {
@@ -155,11 +157,15 @@ export function WorkSchedulesTab() {
     if (!newName.trim()) return
     const res = await fetch('/api/work-schedules', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newName.trim(), ruleType: newRuleType }),
+      body: JSON.stringify({
+        name: newName.trim(), ruleType: newRuleType,
+        ...(newRuleType === 'shortened_hours' && { shortenedHours: newShortenedHours }),
+        ...(newRuleType === 'manager_exemption' && { excludeFromOt: newExcludeFromOt }),
+      }),
     })
     if (res.ok) {
       const row = await res.json()
-      setShowCreate(false); setNewName('')
+      setShowCreate(false); setNewName(''); setNewShortenedHours(6); setNewExcludeFromOt(false)
       loadList()
       setSelectedId(row.id)
     } else {
@@ -315,6 +321,30 @@ export function WorkSchedulesTab() {
                 </div>
               )}
 
+              {detail.ruleType === 'manager_exemption' && (
+                <div className="fr">
+                  <div className="lead">
+                    <p className="nm">OT 미산입</p>
+                    <p className="ds">연장근로 집계에서 제외</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Toggle
+                      on={detail.excludeFromOt}
+                      onChange={v => { setDetail({ ...detail, excludeFromOt: v }); saveDetail({ excludeFromOt: v }) }}
+                    />
+                    <span className={`text-[10px] font-bold w-6 ${detail.excludeFromOt ? 'text-blue-600' : 'text-gray-400'}`}>
+                      {detail.excludeFromOt ? 'ON' : 'OFF'}
+                    </span>
+                  </div>
+                </div>
+              )}
+              {(detail.ruleType === 'shortened_hours' || detail.ruleType === 'manager_exemption') && (
+                <p className="px-5 pb-3 text-[10px] text-[var(--ink-3)] -mt-2">
+                  ⚠ 이미 배정된 인원에겐 소급 적용되지 않습니다 — 각자의 예외 규칙에 값이 이미
+                  복사돼 있어서, 바뀐 값은 이 근무제에 새로 추가되는 인원부터 적용됩니다.
+                </p>
+              )}
+
               <div className="flex items-center justify-between px-5 py-3 border-t border-[var(--line)]">
                 <span className="text-sm font-semibold text-[var(--ink)]">배정 인원 ({detail.members.length}명)</span>
                 <button onClick={() => setShowPicker(true)} className="ghost" style={{ height: 30, fontSize: 12 }}>직원 추가</button>
@@ -377,6 +407,36 @@ export function WorkSchedulesTab() {
                 <option key={type} value={type}>{cfg.label}</option>
               ))}
             </select>
+
+            {newRuleType === 'shortened_hours' && (
+              <div className="fr">
+                <div className="lead">
+                  <p className="nm">일 근무시간</p>
+                  <p className="ds">기본값 8h에서 변경</p>
+                </div>
+                <input
+                  type="number" min={1} max={7} step={0.5}
+                  value={newShortenedHours}
+                  onChange={e => setNewShortenedHours(Number(e.target.value))}
+                  className="tf"
+                />
+              </div>
+            )}
+            {newRuleType === 'manager_exemption' && (
+              <div className="fr">
+                <div className="lead">
+                  <p className="nm">OT 미산입</p>
+                  <p className="ds">연장근로 집계에서 제외</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Toggle on={newExcludeFromOt} onChange={setNewExcludeFromOt} />
+                  <span className={`text-[10px] font-bold w-6 ${newExcludeFromOt ? 'text-blue-600' : 'text-gray-400'}`}>
+                    {newExcludeFromOt ? 'ON' : 'OFF'}
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="dfoot">
               <button className="c" onClick={() => setShowCreate(false)}>취소</button>
               <button className="k" onClick={createSchedule}>만들기</button>
