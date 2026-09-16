@@ -999,7 +999,7 @@ export default function OverviewPage() {
         offsiteCount: totalOffsiteCount,
         topDivisions: selectedDivision ? [] : rankedTopCards.map(c => ({ label: c.division, value: Number(c.mainValue), unit: c.mainUnit ?? '건' })),
         anomalyPeople: selectedDivision ? empAnomaly : [],
-        repeatOffenders: repeatOffenders.map(r => ({ name: r.label, division: r.division ?? '—', count: r.total })),
+        repeatOffenders: repeatOffenders.map(r => ({ name: r.label, division: r.division ?? '—', late: r.late, shortage: r.shortage, notag: r.notag })),
       })
     }
     if (period.granularity === 'week') {
@@ -1030,7 +1030,7 @@ export default function OverviewPage() {
           .filter(r => r.total >= 2)
           .sort((a, b) => b.total - a.total)
           .slice(0, 5)
-          .map(r => ({ name: r.label, division: r.division ?? '—', count: r.total })),
+          .map(r => ({ name: r.label, division: r.division ?? '—', late: r.late, shortage: r.shortage, notag: r.notag })),
       })
     }
     const belowTargetDivisions = divisionLeaveCumulative

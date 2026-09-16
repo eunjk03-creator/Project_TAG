@@ -26,15 +26,18 @@ export interface AnomalyPersonDetail {
   total:    number
 }
 
+/** "지각1·미달1" — 0건 항목은 생략. */
+function anomalyPartsStr(r: { late: number; shortage: number; notag: number }): string {
+  const parts: string[] = []
+  if (r.late)     parts.push(`지각${r.late}`)
+  if (r.shortage) parts.push(`미달${r.shortage}`)
+  if (r.notag)    parts.push(`미태깅${r.notag}`)
+  return parts.join('·')
+}
+
 /** "이름(지각1·미달1) · 이름(미태깅2)" — 부문 대표 공유용 개인별 상세, 0건 항목은 생략. */
 function formatAnomalyPeople(rows: AnomalyPersonDetail[]): string {
-  return rows.map(r => {
-    const parts: string[] = []
-    if (r.late)     parts.push(`지각${r.late}`)
-    if (r.shortage) parts.push(`미달${r.shortage}`)
-    if (r.notag)    parts.push(`미태깅${r.notag}`)
-    return `${r.label}(${parts.join('·')})`
-  }).join(' · ')
+  return rows.map(r => `${r.label}(${anomalyPartsStr(r)})`).join(' · ')
 }
 
 // ── 일간 ──────────────────────────────────────────────────────────────────
@@ -56,7 +59,7 @@ export interface DailyDigestInput {
   topDivisions: { label: string; value: number; unit: string }[]
   /** scopeDivision이 있을 때만 사용 — 그 부문의 이상치 있는 개인 전원(캡 없음) */
   anomalyPeople: AnomalyPersonDetail[]
-  repeatOffenders: { name: string; division: string; count: number }[]
+  repeatOffenders: { name: string; division: string; late: number; shortage: number; notag: number }[]
 }
 
 export function buildDailyDigestMarkdown(d: DailyDigestInput): string {
@@ -79,7 +82,9 @@ export function buildDailyDigestMarkdown(d: DailyDigestInput): string {
   }
 
   if (d.repeatOffenders.length > 0) {
-    const names = d.repeatOffenders.map(r => d.scopeDivision ? `${r.name}(${r.count}회)` : `${r.name}(${r.division},${r.count}회)`).join(' · ')
+    const names = d.repeatOffenders
+      .map(r => d.scopeDivision ? `${r.name}(${anomalyPartsStr(r)})` : `${r.name}(${r.division}, ${anomalyPartsStr(r)})`)
+      .join(' · ')
     lines.push(`• 이번 주 반복(2회+): ${names} 등 ${d.repeatOffenders.length}명`)
   }
 
@@ -115,7 +120,7 @@ export interface WeeklyDigestInput {
   anomalyPeople: AnomalyPersonDetail[]
   /** scopeDivision === null일 때만 — 이번 주(월 아님) 2건 이상 반복자. scopeDivision이
    *  있을 때는 anomalyPeople이 이미 이번 주 전원을 보여주므로 중복이라 안 쓴다. */
-  weeklyRepeatOffenders: { name: string; division: string; count: number }[]
+  weeklyRepeatOffenders: { name: string; division: string; late: number; shortage: number; notag: number }[]
 }
 
 const BUCKET_LABEL: Record<'caution' | 'warning' | 'danger', string> = { caution: '주의', warning: '경고', danger: '위험' }
@@ -127,7 +132,10 @@ export function buildWeeklyDigestMarkdown(d: WeeklyDigestInput): string {
 
   const lines = [title, '']
   const vsPrev = d.vsPrevDanger !== null ? ` (전주 대비 ${d.vsPrevDanger >= 0 ? '+' : ''}${d.vsPrevDanger}명)` : ''
-  lines.push(`• 주 52시간 초과 위험군 ${d.dangerCount}명${vsPrev} — 경고 50–52h ${d.warningCount}명 · 주의 45–50h ${d.cautionCount}명`)
+  const topDivisionsSuffix = d.scopeDivision === null && d.topDivisions.length > 0
+    ? ` [${d.topDivisions.map(t => `${t.label} ${t.value}${t.unit}`).join(', ')}]`
+    : ''
+  lines.push(`• 주 52시간 초과자 ${d.dangerCount}명${vsPrev}${topDivisionsSuffix} — 경고 50–52h ${d.warningCount}명 · 주의 45–50h ${d.cautionCount}명`)
   if (d.scopeDivision !== null && d.riskPeople.length > 0) {
     lines.push(`  └ ${d.riskPeople.map(r => `${r.name} ${r.hours.toFixed(1)}h(${BUCKET_LABEL[r.bucket]})`).join(' · ')}`)
   }
@@ -138,9 +146,6 @@ export function buildWeeklyDigestMarkdown(d: WeeklyDigestInput): string {
 
   if (d.scopeDivision === null) {
     lines.push(`• 휴일근로 ${d.holidayCount}건 (총 ${d.holidayHours}${d.holidayByDivision.length > 0 ? `, ${d.holidayByDivision.slice(0, 3).map(h => `${h.label} ${h.count}명`).join(' · ')}` : ''})`)
-    if (d.topDivisions.length > 0) {
-      lines.push(`• 확인 필요 TOP${d.topDivisions.length}: ${d.topDivisions.map(t => `${t.label} ${t.value}${t.unit}`).join(' · ')}`)
-    }
   } else {
     lines.push(`• 휴일근로 ${d.holidayCount}건 (총 ${d.holidayHours})`)
     if (d.holidayPeople.length > 0) {
@@ -152,7 +157,7 @@ export function buildWeeklyDigestMarkdown(d: WeeklyDigestInput): string {
   }
 
   if (d.scopeDivision === null && d.weeklyRepeatOffenders.length > 0) {
-    const names = d.weeklyRepeatOffenders.map(r => `${r.name}(${r.division},${r.count}건)`).join(' · ')
+    const names = d.weeklyRepeatOffenders.map(r => `${r.name}(${r.division}, ${anomalyPartsStr(r)})`).join(' · ')
     lines.push(`• 이번 주 이상치 2건 이상: ${names} 등 ${d.weeklyRepeatOffenders.length}명`)
   }
 
