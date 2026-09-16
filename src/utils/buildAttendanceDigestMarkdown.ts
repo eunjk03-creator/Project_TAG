@@ -3,8 +3,9 @@
  * 포맷팅만 한다 — 새 집계 로직 없음(중복 계산 금지, page.tsx의 kpiTiles/카드 로직과
  * 반드시 같은 숫자를 보여줘야 하므로 여기서 다시 계산하면 어긋날 위험이 있다).
  *
- * scopeDivision이 null이면 전사 요약(부문 간 비교 위주), 특정 부문 문자열이면 그 부문
- * 상세(개인별 목록 위주) — 두 모드 다 같은 입력 타입을 쓰고 있으면 해당 필드만 채운다.
+ * scopeDivision이 null이면 전사 요약(부문 간 비교 위주, 개인 목록은 캡을 둬서 짧게),
+ * 특정 부문 문자열이면 그 부문 대표에게 공유할 상세(개인별 breakdown을 캡 없이 전부) —
+ * 두 모드 다 같은 입력 타입을 쓰고 있으면 해당 필드만 채운다.
  */
 
 const DOW_KR = ['일', '월', '화', '수', '목', '금', '토']
@@ -15,6 +16,25 @@ function dowLabel(dateStr: string): string {
 
 function pctStr(n: number): string {
   return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%p`
+}
+
+export interface AnomalyPersonDetail {
+  label:    string
+  late:     number
+  shortage: number
+  notag:    number
+  total:    number
+}
+
+/** "이름(지각1·미달1) · 이름(미태깅2)" — 부문 대표 공유용 개인별 상세, 0건 항목은 생략. */
+function formatAnomalyPeople(rows: AnomalyPersonDetail[]): string {
+  return rows.map(r => {
+    const parts: string[] = []
+    if (r.late)     parts.push(`지각${r.late}`)
+    if (r.shortage) parts.push(`미달${r.shortage}`)
+    if (r.notag)    parts.push(`미태깅${r.notag}`)
+    return `${r.label}(${parts.join('·')})`
+  }).join(' · ')
 }
 
 // ── 일간 ──────────────────────────────────────────────────────────────────
@@ -34,8 +54,8 @@ export interface DailyDigestInput {
   offsiteCount: number
   /** scopeDivision === null일 때만 사용 — 부문 비교 TOP3 */
   topDivisions: { label: string; value: number; unit: string }[]
-  /** scopeDivision이 있을 때만 사용 — 그 부문의 이상치 있는 개인 목록 */
-  anomalyPeople: { name: string; total: number }[]
+  /** scopeDivision이 있을 때만 사용 — 그 부문의 이상치 있는 개인 전원(캡 없음) */
+  anomalyPeople: AnomalyPersonDetail[]
   repeatOffenders: { name: string; division: string; count: number }[]
 }
 
@@ -55,7 +75,7 @@ export function buildDailyDigestMarkdown(d: DailyDigestInput): string {
       lines.push(`• 확인 필요 TOP${d.topDivisions.length}: ${d.topDivisions.map(t => `${t.label} ${t.value}${t.unit}`).join(' · ')}`)
     }
   } else if (d.anomalyPeople.length > 0) {
-    lines.push(`• 이상치 있는 인원: ${d.anomalyPeople.slice(0, 5).map(p => `${p.name}(${p.total}건)`).join(' · ')}${d.anomalyPeople.length > 5 ? ` 외 ${d.anomalyPeople.length - 5}명` : ''}`)
+    lines.push(`• 이상치 상세 (${d.anomalyPeople.length}명): ${formatAnomalyPeople(d.anomalyPeople)}`)
   }
 
   if (d.repeatOffenders.length > 0) {
@@ -85,7 +105,8 @@ export interface WeeklyDigestInput {
   holidayByDivision: { label: string; count: number }[]
   /** scopeDivision === null일 때만 — 위험군 TOP3 부문 */
   topDivisions: { label: string; value: number; unit: string }[]
-  /** scopeDivision이 있을 때만 — 그 부문의 반복 이상치 인원 */
+  /** scopeDivision이 있을 때만 — 그 부문의 이상치 있는 개인 전원(캡 없음) */
+  anomalyPeople: AnomalyPersonDetail[]
   repeatOffenders: { name: string; division: string; count: number }[]
 }
 
@@ -106,6 +127,9 @@ export function buildWeeklyDigestMarkdown(d: WeeklyDigestInput): string {
     }
   } else {
     lines.push(`• 휴일근로 ${d.holidayCount}건 (총 ${d.holidayHours})`)
+    if (d.anomalyPeople.length > 0) {
+      lines.push(`• 이번 주 이상치 상세 (${d.anomalyPeople.length}명): ${formatAnomalyPeople(d.anomalyPeople)}`)
+    }
   }
 
   if (d.repeatOffenders.length > 0) {
@@ -128,10 +152,12 @@ export interface MonthlyDigestInput {
   belowTargetCount: number
   totalDivisionsCount: number
   over209Count: number
+  /** 전사 모드에선 TOP3만, 부문 모드에선 캡 없이 그 부문 전원 */
   over209People: { name: string; division: string }[]
   /** scopeDivision === null일 때만 — 이상치 최다 부문 */
   topAnomalyDivisions: { label: string; total: number }[]
-  /** scopeDivision이 있을 때만 — 그 부문 이상치 총건수 */
+  /** scopeDivision이 있을 때만 — 그 부문의 이상치 있는 개인 전원(캡 없음) */
+  anomalyPeople: AnomalyPersonDetail[]
   anomalyTotal: number
 }
 
@@ -150,13 +176,16 @@ export function buildMonthlyDigestMarkdown(d: MonthlyDigestInput): string {
 
   lines.push(`• 연말 예상 연차수당: 준비중(급여 시급 데이터 연동 필요)`)
 
-  const over209Label = d.over209People.slice(0, 3).map(p => d.scopeDivision ? p.name : `${p.division} ${p.name}`).join(' · ')
-  lines.push(`• 월간 209시간 초과 인원 ${d.over209Count}명${over209Label ? ` (${over209Label}${d.over209People.length > 3 ? ' 등' : ''})` : ''}`)
+  const over209Rows = d.scopeDivision ? d.over209People : d.over209People.slice(0, 3)
+  const over209Label = over209Rows.map(p => d.scopeDivision ? p.name : `${p.division} ${p.name}`).join(' · ')
+  const over209Suffix = !d.scopeDivision && d.over209People.length > 3 ? ' 등' : ''
+  lines.push(`• 월간 209시간 초과 인원 ${d.over209Count}명${over209Label ? ` (${over209Label}${over209Suffix})` : ''}`)
 
   if (d.scopeDivision === null && d.topAnomalyDivisions.length > 0) {
     lines.push(`• 이번 달 이상치 최다 부문: ${d.topAnomalyDivisions.slice(0, 3).map(a => `${a.label} ${a.total}건`).join(' · ')}`)
   } else if (d.scopeDivision) {
-    lines.push(`• 이번 달 이상치 ${d.anomalyTotal}건`)
+    const detail = d.anomalyPeople.length > 0 ? ` — ${formatAnomalyPeople(d.anomalyPeople)}` : ''
+    lines.push(`• 이번 달 이상치 ${d.anomalyTotal}건${detail}`)
   }
 
   return lines.join('\n')

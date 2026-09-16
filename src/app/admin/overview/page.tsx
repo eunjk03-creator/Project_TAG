@@ -16,7 +16,6 @@ import { usePolicy } from '@/context/PolicyContext'
 import { flagToAnomalyCategories } from '@/utils/attendanceCalc'
 import { PeriodSelector } from '@/components/admin/PeriodSelector'
 import { PeriodMultiPicker } from '@/components/admin/overview/PeriodMultiPicker'
-import { AnomalyMetricBadges, emptyDivisionAnomalyMetrics } from '@/components/admin/AnomalyMetricBadges'
 import {
   buildDailyDigestMarkdown, buildWeeklyDigestMarkdown, buildMonthlyDigestMarkdown,
 } from '@/utils/buildAttendanceDigestMarkdown'
@@ -993,7 +992,7 @@ export default function OverviewPage() {
         leaveCount: empLeave.length,
         offsiteCount: totalOffsiteCount,
         topDivisions: selectedDivision ? [] : rankedTopCards.map(c => ({ label: c.division, value: Number(c.mainValue), unit: c.mainUnit ?? '건' })),
-        anomalyPeople: selectedDivision ? empAnomaly.map(r => ({ name: r.label, total: r.total })) : [],
+        anomalyPeople: selectedDivision ? empAnomaly : [],
         repeatOffenders: repeatOffenders.map(r => ({ name: r.label, division: r.division ?? '—', count: r.total })),
       })
     }
@@ -1017,6 +1016,7 @@ export default function OverviewPage() {
         holidayHours: fmtH(totalHolidayH),
         holidayByDivision: selectedDivision ? [] : divHoliday.filter(h => h.count > 0).map(h => ({ label: h.label, count: h.count })),
         topDivisions: selectedDivision ? [] : rankedTopCards.map(c => ({ label: c.division, value: Number(c.mainValue), unit: c.mainUnit ?? '명' })),
+        anomalyPeople: selectedDivision ? empAnomaly : [],
         repeatOffenders: repeatOffenders.map(r => ({ name: r.label, division: r.division ?? '—', count: r.total })),
       })
     }
@@ -1037,6 +1037,7 @@ export default function OverviewPage() {
       over209Count: overLimitRows.length,
       over209People: sortedOverLimit.map(r => ({ name: r.name, division: r.division })),
       topAnomalyDivisions: selectedDivision ? [] : topAnomalyDivisions,
+      anomalyPeople: selectedDivision ? empAnomaly : [],
       anomalyTotal: anomalyTotals.total,
     })
   }, [
@@ -1143,51 +1144,7 @@ export default function OverviewPage() {
             {/* 1. 고정 3열 KPI — 탭을 바꿔도 이 틀은 그대로(v9 핵심 규칙) */}
             <KpiTileRow tiles={kpiTiles} />
 
-            {/* 1.5. 선택 부문 상세 — 본부 필터로 특정 부문을 고르면만 노출.
-                divAnomaly/empAnomaly는 이미 scopedRecords(그 부문으로 좁혀짐) 기준이라
-                새 계산 없이 그대로 쓴다. */}
-            {selectedDivision && (
-              <div className="bg-white rounded-2xl border border-[var(--line)] shadow-sm p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-[var(--ink)]">{selectedDivision} 상세</h3>
-                  <span className="text-[11px] text-[var(--ink-3)]">{empAnomaly.length}명 이상치 있음</span>
-                </div>
-                <AnomalyMetricBadges
-                  m={{ ...emptyDivisionAnomalyMetrics(), late: divAnomaly[0]?.late ?? 0, shortage: divAnomaly[0]?.shortage ?? 0, notag: divAnomaly[0]?.notag ?? 0 }}
-                  size="lg" unit="건"
-                />
-                {empAnomaly.length === 0 ? (
-                  <p className="text-[11px] text-[var(--ink-4)] text-center py-4">이 부문에 이상치가 없습니다.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-[10.5px] text-[var(--ink-4)] border-b border-[var(--line-2)]">
-                          <th className="text-left font-medium py-1.5">이름</th>
-                          <th className="text-right font-medium py-1.5">지각</th>
-                          <th className="text-right font-medium py-1.5">근무미달</th>
-                          <th className="text-right font-medium py-1.5">미태깅</th>
-                          <th className="text-right font-medium py-1.5">합계</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {empAnomaly.map(row => (
-                          <tr key={row.key} className="border-b border-[var(--line-2)] last:border-0">
-                            <td className="py-1.5 font-medium text-[var(--ink)]">{row.label}</td>
-                            <td className="py-1.5 text-right tabular-nums">{row.late || '—'}</td>
-                            <td className="py-1.5 text-right tabular-nums">{row.shortage || '—'}</td>
-                            <td className="py-1.5 text-right tabular-nums">{row.notag || '—'}</td>
-                            <td className="py-1.5 text-right tabular-nums font-semibold">{row.total}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* 1.6. 근태 다이제스트 공유 — 상단 기간선택기(일/주/월)가 보여주는 기간과 본부
+            {/* 1.5. 근태 다이제스트 공유 — 상단 기간선택기(일/주/월)가 보여주는 기간과 본부
                 필터(selectedDivision)를 그대로 따라간다: 부문을 고르면 그 부문 상세로,
                 전체면 부문 비교 위주로 내용이 바뀐다. Slack mrkdwn 미리보기 + 복사만(발송은
                 다음 라운드). */}
