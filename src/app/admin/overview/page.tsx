@@ -17,7 +17,9 @@ import { flagToAnomalyCategories } from '@/utils/attendanceCalc'
 import { PeriodSelector } from '@/components/admin/PeriodSelector'
 import { PeriodMultiPicker } from '@/components/admin/overview/PeriodMultiPicker'
 import { AnomalyMetricBadges, emptyDivisionAnomalyMetrics } from '@/components/admin/AnomalyMetricBadges'
-import { buildAnomalyDigestMarkdown } from '@/utils/buildAnomalyDigestMarkdown'
+import {
+  buildDailyDigestMarkdown, buildWeeklyDigestMarkdown, buildMonthlyDigestMarkdown,
+} from '@/utils/buildAttendanceDigestMarkdown'
 import { KpiTile } from '@/components/admin/KpiTile'
 import { DivisionTeamGrid } from '@/components/admin/DivisionTeamGrid'
 import { KpiTileRow, type KpiTileVM, type KpiSubRow } from '@/components/admin/overview/KpiTileRow'
@@ -37,7 +39,6 @@ import {
   buildEmployeeLeaveUsage, buildDivisionLeaveUsage,
   buildMasterDiscrepancyRollup,
   LEAVE_BENCHMARK, MONTHLY_ALLOCATION,
-  type AnomalyRow,
 } from '@/utils/overviewAggregations'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee, DateRange } from '@/types/tag'
@@ -135,12 +136,11 @@ function DivisionCompareChart({
   )
 }
 
-/** 부문별 이상치 요약 마크다운 미리보기 + 클립보드 복사 — 발송 버튼은 다음 라운드. */
-function AnomalyDigestCard({
-  rows, cadenceLabel, periodLabel,
-}: { rows: AnomalyRow[]; cadenceLabel: string; periodLabel: string }) {
+/** 근태 다이제스트 마크다운 미리보기 + 클립보드 복사 — 발송 버튼은 다음 라운드.
+ *  텍스트 조립은 부모(OverviewPage)가 이미 화면에 쓰고 있는 값 그대로 하고, 이 컴포넌트는
+ *  완성된 문자열을 보여주고 복사만 담당한다(순수 프레젠테이션). */
+function DigestPreviewCard({ title, markdown }: { title: string; markdown: string }) {
   const [copied, setCopied] = useState(false)
-  const markdown = useMemo(() => buildAnomalyDigestMarkdown(rows, cadenceLabel, periodLabel), [rows, cadenceLabel, periodLabel])
 
   async function handleCopy() {
     try {
@@ -156,7 +156,7 @@ function AnomalyDigestCard({
   return (
     <div className="bg-white rounded-2xl border border-[var(--line)] shadow-sm p-5 space-y-2.5">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-[var(--ink)]">부문별 이상치 공유 — {cadenceLabel}</h3>
+        <h3 className="text-sm font-semibold text-[var(--ink)]">{title}</h3>
         <button
           onClick={handleCopy}
           className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[var(--dark)] text-white hover:opacity-90 transition-opacity"
@@ -222,23 +222,6 @@ export default function OverviewPage() {
     () => new Map<string, Employee>(scopedEmployees.map(e => [e.id, e])),
     [scopedEmployees],
   )
-
-  // ── 부문별 이상치 공유(다이제스트)용 — scopedRecords와 똑같이 기간만 적용하고 본부
-  // 필터는 일부러 빼서, 특정 부문을 선택 중이어도 항상 "전체 부문 비교"를 유지한다.
-  const visibleIds = useMemo(() => new Set(visibleEmployees.map(e => e.id)), [visibleEmployees])
-  const allDivisionRecords = useMemo(
-    () => records.filter(r => visibleIds.has(r.employeeId) && activeBlocks.some(b => r.date >= b.from && r.date <= b.to)),
-    [records, visibleIds, activeBlocks],
-  )
-  const allDivisionEmpMap = useMemo(
-    () => new Map<string, Employee>(visibleEmployees.map(e => [e.id, e])),
-    [visibleEmployees],
-  )
-  const digestDivAnomaly = useMemo(
-    () => buildDivisionAnomalyRollup(allDivisionRecords, allDivisionEmpMap),
-    [allDivisionRecords, allDivisionEmpMap],
-  )
-  const digestCadenceLabel = period.granularity === 'week' ? '주간' : period.granularity === 'month' ? '월간' : '일간'
 
   const approvedKeys = useMemo(() => new Set(Object.keys(resolutions)), [resolutions])
   const masterHeadcountByDivision = useOrgMasterHeadcount()
@@ -983,6 +966,87 @@ export default function OverviewPage() {
     : period.granularity === 'week' ? '주 단위에서는 52시간 한도와 연장수당 / 휴일근로와 휴일수당이 핵심입니다'
     : '월 단위에서는 연차가 계획대로 소진되는가가 핵심입니다'
 
+  // ── Slack 다이제스트 조립 — 위에서 이미 계산해둔 값들을 그대로 포맷팅만 한다(중복 계산
+  // 금지). selectedDivision이 있으면 그 부문 상세, 없으면 전사 비교 위주로 갈린다 — 대부분의
+  // 소스 값 자체가 이미 scopedRecords/scopedEmployees 기반이라 selectedDivision을 따로
+  // 분기하지 않아도 자동으로 그 부문 값이 된다(예: divisionRecognizedOt·overLimitRows 등).
+  const prevNormalRateForDigest = useMemo(() => computeNormalRate(prevScopedRecords), [prevScopedRecords])
+  const prevWeeklyRiskForDigest = useMemo(
+    () => period.granularity === 'week' ? computeWeeklyRiskBuckets(prevScopedRecords, prevScopedEmployees, finalAttrMap) : { caution: 0, warning: 0, danger: 0, rows: [] },
+    [period.granularity, prevScopedRecords, prevScopedEmployees, finalAttrMap],
+  )
+  const digestCadenceLabel = period.granularity === 'week' ? '주간' : period.granularity === 'month' ? '월간' : '일간'
+  const digestTitle = `근태 다이제스트 — ${digestCadenceLabel}${selectedDivision ? ` · ${selectedDivision}` : ''}`
+  const digestMarkdown = useMemo(() => {
+    if (period.granularity === 'day') {
+      return buildDailyDigestMarkdown({
+        scopeDivision: selectedDivision,
+        date: period.from,
+        attendancePct: normalRate.pct,
+        vsTargetPct: normalRate.pct - policy.attendanceTargetPct,
+        vsPrevPct: prevScopedRecords.length > 0 ? normalRate.pct - prevNormalRateForDigest.pct : null,
+        normalCount: normalRate.normal,
+        anomalyTotal: anomalyTotals.total,
+        anomalyLate: anomalyTotals.late,
+        anomalyShortage: anomalyTotals.shortage,
+        anomalyNotag: anomalyTotals.notag,
+        leaveCount: empLeave.length,
+        offsiteCount: totalOffsiteCount,
+        topDivisions: selectedDivision ? [] : rankedTopCards.map(c => ({ label: c.division, value: Number(c.mainValue), unit: c.mainUnit ?? '건' })),
+        anomalyPeople: selectedDivision ? empAnomaly.map(r => ({ name: r.label, total: r.total })) : [],
+        repeatOffenders: repeatOffenders.map(r => ({ name: r.label, division: r.division ?? '—', count: r.total })),
+      })
+    }
+    if (period.granularity === 'week') {
+      const totalRecognizedOt = divisionRecognizedOt.reduce((s, d) => s + d.otHours, 0)
+      const otEligible = divisionRecognizedOt.reduce((s, d) => s + d.eligible, 0)
+      const totalHolidayCount = divHoliday.reduce((s, r) => s + r.count, 0)
+      const estimatedOtCost = policy.avgHourlyWage > 0 ? formatWon(totalRecognizedOt * policy.avgHourlyWage * policy.otRate) : null
+      return buildWeeklyDigestMarkdown({
+        scopeDivision: selectedDivision,
+        periodLabel: period.label,
+        dangerCount: weeklyRisk.danger,
+        cautionCount: weeklyRisk.caution,
+        warningCount: weeklyRisk.warning,
+        vsPrevDanger: prevScopedRecords.length > 0 ? weeklyRisk.danger - prevWeeklyRiskForDigest.danger : null,
+        avgOtPerPerson: fmtH(total.headcount > 0 ? totalRecognizedOt / total.headcount : 0),
+        totalOt: fmtH(totalRecognizedOt),
+        otEligible,
+        estimatedOtCost,
+        holidayCount: totalHolidayCount,
+        holidayHours: fmtH(totalHolidayH),
+        holidayByDivision: selectedDivision ? [] : divHoliday.filter(h => h.count > 0).map(h => ({ label: h.label, count: h.count })),
+        topDivisions: selectedDivision ? [] : rankedTopCards.map(c => ({ label: c.division, value: Number(c.mainValue), unit: c.mainUnit ?? '명' })),
+        repeatOffenders: repeatOffenders.map(r => ({ name: r.label, division: r.division ?? '—', count: r.total })),
+      })
+    }
+    const belowTargetDivisions = divisionLeaveCumulative
+      .filter(d => d.ratePct < cumulativeBenchmarkPct)
+      .sort((a, b) => a.ratePct - b.ratePct)
+      .map(d => ({ label: d.division, pct: d.ratePct }))
+    const sortedOverLimit = [...overLimitRows].sort((a, b) => b.hours - a.hours)
+    const topAnomalyDivisions = divAnomaly.filter(a => a.total > 0).slice(0, 3).map(a => ({ label: a.label, total: a.total }))
+    return buildMonthlyDigestMarkdown({
+      scopeDivision: selectedDivision,
+      monthLabel: period.label,
+      cumulativePct: leaveTotals.cumulativePct,
+      vsBenchmarkPct: leaveTotals.cumulativePct - cumulativeBenchmarkPct,
+      belowTargetDivisions: selectedDivision ? [] : belowTargetDivisions,
+      belowTargetCount: belowTargetDivisions.length,
+      totalDivisionsCount,
+      over209Count: overLimitRows.length,
+      over209People: sortedOverLimit.map(r => ({ name: r.name, division: r.division })),
+      topAnomalyDivisions: selectedDivision ? [] : topAnomalyDivisions,
+      anomalyTotal: anomalyTotals.total,
+    })
+  }, [
+    period.granularity, period.from, period.label, selectedDivision,
+    normalRate, policy, prevScopedRecords, prevNormalRateForDigest,
+    anomalyTotals, empLeave, totalOffsiteCount, rankedTopCards, empAnomaly, repeatOffenders,
+    divisionRecognizedOt, divHoliday, totalHolidayH, weeklyRisk, prevWeeklyRiskForDigest, total,
+    divisionLeaveCumulative, cumulativeBenchmarkPct, overLimitRows, divAnomaly, totalDivisionsCount, leaveTotals,
+  ])
+
   if (!isLiveData) {
     return (
       <div className="p-8">
@@ -1123,9 +1187,11 @@ export default function OverviewPage() {
               </div>
             )}
 
-            {/* 1.6. 부문별 이상치 공유 — 상단 기간선택기가 보여주는 기간 그대로, 본부 필터와
-                무관하게 항상 전체 부문 비교(digestDivAnomaly)를 마크다운으로 미리보기+복사 */}
-            <AnomalyDigestCard rows={digestDivAnomaly} cadenceLabel={digestCadenceLabel} periodLabel={period.label} />
+            {/* 1.6. 근태 다이제스트 공유 — 상단 기간선택기(일/주/월)가 보여주는 기간과 본부
+                필터(selectedDivision)를 그대로 따라간다: 부문을 고르면 그 부문 상세로,
+                전체면 부문 비교 위주로 내용이 바뀐다. Slack mrkdwn 미리보기 + 복사만(발송은
+                다음 라운드). */}
+            <DigestPreviewCard title={digestTitle} markdown={digestMarkdown} />
 
             {/* 2. 연차 추이 차트 — 월 단위에서만 */}
             {period.granularity === 'month' && (
