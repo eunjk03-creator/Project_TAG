@@ -758,7 +758,7 @@ export default function OverviewPage() {
       division: m.division, headcount: m.headcount, severity,
       mainValue: `${band.danger}`, mainUnit: '명',
       progressPct: (weeklyOtAvg / 20) * 100, progressMarkerPct: (policy.weeklyOtActionH / 20) * 100,
-      captionLeft: `주당 평균 ${fmtH(weeklyOtAvg)}`, captionRight: `기준 ${policy.weeklyOtActionH}h`,
+      captionLeft: `주당 평균 ${fmtH(weeklyOtAvg)}`, captionRight: `기준 ${policy.weeklyOtActionH}h(인정근무시간)`,
       cells: [
         { label: '주의 45-50h', value: band.caution ? `${band.caution}` : '—' },
         { label: '경고 50-52h', value: band.warning ? `${band.warning}` : '—' },
