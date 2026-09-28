@@ -1077,7 +1077,7 @@ export default function OverviewPage() {
       anomalyTotal: anomalyTotals.total,
     })
   }, [
-    period.granularity, period.from, period.label, selectedDivision,
+    period.granularity, period.from, period.label, selectedDivision, activeBlocks,
     normalRate, policy, prevScopedRecords, prevNormalRateForDigest,
     anomalyTotals, empLeave, totalOffsiteCount, rankedTopCards, empAnomaly, repeatOffenders,
     divisionRecognizedOt, employeeRecognizedOt, empHoliday, divHoliday, totalHolidayH, weeklyRisk, prevWeeklyRiskForDigest, total,
