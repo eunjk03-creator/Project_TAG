@@ -6,6 +6,7 @@ import {
   computeWorkA, computeDisplayBreakMins, parseTimeToMins,
 } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
+import { weekStart } from '@/utils/weekBoundary'
 
 // ── Public types ───────────────────────────────────────────────────────────
 
@@ -67,19 +68,6 @@ function countBizDays(from: string, to: string): number {
     cur.setDate(cur.getDate() + 1)
   }
   return count
-}
-
-/** Returns the ISO date string for the Monday of the week containing `dateStr`. */
-function getWeekMonday(dateStr: string): string {
-  const d = new Date(dateStr + 'T12:00')
-  const dow  = d.getDay()                  // 0 = Sun
-  const back = dow === 0 ? 6 : dow - 1     // days back to Monday
-  d.setDate(d.getDate() - back)
-  return (
-    `${d.getFullYear()}-` +
-    `${String(d.getMonth() + 1).padStart(2, '0')}-` +
-    `${String(d.getDate()).padStart(2, '0')}`
-  )
 }
 
 /** Returns { totalH, otH } for a single record using the 14-column formula.
@@ -163,8 +151,8 @@ export function useManagementMetrics(
   return useMemo(() => {
     const bizDays = countBizDays(fromDate, toDate)
 
-    // Weekly hours: Mon of toDate's week → toDate, inclusive
-    const weekMonday = getWeekMonday(toDate)
+    // Weekly hours: Sun of toDate's week → toDate, inclusive
+    const weekMonday = weekStart(toDate)
     const weeklyHoursMap: Record<string, number> = {}
     for (const r of processedRecords) {
       if (r.date < weekMonday || r.date > toDate) continue

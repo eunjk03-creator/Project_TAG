@@ -1,6 +1,7 @@
 'use client'
 import { useState, useRef, useEffect, useMemo } from 'react'
 import type { DateRange } from '@/types/tag'
+import { weekStart as weekMonday, weekOfMonth, weekMonthNumber } from '@/utils/weekBoundary'
 
 const MO_KR  = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
 const DOW_KR = ['일','월','화','수','목','금','토']
@@ -15,16 +16,6 @@ function addDays(s: string, n: number): string {
   d.setDate(d.getDate() + n)
   return toDS(d)
 }
-function weekMonday(s: string): string {
-  const d = new Date(s + 'T12:00:00')
-  const dow = d.getDay()
-  d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
-  return toDS(d)
-}
-function weekOfMonth(monday: string): number {
-  return Math.ceil(new Date(monday + 'T12:00:00').getDate() / 7)
-}
-
 interface WeekInfo { monday: string; sunday: string; month: number; wom: number }
 
 function buildWeeks(dataStart: string, dataEnd: string): WeekInfo[] {
@@ -36,7 +27,7 @@ function buildWeeks(dataStart: string, dataEnd: string): WeekInfo[] {
     list.push({
       monday: mon,
       sunday: addDays(mon, 6),
-      month:  new Date(mon + 'T12:00:00').getMonth() + 1,
+      month:  weekMonthNumber(mon),
       wom:    weekOfMonth(mon),
     })
     mon = addDays(mon, 7)

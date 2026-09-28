@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { weekStart } from '@/utils/weekBoundary'
 
 export type PeriodGranularity = 'day' | 'week' | 'month'
 
@@ -26,15 +27,6 @@ function addDays(dateStr: string, n: number): string {
 function addMonths(dateStr: string, n: number): string {
   const d = toDate(dateStr)
   d.setMonth(d.getMonth() + n)
-  return fromDate(d)
-}
-
-/** Monday of the week containing dateStr. */
-export function weekStart(dateStr: string): string {
-  const d   = toDate(dateStr)
-  const dow = d.getDay() // 0 = Sun
-  const back = dow === 0 ? 6 : dow - 1
-  d.setDate(d.getDate() - back)
   return fromDate(d)
 }
 

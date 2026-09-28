@@ -16,6 +16,7 @@ import {
   compute4141BreakMins, computeEffClockIn,
   computeRealHoursOtForRecord, isLeaderOnDate,
 } from '@/utils/attendanceCalc'
+import { weekStart as weekStartUTC } from '@/utils/weekBoundary'
 
 // ── Row shape ─────────────────────────────────────────────────────────────
 
@@ -123,15 +124,6 @@ function fmtH(hours: number): string {
   const hh = Math.floor(m / 60)
   const mm = m % 60
   return mm > 0 ? `${hh}h ${mm}m` : `${hh}h`
-}
-
-function weekStartUTC(dateStr: string): string {
-  const [y, mo, d] = dateStr.split('-').map(Number)
-  const dt  = new Date(Date.UTC(y, mo - 1, d))
-  const mon = new Date(dt.getTime() + (dt.getUTCDay() === 0 ? -6 : 1 - dt.getUTCDay()) * 86_400_000)
-  return mon.getUTCFullYear() + '-' +
-    String(mon.getUTCMonth() + 1).padStart(2, '0') + '-' +
-    String(mon.getUTCDate()).padStart(2, '0')
 }
 
 const B = {

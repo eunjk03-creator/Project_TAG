@@ -2,6 +2,7 @@ import PptxGenJS from 'pptxgenjs'
 import type { ProcessedRecord, Employee } from '@/types/tag'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import { computeWorkA, computeDisplayBreakMins, parseTimeToMins } from '@/utils/attendanceCalc'
+import { weekStart as weekMonday } from '@/utils/weekBoundary'
 
 // ── Palette (hex without #) ──────────────────────────────────────────────────
 const C = {
@@ -70,12 +71,6 @@ function shortDate(dateStr: string): string {
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
-function weekMonday(dateStr: string): string {
-  const d = new Date(dateStr + 'T12:00')
-  const dow = d.getDay()
-  d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-}
 function fmtH(h: number): string {
   return h % 1 === 0 ? `${h}h` : `${h.toFixed(2)}h`
 }

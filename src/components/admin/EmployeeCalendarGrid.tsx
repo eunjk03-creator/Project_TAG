@@ -4,6 +4,7 @@ import type { ProcessedRecord, Employee, RiskThresholds, EmployeeAttributeOverri
 import { HR_THRESHOLDS, FINAL_STATUS_CATEGORY } from '@/types/tag'
 import { parseTimeToMins, computeVirtualInMins, isLeaderOnDate as isLeaderOnDateCore, computeDailyRecognizedHours, computeRealHoursOtForRecord } from '@/utils/attendanceCalc'
 import { sortByDivisionOrder } from '@/data/orgChart'
+import { weekStart } from '@/utils/weekBoundary'
 
 // ── Internal status ────────────────────────────────────────────────────────
 type Status = 'N' | 'OT' | 'L' | 'A' | 'H' | 'APPROVED' | 'WEEKEND' | 'ABSENT'
@@ -364,14 +365,6 @@ const empStats = useMemo(() => {
       else recsByEmp.set(r.employeeId, [r])
     }
 
-    function weekKey(dateStr: string): string {
-      const d = new Date(dateStr + 'T12:00')
-      const dow  = d.getDay()
-      const back = dow === 0 ? 6 : dow - 1
-      d.setDate(d.getDate() - back)
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-    }
-
     return displayEmployees.filter(e => {
       const empRecs = recsByEmp.get(e.id) ?? []
       const weekTotals: Record<string, number> = {}
@@ -379,7 +372,7 @@ const empStats = useMemo(() => {
       for (const r of empRecs) {
         // computeDailyRecognizedHours = empStats.roundedTotal과 동일한 §4 확정 공식
         // (attendanceCalc.ts로 추출 — Overview 등 다른 화면도 이 함수로 동일 기준 재사용)
-        const wk = weekKey(r.date)
+        const wk = weekStart(r.date)
         weekTotals[wk] = (weekTotals[wk] ?? 0) + computeDailyRecognizedHours(r, isLeaderOnDate(r.date))
       }
       return Object.values(weekTotals).some(h => h >= 52)

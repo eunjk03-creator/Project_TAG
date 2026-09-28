@@ -5,6 +5,7 @@
 import * as XLSX from 'xlsx-js-style'
 import type { ProcessedRecord, Employee, SieveFlag } from '@/types/tag'
 import { parseTimeToMins, compute4141BreakMins, computeEffInMins } from '@/utils/attendanceCalc'
+import { weekStart } from '@/utils/weekBoundary'
 
 // ── 인정시간 크레딧 ON 기준 근무시간 ─────────────────────────────────────────────
 // 그리드 인정시간 크레딧 ON과 동일 계산: effectiveClockIn(반차보정) + 4/1/4/1 휴게 + 연차크레딧
@@ -104,14 +105,7 @@ export function periodLabel(records: ProcessedRecord[]): string {
   return `${fmt(dates[0])}~${fmt(dates[dates.length - 1])}`
 }
 
-// ── 주간 시작일 (월요일) ──────────────────────────────────────────────────────
-
-function weekStart(dateStr: string): string {
-  const d   = new Date(dateStr + 'T00:00:00Z')
-  const dow = d.getUTCDay()
-  d.setUTCDate(d.getUTCDate() - (dow === 0 ? 6 : dow - 1))
-  return d.toISOString().slice(0, 10)
-}
+// ── 주간 시작일 (일요일) ──────────────────────────────────────────────────────
 
 // ── 이상치_요약 ───────────────────────────────────────────────────────────────
 
