@@ -8,12 +8,6 @@
  * 두 모드 다 같은 입력 타입을 쓰고 있으면 해당 필드만 채운다.
  */
 
-const DOW_KR = ['일', '월', '화', '수', '목', '금', '토']
-
-function dowLabel(dateStr: string): string {
-  return DOW_KR[new Date(dateStr + 'T12:00').getDay()]
-}
-
 function pctStr(n: number): string {
   return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%p`
 }
@@ -44,7 +38,9 @@ function formatAnomalyPeople(rows: AnomalyPersonDetail[]): string {
 
 export interface DailyDigestInput {
   scopeDivision: string | null
-  date: string          // YYYY-MM-DD
+  /** 이미 포맷된 기준일자 라벨 — 단일 선택이면 "9월 16일 (화)", 복수 선택이면
+   *  호출부(overview 페이지)가 activeBlocks 기준으로 만들어서 넘긴다. */
+  dateLabel: string
   attendancePct: number
   vsTargetPct: number
   vsPrevPct: number | null
@@ -64,8 +60,8 @@ export interface DailyDigestInput {
 
 export function buildDailyDigestMarkdown(d: DailyDigestInput): string {
   const title = d.scopeDivision
-    ? `*📊 일일 근태 요약 — ${d.scopeDivision} (${d.date} ${dowLabel(d.date)})*`
-    : `*📊 일일 근태 요약 (${d.date} ${dowLabel(d.date)})*`
+    ? `*📊 일일 근태 요약 — ${d.scopeDivision} (${d.dateLabel})*`
+    : `*📊 일일 근태 요약 (${d.dateLabel})*`
 
   const lines = [title, '']
   const vsPrev = d.vsPrevPct !== null ? `, 전일 대비 ${pctStr(d.vsPrevPct)}` : ''

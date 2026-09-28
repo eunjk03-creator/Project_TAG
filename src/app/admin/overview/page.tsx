@@ -983,11 +983,33 @@ export default function OverviewPage() {
   )
   const digestCadenceLabel = period.granularity === 'week' ? '주간' : period.granularity === 'month' ? '월간' : '일간'
   const digestTitle = `근태 다이제스트 — ${digestCadenceLabel}${selectedDivision ? ` · ${selectedDivision}` : ''}`
+
+  // 헬퍼: 다이제스트 라벨 포맷팅 (단일/복수 선택 구분)
+  const DOW_KR = ['일', '월', '화', '수', '목', '금', '토']
+  function fmtDigestDate(ds: string): string {
+    const d = new Date(ds + 'T12:00:00')
+    return `${d.getMonth() + 1}월 ${d.getDate()}일 (${DOW_KR[d.getDay()]})`
+  }
+  /** 일 단위 다이제스트 제목용 — 단일 선택이면 그 날짜, 복수 선택이면 첫 날짜 + 개수. */
+  function formatDigestDateLabel(blocks: DateRange[]): string {
+    const sorted = [...blocks].sort((a, b) => a.from.localeCompare(b.from))
+    return sorted.length === 1
+      ? fmtDigestDate(sorted[0].from)
+      : `${fmtDigestDate(sorted[0].from)} 외 ${sorted.length - 1}일`
+  }
+  /** 주 단위 다이제스트 제목용 — 단일 선택이면 그 주 범위, 복수 선택이면 범위 + 개수. */
+  function formatDigestPeriodLabel(blocks: DateRange[]): string {
+    const sorted = [...blocks].sort((a, b) => a.from.localeCompare(b.from))
+    return sorted.length === 1
+      ? `${sorted[0].from} ~ ${sorted[0].to}`
+      : `${sorted[0].from} ~ ${sorted[sorted.length - 1].to} (${sorted.length}개 구간)`
+  }
+
   const digestMarkdown = useMemo(() => {
     if (period.granularity === 'day') {
       return buildDailyDigestMarkdown({
         scopeDivision: selectedDivision,
-        date: period.from,
+        dateLabel: formatDigestDateLabel(activeBlocks),
         attendancePct: normalRate.pct,
         vsTargetPct: normalRate.pct - policy.attendanceTargetPct,
         vsPrevPct: prevScopedRecords.length > 0 ? normalRate.pct - prevNormalRateForDigest.pct : null,
@@ -1010,7 +1032,7 @@ export default function OverviewPage() {
       const estimatedOtCost = policy.avgHourlyWage > 0 ? formatWon(totalRecognizedOt * policy.avgHourlyWage * policy.otRate) : null
       return buildWeeklyDigestMarkdown({
         scopeDivision: selectedDivision,
-        periodLabel: period.label,
+        periodLabel: formatDigestPeriodLabel(activeBlocks),
         dangerCount: weeklyRisk.danger,
         cautionCount: weeklyRisk.caution,
         warningCount: weeklyRisk.warning,
