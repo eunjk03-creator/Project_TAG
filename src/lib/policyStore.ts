@@ -17,6 +17,7 @@ type ScalarKey = 'flexStart' | 'flexEnd' | 'lunchStart' | 'lunchEnd' | 'standard
   | 'fixedScheduleBStart' | 'offsiteStdEndTime' | 'avgHourlyWage'
   | 'attendanceTargetPct' | 'attendanceWarnDeltaPp' | 'weeklyOtActionH' | 'weeklyOtWarningH'
   | 'holidayActionCount' | 'holidayWarningCount' | 'leaveTargetWarnDeltaPp' | 'monthlyAllocationWarnDeltaPp'
+  | 'monthlyHoursWarnOverH' | 'monthlyHoursActionOverH'
 
 const SCALAR_KEYS: ScalarKey[] = [
   'flexStart', 'flexEnd', 'lunchStart', 'lunchEnd', 'standardHours',
@@ -29,6 +30,7 @@ const SCALAR_KEYS: ScalarKey[] = [
   'fixedScheduleBStart', 'offsiteStdEndTime', 'avgHourlyWage',
   'attendanceTargetPct', 'attendanceWarnDeltaPp', 'weeklyOtActionH', 'weeklyOtWarningH',
   'holidayActionCount', 'holidayWarningCount', 'leaveTargetWarnDeltaPp', 'monthlyAllocationWarnDeltaPp',
+  'monthlyHoursWarnOverH', 'monthlyHoursActionOverH',
 ]
 
 const NUMERIC_KEYS = new Set<ScalarKey>([
@@ -40,6 +42,7 @@ const NUMERIC_KEYS = new Set<ScalarKey>([
   'fixedScheduleABreakMins', 'avgHourlyWage',
   'attendanceTargetPct', 'attendanceWarnDeltaPp', 'weeklyOtActionH', 'weeklyOtWarningH',
   'holidayActionCount', 'holidayWarningCount', 'leaveTargetWarnDeltaPp', 'monthlyAllocationWarnDeltaPp',
+  'monthlyHoursWarnOverH', 'monthlyHoursActionOverH',
 ])
 
 function toDateOnlyString(d: Date): string {

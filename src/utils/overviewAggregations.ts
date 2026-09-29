@@ -782,3 +782,238 @@ export function buildHolidayWorkDetails(records: ProcessedRecord[], empMap: Map<
     })
     .sort((a, b) => b.hours - a.hours)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10a 월간 근로시간 · 주 52시간 집계
+// 규칙
+//  - 근로시간은 전부 computeDailyRecognizedHours() 합산(52h 판정·EmployeeCalendarGrid와 같은 공식)
+//  - 주는 일요일 시작(일~토). 월의 주 = 그 달과 하루라도 겹치는 일~토 주.
+//    달을 걸치는 첫 주는 전월 날짜까지 포함한 7일 전체로 판정한다 → ytd 레코드를 넘겨야 함.
+//  - 아직 오지 않은 주(주 시작일 > asOf)는 제외한다.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const WEEKLY_CAP_HOURS    = 52
+export const STANDARD_WEEK_HOURS = 40
+export const STANDARD_DAY_HOURS  = 8
+
+function ymdOf(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function addDaysStr(s: string, n: number): string {
+  const d = new Date(s + 'T12:00'); d.setDate(d.getDate() + n); return ymdOf(d)
+}
+function sundayOfStr(s: string): string {
+  const d = new Date(s + 'T12:00'); d.setDate(d.getDate() - d.getDay()); return ymdOf(d)
+}
+function lastDayOfMonthStr(year: number, month1: number): string {
+  return ymdOf(new Date(year, month1, 0, 12))
+}
+
+function groupByEmployee(records: ProcessedRecord[]): Map<string, ProcessedRecord[]> {
+  const m = new Map<string, ProcessedRecord[]>()
+  for (const r of records) {
+    const b = m.get(r.employeeId)
+    if (b) b.push(r); else m.set(r.employeeId, [r])
+  }
+  return m
+}
+
+// ── 주 목록 ──────────────────────────────────────────────────────────────────
+
+export interface MonthWeek { from: string; to: string; label: string }
+
+/** monthFrom~monthTo와 겹치는 일~토 주. asOf 이후에 시작하는 주는 뺀다. */
+export function buildMonthWeeks(monthFrom: string, monthTo: string, asOf: string): MonthWeek[] {
+  const weeks: MonthWeek[] = []
+  let s = sundayOfStr(monthFrom)
+  let i = 1
+  while (s <= monthTo && s <= asOf) {
+    weeks.push({ from: s, to: addDaysStr(s, 6), label: `${i}주` })
+    s = addDaysStr(s, 7)
+    i++
+  }
+  return weeks
+}
+
+// ── 주 52시간 사원별 ─────────────────────────────────────────────────────────
+
+export interface WeeklyCapRow {
+  employeeId: string
+  name:       string
+  division:   string
+  /** weeks와 같은 순서. 그 주에 레코드가 하나도 없으면 null */
+  weekHours:  (number | null)[]
+  /** null 아닌 주들의 평균 */
+  avgHours:   number
+  /** 52h 초과 주 수 */
+  overCount:  number
+  /** 52h 초과가 연속된 최대 주 수 */
+  maxRun:     number
+  isAvgOver:  boolean
+  isRunOver:  boolean
+}
+
+export interface WeeklyCapResult {
+  /** isAvgOver || isRunOver 인 사람만, avgHours 내림차순 */
+  rows: WeeklyCapRow[]
+  avgOverCount: number
+  runOverCount: number
+  /** 전 인원의 주 평균 인정근로시간(인당) */
+  companyWeeklyAvg: number
+}
+
+export function buildWeeklyCapRows(
+  records:      ProcessedRecord[],   // ytd 레코드(첫 주의 전월 날짜 포함되도록)
+  employees:    Employee[],
+  finalAttrMap: Map<string, EmployeeAttributeOverrides>,
+  weeks:        MonthWeek[],
+): WeeklyCapResult {
+  const empMap = new Map(employees.map(e => [e.id, e]))
+  const weekFrom = weeks[0]?.from ?? ''
+  const weekTo   = weeks[weeks.length - 1]?.to ?? ''
+  const inRange  = records.filter(r => r.date >= weekFrom && r.date <= weekTo)
+
+  const all: WeeklyCapRow[] = []
+  for (const [employeeId, recs] of groupByEmployee(inRange)) {
+    const emp = empMap.get(employeeId)
+    if (!emp) continue
+    const attrs = finalAttrMap.get(employeeId)
+    const sums: (number | null)[] = weeks.map(() => null)
+    for (const r of recs) {
+      const wi = weeks.findIndex(w => r.date >= w.from && r.date <= w.to)
+      if (wi < 0) continue
+      sums[wi] = (sums[wi] ?? 0) + computeDailyRecognizedHours(r, isLeaderOnDate(attrs, emp, r.date))
+    }
+    const present = sums.filter((h): h is number => h !== null)
+    if (present.length === 0) continue
+    const avgHours = present.reduce((a, b) => a + b, 0) / present.length
+    let run = 0, maxRun = 0, overCount = 0
+    for (const h of sums) {
+      if (h !== null && h > WEEKLY_CAP_HOURS) { run++; overCount++; maxRun = Math.max(maxRun, run) }
+      else run = 0
+    }
+    all.push({
+      employeeId, name: emp.name, division: emp.division ?? '—',
+      weekHours: sums, avgHours, overCount, maxRun,
+      isAvgOver: avgHours > WEEKLY_CAP_HOURS,
+      isRunOver: maxRun >= 2,
+    })
+  }
+
+  const rows = all.filter(r => r.isAvgOver || r.isRunOver).sort((a, b) => b.avgHours - a.avgHours)
+  return {
+    rows,
+    avgOverCount: rows.filter(r => r.isAvgOver).length,
+    runOverCount: rows.filter(r => r.isRunOver).length,
+    companyWeeklyAvg: all.length > 0 ? all.reduce((s, r) => s + r.avgHours, 0) / all.length : 0,
+  }
+}
+
+// ── 소정근로시간 ─────────────────────────────────────────────────────────────
+
+/** 월~금 중 회사 휴일이 아닌 날 × 8h */
+export function computeScheduledHours(from: string, to: string, holidays: Set<string>): number {
+  let h = 0
+  for (let s = from; s <= to; s = addDaysStr(s, 1)) {
+    const dow = new Date(s + 'T12:00').getDay()
+    if (dow === 0 || dow === 6 || holidays.has(s)) continue
+    h += STANDARD_DAY_HOURS
+  }
+  return h
+}
+
+// ── 월별 인당 근로시간 추이(1~12월) ─────────────────────────────────────────
+
+export interface MonthlyHoursPoint {
+  month: number
+  label: string
+  /** 그 달 소정근로(당월은 asOf까지) */
+  scheduledHours: number
+  /** 그 달 인당 평균 인정근로. 미도래 달은 null */
+  avgHours: number | null
+  /** 1월부터 누적 */
+  cumScheduledHours: number
+  cumAvgHours: number | null
+}
+
+export function buildMonthlyHoursSeries(
+  ytdRecords:   ProcessedRecord[],
+  employees:    Employee[],
+  finalAttrMap: Map<string, EmployeeAttributeOverrides>,
+  year:         number,
+  asOf:         string,
+  holidays:     Set<string>,
+): MonthlyHoursPoint[] {
+  const empMap = new Map(employees.map(e => [e.id, e]))
+  const points: MonthlyHoursPoint[] = []
+  let cumSch = 0, cumAvg = 0
+  for (let m = 1; m <= 12; m++) {
+    const from = `${year}-${String(m).padStart(2, '0')}-01`
+    const endOfMonth = lastDayOfMonthStr(year, m)
+    const to = endOfMonth < asOf ? endOfMonth : asOf
+    if (from > asOf) {
+      const sch = computeScheduledHours(from, endOfMonth, holidays)
+      cumSch += sch
+      points.push({ month: m, label: `${m}월`, scheduledHours: sch, avgHours: null, cumScheduledHours: cumSch, cumAvgHours: null })
+      continue
+    }
+    const recs = ytdRecords.filter(r => r.date >= from && r.date <= to)
+    const byEmp = groupByEmployee(recs)
+    let total = 0
+    for (const [employeeId, list] of byEmp) {
+      const emp = empMap.get(employeeId)
+      const attrs = finalAttrMap.get(employeeId)
+      for (const r of list) total += computeDailyRecognizedHours(r, isLeaderOnDate(attrs, emp, r.date))
+    }
+    const avg = byEmp.size > 0 ? total / byEmp.size : 0
+    const sch = computeScheduledHours(from, to, holidays)
+    cumSch += sch
+    cumAvg += avg
+    points.push({ month: m, label: `${m}월`, scheduledHours: sch, avgHours: avg, cumScheduledHours: cumSch, cumAvgHours: cumAvg })
+  }
+  return points
+}
+
+// ── 부서별 인당 근로시간(단월 / 누적) ───────────────────────────────────────
+
+export interface DivisionHours {
+  division:   string
+  /** 선택 월 인당 평균 */
+  singleAvg:  number
+  /** 1/1~asOf 인당 누적 */
+  cumAvg:     number
+}
+
+export function buildDivisionHours(
+  monthRecords: ProcessedRecord[],
+  ytdRecords:   ProcessedRecord[],
+  employees:    Employee[],
+  finalAttrMap: Map<string, EmployeeAttributeOverrides>,
+): DivisionHours[] {
+  const empMap = new Map(employees.map(e => [e.id, e]))
+  const roll = (records: ProcessedRecord[]) => {
+    const byDiv = new Map<string, { hours: number; people: Set<string> }>()
+    for (const r of records) {
+      const emp = empMap.get(r.employeeId)
+      const div = emp?.division ?? '—'
+      const attrs = finalAttrMap.get(r.employeeId)
+      const row = byDiv.get(div) ?? { hours: 0, people: new Set<string>() }
+      row.hours += computeDailyRecognizedHours(r, isLeaderOnDate(attrs, emp, r.date))
+      row.people.add(r.employeeId)
+      byDiv.set(div, row)
+    }
+    return byDiv
+  }
+  const single = roll(monthRecords)
+  const cum = roll(ytdRecords)
+  const divisions = new Set([...single.keys(), ...cum.keys()])
+  return [...divisions].map(division => {
+    const s = single.get(division)
+    const c = cum.get(division)
+    return {
+      division,
+      singleAvg: s && s.people.size > 0 ? s.hours / s.people.size : 0,
+      cumAvg:    c && c.people.size > 0 ? c.hours / c.people.size : 0,
+    }
+  })
+}

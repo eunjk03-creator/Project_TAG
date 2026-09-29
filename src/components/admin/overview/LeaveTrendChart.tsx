@@ -22,7 +22,7 @@ export interface LeaveTrendLegendRow { label: string; value: string }
  *  v9 핸드오프 스펙의 정보구조(레전드 4행 + 반대기준 스트립)는 유지하되, 칩 라벨 등
  *  픽셀 단위 오버레이는 recharts 기본 컴포넌트로 근사했다(툴팁으로 정확한 값 확인 가능). */
 export function LeaveTrendChart({
-  mode, onModeChange, points, legend, footnote, stripTitle, stripItems,
+  mode, onModeChange, points, legend, footnote, stripTitle, stripItems, compact,
 }: {
   mode: 'cumulative' | 'single'
   onModeChange: (m: 'cumulative' | 'single') => void
@@ -31,10 +31,12 @@ export function LeaveTrendChart({
   footnote: string
   stripTitle: string
   stripItems: LeaveTrendLegendRow[]
+  /** 10a 2열 배치용 — 우측 레전드 열을 숨기고, 스트립에서 제목을 뺀다 */
+  compact?: boolean
 }) {
   return (
-    <div className="bg-white border border-[var(--line)] rounded-[13px] px-5 py-4">
-      <div className="flex items-center gap-3 flex-wrap">
+    <div className={`bg-white border border-[var(--line)] flex flex-col ${compact ? 'rounded-xl px-4 pt-3.5 pb-3' : 'rounded-[13px] px-5 py-4'}`}>
+      <div className={`flex items-center gap-3 flex-wrap ${compact ? 'min-h-[34px] mb-2.5' : ''}`}>
         <div>
           <p className="text-[12.5px] font-bold text-[var(--ink-2)]">
             {mode === 'cumulative' ? '연차 누적 사용률 추이 · 2026년' : '월별로 새로 쓴 연차 · 2026년'}
@@ -49,19 +51,19 @@ export function LeaveTrendChart({
             onClick={() => onModeChange('cumulative')}
             className={`px-3.5 py-1 text-[11px] font-medium rounded-md transition-colors ${mode === 'cumulative' ? 'bg-white text-[var(--info)] shadow-sm' : 'text-[var(--ink-3)]'}`}
           >
-            누적 기준
+            {compact ? '누적' : '누적 기준'}
           </button>
           <button
             onClick={() => onModeChange('single')}
             className={`px-3.5 py-1 text-[11px] font-medium rounded-md transition-colors ${mode === 'single' ? 'bg-white text-[var(--info)] shadow-sm' : 'text-[var(--ink-3)]'}`}
           >
-            단월 기준
+            {compact ? '단월' : '단월 기준'}
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_268px] gap-5 mt-3 items-start">
-        <div className="h-[208px]">
+      <div className={`grid grid-cols-1 ${compact ? '' : 'lg:grid-cols-[1fr_268px]'} gap-5 ${compact ? 'mt-0' : 'mt-3'} items-start`}>
+        <div className={compact ? 'h-[190px]' : 'h-[208px]'}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={points} margin={{ top: 8, right: 8, left: -20 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f2f4" />
@@ -88,19 +90,21 @@ export function LeaveTrendChart({
           </ResponsiveContainer>
         </div>
 
-        <div className="space-y-0">
-          {legend.map(row => (
-            <div key={row.label} className="flex items-center justify-between py-1.5 border-b border-[var(--line-2)] last:border-b-0">
-              <span className="text-[11px] text-[var(--ink-3)]">{row.label}</span>
-              <span className="text-[14px] font-extrabold text-[var(--ink)] tabular-nums">{row.value}</span>
-            </div>
-          ))}
-          <p className="text-[10.5px] text-[var(--ink-3)] mt-2 leading-relaxed">{footnote}</p>
-        </div>
+        {!compact && (
+          <div className="space-y-0">
+            {legend.map(row => (
+              <div key={row.label} className="flex items-center justify-between py-1.5 border-b border-[var(--line-2)] last:border-b-0">
+                <span className="text-[11px] text-[var(--ink-3)]">{row.label}</span>
+                <span className="text-[14px] font-extrabold text-[var(--ink)] tabular-nums">{row.value}</span>
+              </div>
+            ))}
+            <p className="text-[10.5px] text-[var(--ink-3)] mt-2 leading-relaxed">{footnote}</p>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-[18px] flex-wrap bg-[var(--canvas)] rounded-[11px] px-3.5 py-[11px] mt-2">
-        <span className="text-[11px] font-extrabold text-[var(--ink-2)] shrink-0">{stripTitle}</span>
+        {stripTitle && <span className="text-[11px] font-extrabold text-[var(--ink-2)] shrink-0">{stripTitle}</span>}
         {stripItems.map(it => (
           <span key={it.label} className="text-[10.5px] text-[var(--ink-3)] whitespace-nowrap">
             {it.label} <span className="text-[12.5px] font-extrabold text-[var(--ink)] ml-0.5">{it.value}</span>

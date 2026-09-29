@@ -171,9 +171,16 @@ export interface MonthlyDigestInput {
   belowTargetDivisions: { label: string; pct: number }[]
   belowTargetCount: number
   totalDivisionsCount: number
-  over209Count: number
-  /** 전사 모드에선 TOP3만, 부문 모드에선 캡 없이 그 부문 전원 */
-  over209People: { name: string; division: string }[]
+
+  /** 근로시간 · 52시간 */
+  monthAvgHours: number
+  scheduledHours: number
+  weeklyAvgHours: number
+  weekCount: number
+  /** 전사 모드에선 TOP3만 쓰고 "등"을 붙인다. 부문 모드에선 전원 */
+  avgOverPeople: { name: string; division: string; avgHours: number }[]
+  runOverPeople: { name: string; division: string; maxRun: number }[]
+
   /** scopeDivision === null일 때만 — 이상치 최다 부문 */
   topAnomalyDivisions: { label: string; total: number }[]
   /** scopeDivision이 있을 때만 — 그 부문의 이상치 있는 개인 전원(캡 없음) */
@@ -185,22 +192,37 @@ export function buildMonthlyDigestMarkdown(d: MonthlyDigestInput): string {
   const title = d.scopeDivision
     ? `*📊 월간 근태 요약 — ${d.scopeDivision} (${d.monthLabel})*`
     : `*📊 월간 근태 요약 (${d.monthLabel})*`
+  const cap = <T,>(rows: T[]) => (d.scopeDivision ? rows : rows.slice(0, 3))
+  const more = (rows: unknown[]) => (!d.scopeDivision && rows.length > 3 ? ' 등' : '')
+  const who = (p: { name: string; division: string }, extra: string) =>
+    d.scopeDivision ? `${p.name}(${extra})` : `${p.name}(${p.division}, ${extra})`
 
   const lines = [title, '']
+
+  // [연차]
+  lines.push('*[연차]*')
   const rateLabel = d.scopeDivision ? '연차 사용률(누적)' : '전사 연차 사용률(누적)'
   lines.push(`• ${rateLabel} ${d.cumulativePct.toFixed(1)}% — 목표 대비 ${pctStr(d.vsBenchmarkPct)}`)
-
   if (d.scopeDivision === null) {
-    lines.push(`• 목표 미달 부문 ${d.belowTargetCount}/${d.totalDivisionsCount}개${d.belowTargetDivisions.length > 0 ? ` — ${d.belowTargetDivisions.slice(0, 3).map(b => `${b.label} ${b.pct.toFixed(1)}%`).join(' · ')}` : ''}`)
+    const list = d.belowTargetDivisions.slice(0, 3).map(b => `${b.label} ${b.pct.toFixed(1)}%`).join(' · ')
+    lines.push(`• 목표 미달 부문 ${d.belowTargetCount}/${d.totalDivisionsCount}개${list ? ` — ${list}` : ''}`)
   }
+  lines.push('• 연말 예상 연차수당: 준비중(급여 시급 데이터 연동 필요)')
+  lines.push('')
 
-  lines.push(`• 연말 예상 연차수당: 준비중(급여 시급 데이터 연동 필요)`)
+  // [근로시간 · 52시간]
+  lines.push('*[근로시간 · 52시간]*')
+  const diff = d.monthAvgHours - d.scheduledHours
+  lines.push(`• ${d.monthLabel.replace(/^\d+년\s*/, '')} 평균 근로시간 ${d.monthAvgHours.toFixed(1)}시간 (기준 ${d.scheduledHours}시간 대비 ${Math.abs(diff).toFixed(1)}시간 ${diff >= 0 ? '초과' : '미달'})`)
+  lines.push(`• 인당 주 평균 근로시간 ${d.weeklyAvgHours.toFixed(1)}시간 (1인당 ${Math.max(0, d.weeklyAvgHours - 40).toFixed(1)}시간 연장근로)`)
+  const avgRows = cap(d.avgOverPeople)
+  lines.push(`• ${d.weekCount}주 평균 52h 초과자 ${d.avgOverPeople.length}명${avgRows.length ? ` — ${avgRows.map(p => who(p, `${p.avgHours.toFixed(1)}h`)).join(' · ')}${more(d.avgOverPeople)}` : ''}`)
+  const runRows = cap(d.runOverPeople)
+  lines.push(`  └ 2주 이상 연속 초과 ${d.runOverPeople.length}명${runRows.length ? `: ${runRows.map(p => who(p, `${p.maxRun}주`)).join(' · ')}${more(d.runOverPeople)}` : ''}`)
+  lines.push('')
 
-  const over209Rows = d.scopeDivision ? d.over209People : d.over209People.slice(0, 3)
-  const over209Label = over209Rows.map(p => d.scopeDivision ? p.name : `${p.division} ${p.name}`).join(' · ')
-  const over209Suffix = !d.scopeDivision && d.over209People.length > 3 ? ' 등' : ''
-  lines.push(`• 월간 209시간 초과 인원 ${d.over209Count}명${over209Label ? ` (${over209Label}${over209Suffix})` : ''}`)
-
+  // [이상치]
+  lines.push('*[이상치]*')
   if (d.scopeDivision === null && d.topAnomalyDivisions.length > 0) {
     lines.push(`• 이번 달 이상치 최다 부문: ${d.topAnomalyDivisions.slice(0, 3).map(a => `${a.label} ${a.total}건`).join(' · ')}`)
   } else if (d.scopeDivision) {

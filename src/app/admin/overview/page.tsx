@@ -39,9 +39,13 @@ import {
   buildEmployeeLeaveUsage, buildDivisionLeaveUsage,
   buildMasterDiscrepancyRollup,
   LEAVE_BENCHMARK, MONTHLY_ALLOCATION,
+  buildMonthWeeks, buildWeeklyCapRows, buildMonthlyHoursSeries, buildDivisionHours,
+  computeScheduledHours, WEEKLY_CAP_HOURS,
 } from '@/utils/overviewAggregations'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import type { Employee, DateRange } from '@/types/tag'
+import { WeeklyCapPanel } from '@/components/admin/overview/WeeklyCapPanel'
+import { WorkHoursTrendChart, type HoursBasis } from '@/components/admin/overview/WorkHoursTrendChart'
 
 const BUSINESS_DIVISIONS = DIVISION_ORDER.slice(0, 5)
 const SUPPORT_DIVISIONS  = DIVISION_ORDER.slice(5)
@@ -287,9 +291,9 @@ export default function OverviewPage() {
   const dailyOt = useMemo(() => buildDailyOvertimeSeries(scopedRecords, period.from, period.to), [scopedRecords, period.from, period.to])
   const todayOt = useMemo(() => buildTodayOvertimeList(scopedRecords, empMap, todayForView), [scopedRecords, empMap, todayForView])
   const totalOtH = total.otHours
-  const overLimitHours = period.granularity === 'month' ? 209 : 52
+  const overLimitHours = WEEKLY_CAP_HOURS
   const overLimitRows = useMemo(
-    () => period.granularity === 'day' ? [] : computeOverLimitEmployees(scopedRecords, scopedEmployees, finalAttrMap, overLimitHours),
+    () => period.granularity === 'week' ? computeOverLimitEmployees(scopedRecords, scopedEmployees, finalAttrMap, overLimitHours) : [],
     [scopedRecords, scopedEmployees, finalAttrMap, overLimitHours, period.granularity],
   )
   const overLimitByDivision = useMemo(() => {
@@ -385,6 +389,10 @@ export default function OverviewPage() {
   // 바꿔도 그대로 고정되고(핵심 규칙), 부서 카드·차트만 바뀐다.
   const [weekTab, setWeekTab] = useState<'overtime' | 'holiday'>('overtime')
   const [monthBasis, setMonthBasis] = useState<'cumulative' | 'single'>('cumulative')
+  // 10a — 근로시간 차트의 누적/단월. 연차(monthBasis)와 독립.
+  const [hoursBasis, setHoursBasis] = useState<HoursBasis>('single')
+  // 10a — 월간 부서별 현황이 무엇을 보여줄지. 누적/단월은 별도 버튼 없이 위 차트 토글을 따른다.
+  const [monthDeptMetric, setMonthDeptMetric] = useState<'leave' | 'hours'>('leave')
 
   const monthLabel = `${new Date(period.from + 'T12:00').getMonth() + 1}월`
   const totalDivisionsCount = metrics.length
@@ -501,6 +509,45 @@ export default function OverviewPage() {
       usersWithSingleUsage: employeeLeaveSingle.filter(r => r.usedDays > 0).length,
     }
   }, [employeeLeaveCumulative, employeeLeaveSingle])
+
+  // ── 10a 근로시간 · 주 52시간 (월 전용) ─────────────────────────────────────
+  const holidaySet = useMemo(
+    () => new Set(policy.companyHolidays.map(h => h.date)),
+    [policy.companyHolidays],
+  )
+  const asOfDate = useMemo(() => {
+    const today = todayStr()
+    return period.to < today ? period.to : today
+  }, [period.to])
+
+  const monthWeeks = useMemo(
+    () => period.granularity === 'month' ? buildMonthWeeks(period.from, period.to, asOfDate) : [],
+    [period.granularity, period.from, period.to, asOfDate],
+  )
+  // 첫 주가 전월 날짜를 포함하므로 ytd 레코드로 판정한다.
+  // ⚠️ 1월은 ytd가 1/1부터라 12월 말 날짜가 빠진다 — 1월 첫 주만 해당, 허용 오차로 둔다.
+  const weeklyCap = useMemo(
+    () => period.granularity === 'month'
+      ? buildWeeklyCapRows(ytdScopedRecords, ytdScopedEmployees, finalAttrMap, monthWeeks)
+      : { rows: [], avgOverCount: 0, runOverCount: 0, companyWeeklyAvg: 0 },
+    [period.granularity, ytdScopedRecords, ytdScopedEmployees, finalAttrMap, monthWeeks],
+  )
+  const monthlyHoursPoints = useMemo(
+    () => period.granularity === 'month'
+      ? buildMonthlyHoursSeries(ytdScopedRecords, ytdScopedEmployees, finalAttrMap, Number(period.to.slice(0, 4)), asOfDate, holidaySet)
+      : [],
+    [period.granularity, ytdScopedRecords, ytdScopedEmployees, finalAttrMap, period.to, asOfDate, holidaySet],
+  )
+  const divisionHours = useMemo(
+    () => period.granularity === 'month' ? buildDivisionHours(scopedRecords, ytdScopedRecords, ytdScopedEmployees, finalAttrMap) : [],
+    [period.granularity, scopedRecords, ytdScopedRecords, ytdScopedEmployees, finalAttrMap],
+  )
+  const curHoursPoint = monthlyHoursPoints[currentMonthNum - 1]
+  const monthScheduledHours = curHoursPoint?.scheduledHours ?? computeScheduledHours(period.from, asOfDate, holidaySet)
+  const monthAvgHours       = curHoursPoint?.avgHours ?? 0
+  const cumScheduledHours   = curHoursPoint?.cumScheduledHours ?? 0
+  const cumAvgHours         = curHoursPoint?.cumAvgHours ?? 0
+  const prevHoursPoint      = monthlyHoursPoints[currentMonthNum - 2]
 
   // ── 연차 추이 차트용 월별(1~12월) 포인트 — ytdScopedRecords가 이미 1/1~기준일 전체를
   // 갖고 있으므로 추가 fetch 없이 달마다 슬라이스해서 누적/단월 비율을 계산한다. ────────
@@ -655,10 +702,10 @@ export default function OverviewPage() {
           onClick: () => openAndScroll('leave'),
         },
         {
-          key: 'over209', label: '월간 209시간 초과 인원', value: `${overLimitRows.length}`, unit: '명',
+          key: 'weeklyCap', label: `${monthWeeks.length}주 평균 52h 초과자`,
+          value: `${weeklyCap.avgOverCount}`, unit: '명',
           subRows: [
-            { key: '사업부', value: `${overLimitRows.filter(r => (BUSINESS_DIVISIONS as string[]).includes(r.division)).length}명` },
-            { key: '지원부', value: `${overLimitRows.filter(r => (SUPPORT_DIVISIONS as string[]).includes(r.division)).length}명` },
+            { key: '2주 이상 연속 초과', value: `${weeklyCap.runOverCount}명` },
           ],
           onClick: () => openAndScroll('ot'),
         },
@@ -685,7 +732,7 @@ export default function OverviewPage() {
       {
         key: 'allowance', label: '연말 예상 연차 수당 (현금 지출)', value: '준비중',
         footnote: '급여 시급 데이터 연동 필요',
-        subRows: [{ key: '209h 초과', value: `${overLimitRows.length}명` }],
+        subRows: [{ key: `${monthWeeks.length}주 평균 52h 초과`, value: `${weeklyCap.avgOverCount}명` }],
         onClick: () => openAndScroll('leave'),
       },
     ]
@@ -694,6 +741,7 @@ export default function OverviewPage() {
     weeklyRisk, divisionRiskBands, metrics, divHoliday, totalHolidayH, total, totalDivisionsCount,
     divisionLeaveCumulative, cumulativeBenchmarkPct, leaveTotals, overLimitRows, employeeLeaveSingle, monthLabel,
     prevScopedRecords, prevScopedEmployees, finalAttrMap, policy, activeBlocks,
+    weeklyCap, monthWeeks,
   ])
 
   // ── 부서 카드(division → DeptCardVM) — 상태(일/주연장/주휴일/월누적/월단월)별로 콘텐츠가
@@ -819,7 +867,7 @@ export default function OverviewPage() {
       ],
       listHeaderLabel: `사원 ${rows.length}명`, listSortLabel: '사용률 낮은 순',
       rows,
-      footerLabel: '209h 초과', footerValue: `${overLimitByDivision.get(m.division) ?? 0}명`,
+      footerLabel: `${monthWeeks.length}주 평균 52h 초과`, footerValue: `${weeklyCap.rows.filter(r => r.division === m.division && r.isAvgOver).length}명`,
     }
   }
 
@@ -848,9 +896,59 @@ export default function OverviewPage() {
     }
   }
 
+  // 10a — 월간 · 근로시간 보기. 누적/단월은 hoursBasis(근로시간 차트 토글)를 따른다.
+  function buildMonthHoursCard(m: (typeof metrics)[number]): DeptCardVM {
+    const cum = hoursBasis === 'cumulative'
+    const dh = divisionHours.find(d => d.division === m.division)
+    const value = dh ? (cum ? dh.cumAvg : dh.singleAvg) : 0
+    const base = cum ? cumScheduledHours : monthScheduledHours
+    const over = value - base
+    const people = weeklyCap.rows.filter(r => r.division === m.division)
+    const nAvg = people.filter(r => r.isAvgOver).length
+    const nRun = people.filter(r => r.isRunOver).length
+    const overPerHeadLimit = cum ? policy.monthlyHoursActionOverH * currentMonthNum : policy.monthlyHoursActionOverH
+    const warnPerHeadLimit = cum ? policy.monthlyHoursWarnOverH * currentMonthNum : policy.monthlyHoursWarnOverH
+    const severity: DeptCardVM['severity'] =
+      nAvg > 0 || over > overPerHeadLimit ? 'action'
+      : nRun > 0 || over > warnPerHeadLimit ? 'warning'
+      : 'normal'
+    const scale = Math.max(base * 1.35, value * 1.05, 1)
+    const sign = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(1)}h`
+    return {
+      division: m.division,
+      headcount: m.headcount,
+      severity,
+      mainValue: cum ? Math.round(value).toLocaleString() : value.toFixed(1),
+      mainUnit: 'h',
+      progressPct: Math.min(100, (value / scale) * 100),
+      progressMarkerPct: Math.min(100, (base / scale) * 100),
+      captionLeft: `초과 ${sign(over)}`,
+      captionRight: `소정 ${base.toLocaleString()}h`,
+      cells: [
+        { label: '인당 연장', value: sign(over) },
+        { label: '연속 2주+', value: nRun ? `${nRun}명` : '—', color: nRun ? 'var(--neg)' : undefined },
+        { label: '평균 초과', value: nAvg ? `${nAvg}명` : '—', color: nAvg ? 'var(--neg)' : undefined },
+      ],
+      listHeaderLabel: '52h 초과자',
+      listSortLabel: `${monthWeeks.length}주 평균 높은 순`,
+      rows: people.map(r => ({
+        key: r.employeeId,
+        name: r.name,
+        tag: r.isAvgOver
+          ? { text: '평균 초과', bg: 'var(--neg-bg)', fg: 'var(--neg)' }
+          : { text: `연속 ${r.maxRun}주`, bg: 'var(--neg-bg)', fg: 'var(--neg)' },
+        value: `${Math.floor(r.avgHours)}h${String(Math.round((r.avgHours % 1) * 60)).padStart(2, '0')}`,
+        valueRed: r.isAvgOver,
+      })),
+      footerLabel: cum ? '부서 누적 초과' : `부서 ${monthLabel} 연장 합계`,
+      footerValue: `${Math.round(Math.max(0, over) * m.headcount).toLocaleString()}h`,
+    }
+  }
+
   const cardBuilder =
     period.granularity === 'day' ? buildDayCard
     : period.granularity === 'week' ? (weekTab === 'overtime' ? buildWeekOvertimeCard : buildWeekHolidayCard)
+    : monthDeptMetric === 'hours' ? buildMonthHoursCard
     : (monthBasis === 'cumulative' ? buildMonthCumulativeCard : buildMonthSingleCard)
   const metricsByDivision = new Map(metrics.map(m => [m.division, m]))
   // 선택 기간에 원본 레코드 자체가 없으면(예: 아직 업로드 안 된 오늘) 각 카드의 severity
@@ -932,13 +1030,26 @@ export default function OverviewPage() {
       const hours = groupHoliday.reduce((s, h) => s + h.hours, 0)
       return [{ label: '휴일근로', value: `${count}건` }, { label: '시간', value: fmtH(hours) }, { label: '발생 부문', value: `${groupHoliday.filter(h => h.count > 0).length} / ${divisions.length}개` }]
     }
+    if (monthDeptMetric === 'hours') {
+      const cum = hoursBasis === 'cumulative'
+      const rows = divisionHours.filter(d => divisions.includes(d.division))
+      const heads = metrics.filter(m => divisions.includes(m.division))
+      const hc = heads.reduce((s, m) => s + m.headcount, 0)
+      const avg = hc > 0
+        ? rows.reduce((s, d) => s + (cum ? d.cumAvg : d.singleAvg) * (heads.find(m => m.division === d.division)?.headcount ?? 0), 0) / hc
+        : 0
+      const base = cum ? cumScheduledHours : monthScheduledHours
+      const run = weeklyCap.rows.filter(r => divisions.includes(r.division) && r.isRunOver).length
+      return cum
+        ? [{ label: '인당 누적', value: `${Math.round(avg).toLocaleString()}h` }, { label: '소정 대비', value: `${avg - base >= 0 ? '+' : '−'}${Math.abs(avg - base).toFixed(1)}h` }]
+        : [{ label: `${monthLabel} 인당`, value: `${avg.toFixed(1)}h` }, { label: '52h 연속 2주+', value: `${run}명` }]
+    }
     const groupLeave = (monthBasis === 'cumulative' ? divisionLeaveCumulative : divisionLeaveSingle).filter(d => divisions.includes(d.division))
     const g = groupLeave.reduce((s, d) => s + d.grantedDays, 0)
     const u = groupLeave.reduce((s, d) => s + d.usedDays, 0)
     const pct = g > 0 ? (u / g) * 100 : 0
     if (monthBasis === 'cumulative') {
-      const over209 = overLimitRows.filter(r => divisions.includes(r.division)).length
-      return [{ label: '연차 사용률', value: `${pct.toFixed(1)}%` }, { label: '목표차', value: `${(pct - cumulativeBenchmarkPct).toFixed(1)}%p` }, { label: '209h 초과', value: `${over209}명` }]
+      return [{ label: '연차 사용률', value: `${pct.toFixed(1)}%` }, { label: '목표차', value: `${(pct - cumulativeBenchmarkPct).toFixed(1)}%p` }]
     }
     return [{ label: `${monthLabel} 단독 사용률`, value: `${pct.toFixed(1)}%` }, { label: '배분 대비', value: `${(pct - MONTHLY_ALLOCATION).toFixed(1)}%p` }, { label: `${monthLabel} 사용`, value: `${fmtDays(u)}일` }]
   }
@@ -948,8 +1059,9 @@ export default function OverviewPage() {
   const deptSectionSubtitle =
     period.granularity === 'day' ? '사업부 5개 → 지원부 5개 지정 순서 · 상세는 사원별 지각·미달·미태깅'
     : period.granularity === 'week' ? (weekTab === 'overtime' ? '연장근로만 표시 · 초과·위험 사원의 주 근로시간' : '휴일근로만 표시 · 근로일자·시간')
-    : monthBasis === 'cumulative' ? `누적 기준 · 회계연도 발생 연차 대비 지금까지 쓴 비율 · 목표 ${cumulativeBenchmarkPct}%`
-    : `단월 기준 · ${monthLabel}에 새로 쓴 연차만 · 월 배분 ${MONTHLY_ALLOCATION.toFixed(1)}% 대비`
+    : monthDeptMetric === 'hours'
+      ? `위 근로시간 차트의 ${hoursBasis === 'cumulative' ? '누적' : '단월'} 기준을 따릅니다 · ${hoursBasis === 'cumulative' ? `1~${currentMonthNum}월 인당 누적 근로, 누적 소정 ${cumScheduledHours.toLocaleString()}h` : `${monthLabel} 인당 근로, 소정 ${monthScheduledHours}h`}`
+    : `위 연차 차트의 ${monthBasis === 'cumulative' ? '누적' : '단월'} 기준을 따릅니다 · ${monthBasis === 'cumulative' ? `1~${currentMonthNum}월 누적 사용률, 목표 ${cumulativeBenchmarkPct}%` : `${monthLabel}에 새로 쓴 연차만, 배분 ${MONTHLY_ALLOCATION.toFixed(1)}%`}`
 
   const overallSeverity: 'action' | 'warning' | 'normal' =
     [...businessCards, ...supportCards].some(c => c.severity === 'action') ? 'action'
@@ -957,7 +1069,7 @@ export default function OverviewPage() {
   const headerSubtitle =
     period.granularity === 'day' ? '하루 단위에서는 누가 제자리에 있었는가가 핵심입니다'
     : period.granularity === 'week' ? '주 단위에서는 52시간 한도와 연장수당 / 휴일근로와 휴일수당이 핵심입니다'
-    : '월 단위에서는 연차가 계획대로 소진되는가가 핵심입니다'
+    : '월 단위는 연차가 계획대로 소진되는가 · 근로시간이 반복해서 넘치는가'
 
   // ── Slack 다이제스트 조립 — 위에서 이미 계산해둔 값들을 그대로 포맷팅만 한다(중복 계산
   // 금지). selectedDivision이 있으면 그 부문 상세, 없으면 전사 비교 위주로 갈린다 — 대부분의
@@ -1056,7 +1168,6 @@ export default function OverviewPage() {
       .filter(d => d.ratePct < cumulativeBenchmarkPct)
       .sort((a, b) => a.ratePct - b.ratePct)
       .map(d => ({ label: d.division, pct: d.ratePct }))
-    const sortedOverLimit = [...overLimitRows].sort((a, b) => b.hours - a.hours)
     const topAnomalyDivisions = divAnomaly.filter(a => a.total > 0).slice(0, 3).map(a => ({ label: a.label, total: a.total }))
     return buildMonthlyDigestMarkdown({
       scopeDivision: selectedDivision,
@@ -1066,8 +1177,12 @@ export default function OverviewPage() {
       belowTargetDivisions: selectedDivision ? [] : belowTargetDivisions,
       belowTargetCount: belowTargetDivisions.length,
       totalDivisionsCount,
-      over209Count: overLimitRows.length,
-      over209People: sortedOverLimit.map(r => ({ name: r.name, division: r.division })),
+      monthAvgHours,
+      scheduledHours: monthScheduledHours,
+      weeklyAvgHours: weeklyCap.companyWeeklyAvg,
+      weekCount: monthWeeks.length,
+      avgOverPeople: weeklyCap.rows.filter(r => r.isAvgOver).map(r => ({ name: r.name, division: r.division, avgHours: r.avgHours })),
+      runOverPeople: weeklyCap.rows.filter(r => r.isRunOver).map(r => ({ name: r.name, division: r.division, maxRun: r.maxRun })),
       topAnomalyDivisions: selectedDivision ? [] : topAnomalyDivisions,
       anomalyPeople: selectedDivision ? empAnomaly : [],
       anomalyTotal: anomalyTotals.total,
@@ -1078,6 +1193,7 @@ export default function OverviewPage() {
     anomalyTotals, empLeave, totalOffsiteCount, rankedTopCards, empAnomaly, repeatOffenders,
     divisionRecognizedOt, employeeRecognizedOt, empHoliday, divHoliday, totalHolidayH, weeklyRisk, prevWeeklyRiskForDigest, total,
     divisionLeaveCumulative, cumulativeBenchmarkPct, overLimitRows, divAnomaly, totalDivisionsCount, leaveTotals,
+    monthAvgHours, monthScheduledHours, weeklyCap, monthWeeks,
   ])
 
   if (!isLiveData) {
@@ -1182,36 +1298,60 @@ export default function OverviewPage() {
                 다음 라운드). */}
             <DigestPreviewCard title={digestTitle} markdown={digestMarkdown} />
 
-            {/* 2. 연차 추이 차트 — 월 단위에서만 */}
+            {/* 2. 월 분석 띠 — 1줄: 연차 | 근로시간 추이 / 2줄: 52시간 상세 */}
             {period.granularity === 'month' && (
-              <LeaveTrendChart
-                mode={monthBasis} onModeChange={setMonthBasis}
-                points={monthlyLeavePoints}
-                legend={monthBasis === 'cumulative' ? [
-                  { label: `${monthLabel} 누적 목표`, value: `${cumulativeBenchmarkPct}%` },
-                  { label: `${monthLabel} 누적 실적`, value: `${leaveTotals.cumulativePct.toFixed(1)}%` },
-                  { label: '격차', value: `${(leaveTotals.cumulativePct - cumulativeBenchmarkPct).toFixed(1)}%p` },
-                  { label: '연말 예상 수당', value: '준비중' },
-                ] : [
-                  { label: '월 배분 목표', value: `${MONTHLY_ALLOCATION.toFixed(1)}%` },
-                  { label: `${monthLabel} 단독 실적`, value: `${leaveTotals.singlePct.toFixed(1)}%` },
-                  { label: '배분 대비', value: `${(leaveTotals.singlePct - MONTHLY_ALLOCATION).toFixed(1)}%p` },
-                  { label: '누적 사용률', value: `${leaveTotals.cumulativePct.toFixed(1)}%` },
-                ]}
-                footnote={monthBasis === 'cumulative'
-                  ? '누적 기준은 회계연도 발생 연차 대비 지금까지 쓴 비율을 그 달의 누적 목표와 비교합니다.'
-                  : '단월 기준은 그 달에 새로 쓴 연차만 월 배분 목표와 비교합니다.'}
-                stripTitle={monthBasis === 'cumulative' ? `${monthLabel} 한 달만 보면` : '누적으로 보면'}
-                stripItems={monthBasis === 'cumulative' ? [
-                  { label: `${monthLabel} 단독 사용률`, value: `${leaveTotals.singlePct.toFixed(1)}%` },
-                  { label: '배분 대비', value: `${(leaveTotals.singlePct - MONTHLY_ALLOCATION).toFixed(1)}%p` },
-                  { label: '209h 초과', value: `${overLimitRows.length}명` },
-                ] : [
-                  { label: `${monthLabel} 누적 사용률`, value: `${leaveTotals.cumulativePct.toFixed(1)}%` },
-                  { label: '누적 목표', value: `${cumulativeBenchmarkPct}%` },
-                  { label: '목표 대비', value: `${(leaveTotals.cumulativePct - cumulativeBenchmarkPct).toFixed(1)}%p` },
-                ]}
-              />
+              <>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-stretch">
+                  <LeaveTrendChart
+                    compact
+                    mode={monthBasis} onModeChange={setMonthBasis}
+                    points={monthlyLeavePoints}
+                    legend={[]}
+                    footnote=""
+                    stripTitle=""
+                    stripItems={monthBasis === 'cumulative' ? [
+                      { label: `${monthLabel} 누적`, value: `${leaveTotals.cumulativePct.toFixed(1)}%` },
+                      { label: `목표 ${cumulativeBenchmarkPct}%`, value: `${(leaveTotals.cumulativePct - cumulativeBenchmarkPct).toFixed(1)}%p` },
+                      { label: '미달 부서', value: `${divisionLeaveCumulative.filter(d => d.ratePct < cumulativeBenchmarkPct).length} / ${totalDivisionsCount}` },
+                    ] : [
+                      { label: `${monthLabel} 단독`, value: `${leaveTotals.singlePct.toFixed(1)}%` },
+                      { label: `배분 ${MONTHLY_ALLOCATION.toFixed(1)}%`, value: `${(leaveTotals.singlePct - MONTHLY_ALLOCATION).toFixed(1)}%p` },
+                      { label: '배분 미달 부서', value: `${divisionLeaveSingle.filter(d => d.ratePct < MONTHLY_ALLOCATION).length} / ${totalDivisionsCount}` },
+                    ]}
+                  />
+                  <WorkHoursTrendChart
+                    year={Number(period.to.slice(0, 4))}
+                    mode={hoursBasis} onModeChange={setHoursBasis}
+                    points={monthlyHoursPoints}
+                    stripItems={hoursBasis === 'cumulative' ? [
+                      { label: `1~${currentMonthNum}월 누적`, value: `${cumAvgHours.toFixed(1)}h`, tone: 'ink' },
+                      { label: `누적 소정 ${cumScheduledHours.toLocaleString()}h 대비`, value: `${cumAvgHours - cumScheduledHours >= 0 ? '+' : '−'}${Math.abs(cumAvgHours - cumScheduledHours).toFixed(1)}h`, tone: 'neg' },
+                      { label: '월평균 초과', value: `${((cumAvgHours - cumScheduledHours) / currentMonthNum).toFixed(1)}h`, tone: 'ink' },
+                    ] : [
+                      { label: `${monthLabel} 인당`, value: `${monthAvgHours.toFixed(1)}h`, tone: 'ink' },
+                      { label: `소정 ${monthScheduledHours}h 대비`, value: `${monthAvgHours - monthScheduledHours >= 0 ? '+' : '−'}${Math.abs(monthAvgHours - monthScheduledHours).toFixed(1)}h`, tone: 'neg' },
+                      ...(prevHoursPoint?.avgHours != null ? [{
+                        label: '전월 초과분 대비',
+                        value: (() => {
+                          const d = (monthAvgHours - monthScheduledHours) - (prevHoursPoint.avgHours! - prevHoursPoint.scheduledHours)
+                          return `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(1)}h`
+                        })(),
+                        tone: ((monthAvgHours - monthScheduledHours) - (prevHoursPoint.avgHours! - prevHoursPoint.scheduledHours)) > 0 ? 'neg' as const : 'pos' as const,
+                      }] : []),
+                    ]}
+                  />
+                </div>
+                <WeeklyCapPanel
+                  monthLabel={monthLabel}
+                  weeks={monthWeeks}
+                  rows={weeklyCap.rows}
+                  avgOverCount={weeklyCap.avgOverCount}
+                  runOverCount={weeklyCap.runOverCount}
+                  monthAvgHours={monthAvgHours}
+                  scheduledHours={monthScheduledHours}
+                  weeklyAvgHours={weeklyCap.companyWeeklyAvg}
+                />
+              </>
             )}
 
             {/* 3. 부서별 현황 — 사업부/지원부 두 구획, 주간에는 연장/휴일 하위탭 추가 */}
@@ -1233,6 +1373,22 @@ export default function OverviewPage() {
                     className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${weekTab === 'holiday' ? 'bg-white text-[var(--info)] shadow-sm' : 'text-[var(--ink-3)]'}`}
                   >
                     휴일근로
+                  </button>
+                </div>
+              )}
+              {period.granularity === 'month' && (
+                <div className="flex bg-[var(--line-2)] rounded-lg p-0.5">
+                  <button
+                    onClick={() => setMonthDeptMetric('leave')}
+                    className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${monthDeptMetric === 'leave' ? 'bg-white text-[var(--info)] shadow-sm' : 'text-[var(--ink-3)]'}`}
+                  >
+                    연차
+                  </button>
+                  <button
+                    onClick={() => setMonthDeptMetric('hours')}
+                    className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${monthDeptMetric === 'hours' ? 'bg-white text-[var(--info)] shadow-sm' : 'text-[var(--ink-3)]'}`}
+                  >
+                    근로시간
                   </button>
                 </div>
               )}

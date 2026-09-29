@@ -73,6 +73,10 @@ export interface PolicySettings {
   leaveTargetWarnDeltaPp: number
   /** 단월 연차 배분(8.3%) 대비 이 값(%p)까지는 주의, 그 아래는 조치 필요 (음수) */
   monthlyAllocationWarnDeltaPp: number
+  /** 월간 부서 카드(근로시간) — 인당 월 초과시간이 이 값을 넘으면 주의 */
+  monthlyHoursWarnOverH: number
+  /** 월간 부서 카드(근로시간) — 인당 월 초과시간이 이 값을 넘으면 조치 필요 */
+  monthlyHoursActionOverH: number
 }
 
 export const DEFAULT_POLICY: PolicySettings = {
@@ -116,6 +120,8 @@ export const DEFAULT_POLICY: PolicySettings = {
   holidayWarningCount: 1,
   leaveTargetWarnDeltaPp: -10,
   monthlyAllocationWarnDeltaPp: -1.5,
+  monthlyHoursWarnOverH: 10,
+  monthlyHoursActionOverH: 15,
 }
 
 export type DayType = 'WEEKDAY' | 'WEEKEND' | 'HOLIDAY'

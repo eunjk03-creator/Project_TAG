@@ -69,6 +69,8 @@ const POLICY_CATS: PolicyCat[] = [
       { key: 'holidayActionCount',           label: '휴일근로 조치 건수',      desc: '부서 휴일근로가 이 건수 이상이면 조치 필요', type: 'number', unit: '건' },
       { key: 'leaveTargetWarnDeltaPp',       label: '연차 누적 주의 임계',     desc: '누적 사용률 목표 대비 이 값(%p)까지는 주의, 그 아래는 조치 필요 (음수로 입력)', type: 'number', unit: '%p' },
       { key: 'monthlyAllocationWarnDeltaPp', label: '연차 단월 주의 임계',     desc: '단월 배분(8.3%) 대비 이 값(%p)까지는 주의, 그 아래는 조치 필요 (음수로 입력)', type: 'number', unit: '%p', step: 0.1 },
+      { key: 'monthlyHoursWarnOverH',        label: '월간 근로시간 주의 기준', desc: '월간 부서 카드에서 인당 월 초과시간이 이 값 이상이면 주의', type: 'number', unit: 'h', step: 0.5 },
+      { key: 'monthlyHoursActionOverH',      label: '월간 근로시간 조치 기준', desc: '월간 부서 카드에서 인당 월 초과시간이 이 값 이상이면 조치 필요', type: 'number', unit: 'h', step: 0.5 },
     ],
   },
   { id: 'system', label: '시스템 관리', fields: [] },
