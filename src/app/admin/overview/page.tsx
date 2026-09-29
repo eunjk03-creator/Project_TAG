@@ -56,6 +56,11 @@ function todayStrFrom(d: Date): string {
 function todayStr(): string {
   return todayStrFrom(new Date())
 }
+function addDaysStr(dateStr: string, n: number): string {
+  const d = new Date(dateStr + 'T12:00')
+  d.setDate(d.getDate() + n)
+  return todayStrFrom(d)
+}
 
 const PIE_COLORS = ['#3b82f6', '#e5e7eb'] // 정상(blue) / 이상(gray)
 
@@ -524,13 +529,36 @@ export default function OverviewPage() {
     () => period.granularity === 'month' ? buildMonthWeeks(period.from, period.to, asOfDate) : [],
     [period.granularity, period.from, period.to, asOfDate],
   )
-  // 첫 주가 전월 날짜를 포함하므로 ytd 레코드로 판정한다.
-  // ⚠️ 1월은 ytd가 1/1부터라 12월 말 날짜가 빠진다 — 1월 첫 주만 해당, 허용 오차로 둔다.
+  // 마지막 주가 다음 달로 걸치면(예: 8월 5주차 8/30~9/5) ytdScopedRecords(1/1~그 달 말일까지만
+  // 조회)엔 그 며칠 분이 없어서 그 주 근로시간이 실제보다 적게 잡힌다 — 그 여분만 따로 조회해서
+  // weeklyCap 계산에만 합친다(2026-09-30). ytdScopedRecords 자체는 그대로 둔다 — 연차 누적
+  // 사용률(buildEmployeeLeaveUsage)·부서 근로시간 누적(buildDivisionHours)은 자체 날짜 경계가
+  // 없어서 여기 다음 달 며칠이 섞이면 "1~8월 누적"에 9월 데이터가 끼는 오류가 생긴다.
+  const weekTailFrom = useMemo(() => addDaysStr(period.to, 1), [period.to])
+  const weekTailTo = useMemo(() => {
+    if (period.granularity !== 'month' || monthWeeks.length === 0) return period.to
+    const lastWeekEnd = monthWeeks[monthWeeks.length - 1].to
+    const today = todayStr()
+    return lastWeekEnd < today ? lastWeekEnd : today
+  }, [period.granularity, monthWeeks, period.to])
+  const needsWeekTail = period.granularity === 'month' && weekTailTo > period.to
+  const { records: weekTailRawRecords } = useProcessedAttendance(
+    needsWeekTail ? weekTailFrom : period.to,
+    needsWeekTail ? weekTailTo : period.to,
+  )
+  const weekTailScopedRecords = useMemo(
+    () => needsWeekTail ? weekTailRawRecords.filter(r => ytdScopedIds.has(r.employeeId)) : [],
+    [needsWeekTail, weekTailRawRecords, ytdScopedIds],
+  )
+  const weeklyCapRecords = useMemo(
+    () => weekTailScopedRecords.length > 0 ? [...ytdScopedRecords, ...weekTailScopedRecords] : ytdScopedRecords,
+    [ytdScopedRecords, weekTailScopedRecords],
+  )
   const weeklyCap = useMemo(
     () => period.granularity === 'month'
-      ? buildWeeklyCapRows(ytdScopedRecords, ytdScopedEmployees, finalAttrMap, monthWeeks)
+      ? buildWeeklyCapRows(weeklyCapRecords, ytdScopedEmployees, finalAttrMap, monthWeeks)
       : { rows: [], avgOverCount: 0, runOverCount: 0, companyWeeklyAvg: 0 },
-    [period.granularity, ytdScopedRecords, ytdScopedEmployees, finalAttrMap, monthWeeks],
+    [period.granularity, weeklyCapRecords, ytdScopedEmployees, finalAttrMap, monthWeeks],
   )
   const monthlyHoursPoints = useMemo(
     () => period.granularity === 'month'
