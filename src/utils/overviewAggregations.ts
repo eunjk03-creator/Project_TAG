@@ -545,18 +545,17 @@ export function buildDivisionNormalRateRollup(
 }
 
 // ── 주차별(1~5주차) 이상치 추이 (월간 Zone2 차트용) ───────────────────────────
-// buildDailyOvertimeSeries와 같은 형태의 시리즈이나, 일자 단위가 아니라 월 내
-// 주차(월요일 시작) 단위로 flagToAnomalyCategories 합계를 묶는다.
+// buildDailyOvertimeSeries와 같은 형태의 시리즈이나, 일자 단위가 아니라 월 달력
+// 그리드에서 몇 번째 줄(일요일 시작)인가로 flagToAnomalyCategories 합계를 묶는다.
+// weekBoundary.ts의 weekOfMonth(실제 7일 단위 주, 시작일 기준 소속월 판정)와는
+// 목적이 달라 이름을 다르게 둔다 — 이 함수는 그 달의 모든 날짜를 빠짐없이 1~5주차
+// 중 하나에 배정해야 하는 달력 그리드용이라, 월 경계에 걸친 주를 전달로 보내지
+// 않는다(예: 1일이 화요일이면 1일도 1주차).
 
-function mondayBasedDow(d: Date): number {
-  const dow = d.getDay() // 0 = Sun
-  return dow === 0 ? 6 : dow - 1
-}
-
-function weekOfMonth(dateStr: string): number {
+function calendarRowOfMonth(dateStr: string): number {
   const d = new Date(dateStr + 'T12:00')
   const day1 = new Date(d.getFullYear(), d.getMonth(), 1)
-  return Math.ceil((d.getDate() + mondayBasedDow(day1)) / 7)
+  return Math.ceil((d.getDate() + day1.getDay()) / 7)
 }
 
 export interface WeeklyAnomalyPoint {
@@ -573,7 +572,7 @@ export function buildWeeklyAnomalySeries(records: ProcessedRecord[], from: strin
   for (const r of records) {
     if (!r.flag) continue
     if (r.date < from || r.date > to) continue
-    const week = weekOfMonth(r.date)
+    const week = calendarRowOfMonth(r.date)
     const row = byWeek.get(week) ?? { late: 0, shortage: 0, notag: 0, total: 0 }
     for (const cat of flagToAnomalyCategories(r.flag)) row[cat]++
     row.total++
