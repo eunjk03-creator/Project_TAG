@@ -1295,52 +1295,10 @@ export default function OverviewPage() {
             {/* 1.5. 근태 다이제스트 공유 — 상단 기간선택기(일/주/월)가 보여주는 기간과 본부
                 필터(selectedDivision)를 그대로 따라간다: 부문을 고르면 그 부문 상세로,
                 전체면 부문 비교 위주로 내용이 바뀐다. Slack mrkdwn 미리보기 + 복사만(발송은
-                다음 라운드). */}
-            <DigestPreviewCard title={digestTitle} markdown={digestMarkdown} />
-
-            {/* 2. 월 분석 띠 — 1줄: 연차 | 근로시간 추이 / 2줄: 52시간 상세 */}
-            {period.granularity === 'month' && (
-              <>
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-stretch">
-                  <LeaveTrendChart
-                    compact
-                    mode={monthBasis} onModeChange={setMonthBasis}
-                    points={monthlyLeavePoints}
-                    legend={[]}
-                    footnote=""
-                    stripTitle=""
-                    stripItems={monthBasis === 'cumulative' ? [
-                      { label: `${monthLabel} 누적`, value: `${leaveTotals.cumulativePct.toFixed(1)}%` },
-                      { label: `목표 ${cumulativeBenchmarkPct}%`, value: `${(leaveTotals.cumulativePct - cumulativeBenchmarkPct).toFixed(1)}%p` },
-                      { label: '미달 부서', value: `${divisionLeaveCumulative.filter(d => d.ratePct < cumulativeBenchmarkPct).length} / ${totalDivisionsCount}` },
-                    ] : [
-                      { label: `${monthLabel} 단독`, value: `${leaveTotals.singlePct.toFixed(1)}%` },
-                      { label: `배분 ${MONTHLY_ALLOCATION.toFixed(1)}%`, value: `${(leaveTotals.singlePct - MONTHLY_ALLOCATION).toFixed(1)}%p` },
-                      { label: '배분 미달 부서', value: `${divisionLeaveSingle.filter(d => d.ratePct < MONTHLY_ALLOCATION).length} / ${totalDivisionsCount}` },
-                    ]}
-                  />
-                  <WorkHoursTrendChart
-                    year={Number(period.to.slice(0, 4))}
-                    mode={hoursBasis} onModeChange={setHoursBasis}
-                    points={monthlyHoursPoints}
-                    stripItems={hoursBasis === 'cumulative' ? [
-                      { label: `1~${currentMonthNum}월 누적`, value: `${cumAvgHours.toFixed(1)}h`, tone: 'ink' },
-                      { label: `누적 소정 ${cumScheduledHours.toLocaleString()}h 대비`, value: `${cumAvgHours - cumScheduledHours >= 0 ? '+' : '−'}${Math.abs(cumAvgHours - cumScheduledHours).toFixed(1)}h`, tone: 'neg' },
-                      { label: '월평균 초과', value: `${((cumAvgHours - cumScheduledHours) / currentMonthNum).toFixed(1)}h`, tone: 'ink' },
-                    ] : [
-                      { label: `${monthLabel} 인당`, value: `${monthAvgHours.toFixed(1)}h`, tone: 'ink' },
-                      { label: `소정 ${monthScheduledHours}h 대비`, value: `${monthAvgHours - monthScheduledHours >= 0 ? '+' : '−'}${Math.abs(monthAvgHours - monthScheduledHours).toFixed(1)}h`, tone: 'neg' },
-                      ...(prevHoursPoint?.avgHours != null ? [{
-                        label: '전월 초과분 대비',
-                        value: (() => {
-                          const d = (monthAvgHours - monthScheduledHours) - (prevHoursPoint.avgHours! - prevHoursPoint.scheduledHours)
-                          return `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(1)}h`
-                        })(),
-                        tone: ((monthAvgHours - monthScheduledHours) - (prevHoursPoint.avgHours! - prevHoursPoint.scheduledHours)) > 0 ? 'neg' as const : 'pos' as const,
-                      }] : []),
-                    ]}
-                  />
-                </div>
+                다음 라운드). 월 단위에서는 옆에 주 52시간 초과자 칸을 나란히 둔다(2열, 칸 구분). */}
+            {period.granularity === 'month' ? (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-stretch">
+                <DigestPreviewCard title={digestTitle} markdown={digestMarkdown} />
                 <WeeklyCapPanel
                   monthLabel={monthLabel}
                   weeks={monthWeeks}
@@ -1351,7 +1309,53 @@ export default function OverviewPage() {
                   scheduledHours={monthScheduledHours}
                   weeklyAvgHours={weeklyCap.companyWeeklyAvg}
                 />
-              </>
+              </div>
+            ) : (
+              <DigestPreviewCard title={digestTitle} markdown={digestMarkdown} />
+            )}
+
+            {/* 2. 월 분석 띠 — 연차 | 근로시간 추이 (52시간 상세는 위 다이제스트 옆으로 이동) */}
+            {period.granularity === 'month' && (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-stretch">
+                <LeaveTrendChart
+                  compact
+                  mode={monthBasis} onModeChange={setMonthBasis}
+                  points={monthlyLeavePoints}
+                  legend={[]}
+                  footnote=""
+                  stripTitle=""
+                  stripItems={monthBasis === 'cumulative' ? [
+                    { label: `${monthLabel} 누적`, value: `${leaveTotals.cumulativePct.toFixed(1)}%` },
+                    { label: `목표 ${cumulativeBenchmarkPct}%`, value: `${(leaveTotals.cumulativePct - cumulativeBenchmarkPct).toFixed(1)}%p` },
+                    { label: '미달 부서', value: `${divisionLeaveCumulative.filter(d => d.ratePct < cumulativeBenchmarkPct).length} / ${totalDivisionsCount}` },
+                  ] : [
+                    { label: `${monthLabel} 단독`, value: `${leaveTotals.singlePct.toFixed(1)}%` },
+                    { label: `배분 ${MONTHLY_ALLOCATION.toFixed(1)}%`, value: `${(leaveTotals.singlePct - MONTHLY_ALLOCATION).toFixed(1)}%p` },
+                    { label: '배분 미달 부서', value: `${divisionLeaveSingle.filter(d => d.ratePct < MONTHLY_ALLOCATION).length} / ${totalDivisionsCount}` },
+                  ]}
+                />
+                <WorkHoursTrendChart
+                  year={Number(period.to.slice(0, 4))}
+                  mode={hoursBasis} onModeChange={setHoursBasis}
+                  points={monthlyHoursPoints}
+                  stripItems={hoursBasis === 'cumulative' ? [
+                    { label: `1~${currentMonthNum}월 누적`, value: `${cumAvgHours.toFixed(1)}h`, tone: 'ink' },
+                    { label: `누적 소정 ${cumScheduledHours.toLocaleString()}h 대비`, value: `${cumAvgHours - cumScheduledHours >= 0 ? '+' : '−'}${Math.abs(cumAvgHours - cumScheduledHours).toFixed(1)}h`, tone: 'neg' },
+                    { label: '월평균 초과', value: `${((cumAvgHours - cumScheduledHours) / currentMonthNum).toFixed(1)}h`, tone: 'ink' },
+                  ] : [
+                    { label: `${monthLabel} 인당`, value: `${monthAvgHours.toFixed(1)}h`, tone: 'ink' },
+                    { label: `소정 ${monthScheduledHours}h 대비`, value: `${monthAvgHours - monthScheduledHours >= 0 ? '+' : '−'}${Math.abs(monthAvgHours - monthScheduledHours).toFixed(1)}h`, tone: 'neg' },
+                    ...(prevHoursPoint?.avgHours != null ? [{
+                      label: '전월 초과분 대비',
+                      value: (() => {
+                        const d = (monthAvgHours - monthScheduledHours) - (prevHoursPoint.avgHours! - prevHoursPoint.scheduledHours)
+                        return `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(1)}h`
+                      })(),
+                      tone: ((monthAvgHours - monthScheduledHours) - (prevHoursPoint.avgHours! - prevHoursPoint.scheduledHours)) > 0 ? 'neg' as const : 'pos' as const,
+                    }] : []),
+                  ]}
+                />
+              </div>
             )}
 
             {/* 3. 부서별 현황 — 사업부/지원부 두 구획, 주간에는 연장/휴일 하위탭 추가 */}
