@@ -977,12 +977,21 @@ export default function OverviewPage() {
     const d = new Date(ds + 'T12:00:00')
     return `${d.getMonth() + 1}월 ${d.getDate()}일 (${DOW_KR[d.getDay()]})`
   }
-  /** 일 단위 다이제스트 제목용 — 단일 선택이면 그 날짜, 복수 선택이면 첫 날짜 + 개수. */
+  /** 두 날짜(inclusive) 사이의 일수를 계산. */
+  function daysBetween(from: string, to: string): number {
+    const a = new Date(from + 'T12:00:00')
+    const b = new Date(to + 'T12:00:00')
+    return Math.round((b.getTime() - a.getTime()) / 86_400_000)
+  }
+  /** 일 단위 다이제스트 제목용 — 단일 선택이면 그 날짜(범위면 from~to), 복수 선택이면 첫 날짜 + 전체 일수. */
   function formatDigestDateLabel(blocks: DateRange[]): string {
     const sorted = [...blocks].sort((a, b) => a.from.localeCompare(b.from))
-    return sorted.length === 1
-      ? fmtDigestDate(sorted[0].from)
-      : `${fmtDigestDate(sorted[0].from)} 외 ${sorted.length - 1}일`
+    if (sorted.length === 1) {
+      const b = sorted[0]
+      return b.from === b.to ? fmtDigestDate(b.from) : `${fmtDigestDate(b.from)} ~ ${fmtDigestDate(b.to)}`
+    }
+    const totalDays = sorted.reduce((sum, b) => sum + daysBetween(b.from, b.to) + 1, 0)
+    return `${fmtDigestDate(sorted[0].from)} 외 ${totalDays - 1}일`
   }
   /** 주 단위 다이제스트 제목용 — 단일 선택이면 그 주 범위, 복수 선택이면 범위 + 개수. */
   function formatDigestPeriodLabel(blocks: DateRange[]): string {
@@ -999,7 +1008,7 @@ export default function OverviewPage() {
         dateLabel: formatDigestDateLabel(activeBlocks),
         attendancePct: normalRate.pct,
         vsTargetPct: normalRate.pct - policy.attendanceTargetPct,
-        vsPrevPct: prevScopedRecords.length > 0 ? normalRate.pct - prevNormalRateForDigest.pct : null,
+        vsPrevPct: activeBlocks.length === 1 && prevScopedRecords.length > 0 ? normalRate.pct - prevNormalRateForDigest.pct : null,
         normalCount: normalRate.normal,
         anomalyTotal: anomalyTotals.total,
         anomalyLate: anomalyTotals.late,
@@ -1023,7 +1032,7 @@ export default function OverviewPage() {
         dangerCount: weeklyRisk.danger,
         cautionCount: weeklyRisk.caution,
         warningCount: weeklyRisk.warning,
-        vsPrevDanger: prevScopedRecords.length > 0 ? weeklyRisk.danger - prevWeeklyRiskForDigest.danger : null,
+        vsPrevDanger: activeBlocks.length === 1 && prevScopedRecords.length > 0 ? weeklyRisk.danger - prevWeeklyRiskForDigest.danger : null,
         avgOtPerPerson: fmtH(total.headcount > 0 ? totalRecognizedOt / total.headcount : 0),
         totalOt: fmtH(totalRecognizedOt),
         otEligible,
