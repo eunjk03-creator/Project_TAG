@@ -794,7 +794,7 @@ export default function OverviewPage() {
       : band.caution + band.warning > 0 || weeklyOtAvg >= policy.weeklyOtWarningH ? 'warning' : 'normal'
 
     const people = weeklyRisk.rows.filter(r => r.division === m.division).sort((a, b) => b.hours - a.hours)
-    const rows: DeptCardPersonRow[] = people.slice(0, 6).map(p => ({
+    const rows: DeptCardPersonRow[] = people.map(p => ({
       key: p.employeeId, name: p.name,
       tag: p.bucket === 'danger' ? { text: '초과', bg: '#ffeded', fg: '#e5342f' }
         : p.bucket === 'warning' ? { text: '경고', bg: '#fff4e5', fg: '#d17600' }
@@ -824,7 +824,7 @@ export default function OverviewPage() {
       row.count >= policy.holidayActionCount ? 'action'
       : row.count >= policy.holidayWarningCount ? 'warning' : 'normal'
     const details = holidayWorkDetails.filter(d => d.division === m.division).sort((a, b) => b.hours - a.hours)
-    const rows: DeptCardPersonRow[] = details.slice(0, 6).map(d => ({
+    const rows: DeptCardPersonRow[] = details.map(d => ({
       key: `${d.employeeId}_${d.date}`, name: d.name,
       tag: { text: d.date.slice(5).replace('-', '/'), bg: '#ecf2ff', fg: '#3b6fe0' },
       value: fmtH(d.hours), valueRed: d.hours >= 6,
@@ -850,7 +850,7 @@ export default function OverviewPage() {
     const severity = delta >= 0 ? 'normal' : delta >= policy.leaveTargetWarnDeltaPp ? 'warning' : 'action'
     const remain = Math.max(0, row.grantedDays - row.usedDays)
     const people = employeeLeaveCumulative.filter(r => r.division === m.division)
-    const rows: DeptCardPersonRow[] = people.slice(0, 6).map(p => ({
+    const rows: DeptCardPersonRow[] = people.map(p => ({
       key: p.employeeId, name: p.name,
       tag: { text: `${p.hireYear ?? '—'}년 입사 · ${p.grantedDays}일`, bg: '#f1f2f4', fg: '#8b8d94' },
       value: `${fmtDays(p.usedDays)}/${p.grantedDays}일 · ${p.ratePct.toFixed(0)}%`,
@@ -877,7 +877,7 @@ export default function OverviewPage() {
     const delta = row.ratePct - MONTHLY_ALLOCATION
     const severity = delta >= 0 ? 'normal' : delta >= policy.monthlyAllocationWarnDeltaPp ? 'warning' : 'action'
     const people = employeeLeaveSingle.filter(r => r.division === m.division && r.usedDays > 0).sort((a, b) => b.usedDays - a.usedDays)
-    const rows: DeptCardPersonRow[] = people.slice(0, 6).map(p => ({
+    const rows: DeptCardPersonRow[] = people.map(p => ({
       key: p.employeeId, name: p.name,
       value: `${fmtDays(p.usedDays)}일 · ${p.grantedDays > 0 ? ((p.usedDays / p.grantedDays) * 100).toFixed(1) : '0'}%`,
     }))

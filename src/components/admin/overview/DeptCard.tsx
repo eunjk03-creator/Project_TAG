@@ -62,6 +62,8 @@ const BADGE: Record<DeptCardSeverity, { bg: string; fg: string; label: string }>
   nodata:  { bg: '#f1f2f4', fg: '#b8bac0', label: '데이터 없음' },
 }
 
+const PAGE_SIZE = 6
+
 export function DeptCard({ vm, note, onSaveNote }: {
   vm: DeptCardVM
   /** 이번에 보고 있는 기간(day/week)에 저장된 이 부서의 인사이트 메모 */
@@ -73,6 +75,15 @@ export function DeptCard({ vm, note, onSaveNote }: {
   const [noteSaving, setNoteSaving] = useState(false)
   const [noteSaved, setNoteSaved] = useState(false)
   const badge = BADGE[vm.severity]
+
+  // 목록은 6명씩 페이지네이션 — rawPage는 그대로 두고 표시용 page만 범위 안으로 clamp한다.
+  // 기간/부서 이동으로 목록이 짧아져도(예: 6→3명) effect 없이 자동으로 마지막 페이지로
+  // 붙는다 — division이 바뀌면 key={division}이라 컴포넌트 자체가 새로 마운트되어
+  // rawPage도 자연히 0으로 리셋된다.
+  const [rawPage, setRawPage] = useState(0)
+  const totalPages = Math.max(1, Math.ceil(vm.rows.length / PAGE_SIZE))
+  const page = Math.min(rawPage, totalPages - 1)
+  const pagedRows = vm.rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)
 
   // DeptCard 인스턴스는 division 기준으로 재사용되고 기간(period)만 바뀔 수 있어서, note prop이
   // 바뀌면(다른 주/날짜로 이동) 편집 중이던 draft도 그 기간 값으로 다시 맞춰준다.
@@ -143,42 +154,63 @@ export function DeptCard({ vm, note, onSaveNote }: {
       </button>
 
       {open && (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          {vm.listColumnHeaders && (
-            <div className="sticky top-0 flex items-center px-[15px] py-1 bg-white text-[9.5px] text-[var(--ink-3)]">
-              <span className="flex-1">{vm.listColumnHeaders[0]}</span>
-              {vm.listColumnHeaders.slice(1).map((h, i) => <span key={i} className="w-[26px] text-center">{h}</span>)}
+        <>
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {vm.listColumnHeaders && (
+              <div className="sticky top-0 flex items-center px-[15px] py-1 bg-white text-[9.5px] text-[var(--ink-3)]">
+                <span className="flex-1">{vm.listColumnHeaders[0]}</span>
+                {vm.listColumnHeaders.slice(1).map((h, i) => <span key={i} className="w-[26px] text-center">{h}</span>)}
+              </div>
+            )}
+            {pagedRows.length === 0 ? (
+              <p className="text-[11px] text-[var(--ink-4)] text-center py-3">해당 없음</p>
+            ) : pagedRows.map(r => (
+              <div key={r.key} className="flex items-center px-[15px] py-[7px] border-b border-[var(--line-2)] last:border-b-0 gap-1.5">
+                <Link
+                  href={`/admin/employees/${r.key.split('_')[0]}`}
+                  className="text-[11px] font-bold text-[var(--ink)] truncate hover:underline hover:text-[var(--pri)]"
+                >
+                  {r.name}
+                </Link>
+                {r.date && (
+                  <span className="text-[9.5px] text-[var(--ink-4)] tabular-nums shrink-0">{r.date.slice(5)}</span>
+                )}
+                {r.tag && (
+                  <span className="text-[9.5px] font-semibold px-1 rounded shrink-0" style={{ background: r.tag.bg, color: r.tag.fg }}>{r.tag.text}</span>
+                )}
+                <span className="flex-1" />
+                {r.cols ? (
+                  r.cols.map((v, i) => (
+                    <span key={i} className="w-[26px] text-center text-[11px] font-extrabold tabular-nums" style={{ color: !v || v === '—' ? 'var(--ink-4)' : undefined }}>
+                      {v || '—'}
+                    </span>
+                  ))
+                ) : (
+                  <span className={`text-[10.5px] font-bold tabular-nums shrink-0 ${r.valueRed ? 'text-[var(--neg)]' : 'text-[var(--ink-2)]'}`}>{r.value}</span>
+                )}
+              </div>
+            ))}
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-[15px] py-[6px] border-t border-[var(--line-2)] shrink-0">
+              <button
+                onClick={() => setRawPage(page - 1)}
+                disabled={page === 0}
+                className="text-[10px] font-semibold text-[var(--ink-3)] hover:text-[var(--ink)] disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-[var(--ink-3)]"
+              >
+                ‹ 이전
+              </button>
+              <span className="text-[9.5px] text-[var(--ink-3)] tabular-nums">{page + 1} / {totalPages}</span>
+              <button
+                onClick={() => setRawPage(page + 1)}
+                disabled={page === totalPages - 1}
+                className="text-[10px] font-semibold text-[var(--ink-3)] hover:text-[var(--ink)] disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-[var(--ink-3)]"
+              >
+                다음 ›
+              </button>
             </div>
           )}
-          {vm.rows.length === 0 ? (
-            <p className="text-[11px] text-[var(--ink-4)] text-center py-3">해당 없음</p>
-          ) : vm.rows.map(r => (
-            <div key={r.key} className="flex items-center px-[15px] py-[7px] border-b border-[var(--line-2)] last:border-b-0 gap-1.5">
-              <Link
-                href={`/admin/employees/${r.key.split('_')[0]}`}
-                className="text-[11px] font-bold text-[var(--ink)] truncate hover:underline hover:text-[var(--pri)]"
-              >
-                {r.name}
-              </Link>
-              {r.date && (
-                <span className="text-[9.5px] text-[var(--ink-4)] tabular-nums shrink-0">{r.date.slice(5)}</span>
-              )}
-              {r.tag && (
-                <span className="text-[9.5px] font-semibold px-1 rounded shrink-0" style={{ background: r.tag.bg, color: r.tag.fg }}>{r.tag.text}</span>
-              )}
-              <span className="flex-1" />
-              {r.cols ? (
-                r.cols.map((v, i) => (
-                  <span key={i} className="w-[26px] text-center text-[11px] font-extrabold tabular-nums" style={{ color: !v || v === '—' ? 'var(--ink-4)' : undefined }}>
-                    {v || '—'}
-                  </span>
-                ))
-              ) : (
-                <span className={`text-[10.5px] font-bold tabular-nums shrink-0 ${r.valueRed ? 'text-[var(--neg)]' : 'text-[var(--ink-2)]'}`}>{r.value}</span>
-              )}
-            </div>
-          ))}
-        </div>
+        </>
       )}
 
       <div className="flex items-center justify-between px-[15px] py-2 bg-[#fafbfc] border-t border-[var(--line-2)] shrink-0">
