@@ -822,10 +822,15 @@ function groupByEmployee(records: ProcessedRecord[]): Map<string, ProcessedRecor
 
 export interface MonthWeek { from: string; to: string; label: string }
 
-/** monthFrom~monthTo와 겹치는 일~토 주. asOf 이후에 시작하는 주는 뺀다. */
+/** monthFrom이 속한 달의 일~토 주들 — weekBoundary.ts의 weekOfMonth와 동일하게 "주는
+ *  시작일(일요일) 기준으로 소속 달이 정해진다"를 따른다. monthFrom 자체가 일요일이 아니면
+ *  그 주(예: 7월 마지막 주가 8/1까지 걸치는 경우)는 전달 소속이라 빼고, 그 달의 첫 일요일부터
+ *  센다 — 안 그러면 월초 며칠 때문에 전달 주가 껴서 그 달 주차 수가 하나 밀린다(2026-09-30
+ *  버그 발견: 8월이 6주로 나옴, 실제는 5주). asOf 이후에 시작하는 주는 뺀다. */
 export function buildMonthWeeks(monthFrom: string, monthTo: string, asOf: string): MonthWeek[] {
   const weeks: MonthWeek[] = []
   let s = sundayOfStr(monthFrom)
+  if (s < monthFrom) s = addDaysStr(s, 7)
   let i = 1
   while (s <= monthTo && s <= asOf) {
     weeks.push({ from: s, to: addDaysStr(s, 6), label: `${i}주` })
