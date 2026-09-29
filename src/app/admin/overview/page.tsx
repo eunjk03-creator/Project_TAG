@@ -605,7 +605,7 @@ export default function OverviewPage() {
           subRows: [
             { key: '주의 45–50h', value: `${weeklyRisk.caution}명` },
             { key: '경고 50–52h', value: `${weeklyRisk.warning}명` },
-            ...(prevScopedRecords.length > 0 ? [{
+            ...(prevScopedRecords.length > 0 && activeBlocks.length === 1 ? [{
               key: '전주 대비', value: `${vsPrevDanger >= 0 ? '+' : ''}${vsPrevDanger}명`,
               tone: vsPrevDangerTone,
             }] : []),

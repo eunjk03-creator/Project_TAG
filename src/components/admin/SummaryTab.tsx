@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import type { ProcessedRecord, Employee } from '@/types/tag'
 import { DIVISION_ORDER } from '@/data/orgChart'
 import { computeEffInMins, compute4141BreakMins, parseTimeToMins, flagToAnomalyCategories } from '@/utils/attendanceCalc'
+import { weekStart } from '@/utils/weekBoundary'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -36,18 +37,16 @@ function generateWeeks(from: string, to: string): Week[] {
   const fromDate = new Date(from + 'T12:00')
   const toDate   = new Date(to   + 'T12:00')
 
-  let cur = new Date(fromDate)
-  const dow = cur.getDay()
-  if (dow !== 1) cur.setDate(cur.getDate() - (dow === 0 ? 6 : dow - 1))
+  let cur = new Date(weekStart(from) + 'T12:00')
   if (cur < fromDate) cur = new Date(fromDate)
 
   let n = 1
   while (cur <= toDate) {
     const start = new Date(cur)
     const curDow = start.getDay()
-    const daysToSun = curDow === 0 ? 0 : 7 - curDow
+    const daysToSat = 6 - curDow
     const end = new Date(start)
-    end.setDate(end.getDate() + daysToSun)
+    end.setDate(end.getDate() + daysToSat)
     const actualEnd = end > toDate ? new Date(toDate) : end
 
     weeks.push({
