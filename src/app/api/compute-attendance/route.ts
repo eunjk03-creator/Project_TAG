@@ -204,7 +204,13 @@ export async function POST(req: NextRequest) {
       await deleteStagingChunks(chunkCount)
     }
 
-    return NextResponse.json({ ok: true, count: processed.length, totalCount, offset, done, processed, processedAt })
+    // 페이지네이션 호출(전체 재계산)은 결과를 이미 daily_attendance에 upsert했고 클라이언트는
+    // 건수(count)만 쓴다 — 페이지당 ~0.8MB, 전체 ~31MB의 레코드 본문을 브라우저로 보내
+    // JSON 파싱시키던 낭비를 없앤다. 비페이지네이션(하위호환) 호출만 본문을 그대로 돌려준다.
+    return NextResponse.json({
+      ok: true, count: processed.length, totalCount, offset, done,
+      processed: isPaginated ? [] : processed, processedAt,
+    })
   } catch (err) {
     console.error('[compute-attendance] error:', err)
     return NextResponse.json(

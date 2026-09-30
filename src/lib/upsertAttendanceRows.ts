@@ -16,7 +16,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import type { ProcessedRecord } from '@/types/tag'
 
-const BATCH_SIZE = 500
+const BATCH_SIZE = 1000
 
 export interface AttendanceExtra {
   verificationNote?:   string[]

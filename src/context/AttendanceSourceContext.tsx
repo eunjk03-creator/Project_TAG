@@ -230,11 +230,15 @@ async function ingest(
 // 한 페이지당 처리 건수 — /api/compute-attendance가 이 슬라이스만큼만 processRecord()를
 // 돌리고 daily_attendance에 upsert한다(정책 변경처럼 전 직원 영향받는 "전체 재계산" 전용 —
 // CAPS/ERP 업로드는 더 이상 이 경로를 안 씀, ingest()가 영향받은 직원만 증분 재계산).
-const RECOMPUTE_PAGE_SIZE = 2000
+// 페이지마다 정책 조회·캐시 읽기·HTTP 왕복이 반복되므로(DB 왕복이 지배적 비용) 페이지 수를
+// 줄이는 게 총 시간에 가장 효과적 — 6000건이면 요청당 수 초 내라 maxDuration(300s)에 여유.
+const RECOMPUTE_PAGE_SIZE = 6000
 
 interface ComputePageResponse {
   ok:          boolean
   processed:   ProcessedRecord[]
+  /** 이 페이지에서 처리·upsert한 건수 — 페이지네이션 응답은 processed를 비워서 보낸다 */
+  count:       number
   totalCount:  number
   offset:      number
   done:        boolean
@@ -271,8 +275,8 @@ async function apiRecomputeAll(policy: PolicySettings): Promise<{ error: string 
   for (;;) {
     const { page, error } = await fetchComputePage(policy, offset, RECOMPUTE_PAGE_SIZE)
     if (error || !page) return { error }
-    if (page.processed.length === 0 || page.done) break
-    offset += page.processed.length
+    if (page.count === 0 || page.done) break
+    offset += page.count
   }
   return { error: null }
 }
