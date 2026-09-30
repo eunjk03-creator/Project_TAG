@@ -20,6 +20,7 @@ import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/ty
 import { HR_THRESHOLDS } from '@/types/tag'
 import { sortByDivisionOrder } from '@/data/orgChart'
 import { leaveTypeOverrideFields, clockOverrideFields } from '@/utils/attendanceCalc'
+import { orderLiveIdLast } from '@/lib/attendanceDefaults'
 
 const GRID_PAGE_SIZE = 40
 
@@ -126,7 +127,7 @@ export default function FastDashboard() {
       else if (DEFAULT_FIXED_B.has(rawId))         result.set(emp.id, { isFixedScheduleB: true })
       else if (DEFAULT_PREGNANT.has(rawId))        result.set(emp.id, { isPregnantReduced: true })
     }
-    for (const [staleId, attrs] of employeeAttrMap) {
+    for (const [staleId, attrs] of orderLiveIdLast(employeeAttrMap, toLive)) {
       const liveId = toLive.get(staleId) ?? staleId
       result.set(liveId, { ...(result.get(liveId) ?? {}), ...attrs })
     }

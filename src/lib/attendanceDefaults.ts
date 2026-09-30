@@ -109,6 +109,18 @@ export function buildAttrMapFromRules(
   return merged
 }
 
+/** 예외규칙을 liveId로 병합할 때의 적용 순서 — 현재 사번(liveId 그대로 저장된 규칙)이
+ *  옛 사번(이름으로 remap되는 stale 규칙)보다 항상 나중에 적용되어 우선하게 한다.
+ *  Map 삽입 순서(=규칙 생성 순서)에 결과가 좌우되면, 옛 기간 규칙이 새 규칙을 덮어써서
+ *  서버/화면 계산이 서로 달라질 수 있음 (양선주 임신단축 9/22·28·29 미달 사례). */
+export function orderLiveIdLast<T>(
+  attrMap: Map<string, T>,
+  toLive: Map<string, string>,
+): [string, T][] {
+  const isLive = (id: string) => toLive.get(id) === id
+  return [...attrMap.entries()].sort((a, b) => Number(isLive(a[0])) - Number(isLive(b[0])))
+}
+
 /** Builds the final per-employee attribute map by merging hardcoded defaults + user-configured rules.
  *  Replicates the finalAttrMap / remappedExcludeIds logic from admin/page.tsx server-side. */
 export function buildFinalAttrMap(
@@ -154,7 +166,7 @@ export function buildFinalAttrMap(
 
   // 2. User-configured rules on top (higher priority)
   const employeeAttrMap = buildAttrMapFromRules(rules)
-  for (const [staleId, attrs] of employeeAttrMap) {
+  for (const [staleId, attrs] of orderLiveIdLast(employeeAttrMap, toLive)) {
     const liveId = toLive.get(staleId) ?? staleId
     result.set(liveId, { ...(result.get(liveId) ?? {}), ...attrs })
   }

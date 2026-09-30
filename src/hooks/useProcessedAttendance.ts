@@ -8,6 +8,7 @@ import { useAttendanceSource } from '@/context/AttendanceSourceContext'
 import { useSlack } from '@/context/SlackContext'
 import { leaveTypeOverrideFields, synthesizeOverrideRecord, clockOverrideFields } from '@/utils/attendanceCalc'
 import { getDayInfo } from '@/utils/dataParser'
+import { orderLiveIdLast } from '@/lib/attendanceDefaults'
 import type { Employee, ProcessedRecord, EmployeeAttributeOverrides } from '@/types/tag'
 
 /** [from, to] 범위만 daily_attendance에서 직접 받아온다 — 예전엔 context가 들고 있던 연간
@@ -185,7 +186,7 @@ export function useProcessedAttendance(from: string, to: string): ProcessedAtten
       if (def) remappedAttr.set(emp.id, def)
     }
 
-    for (const [staleId, attrs] of employeeAttrMap) {
+    for (const [staleId, attrs] of orderLiveIdLast(employeeAttrMap, toLive)) {
       const liveId = toLive.get(staleId) ?? staleId
       remappedAttr.set(liveId, { ...(remappedAttr.get(liveId) ?? {}), ...attrs })
     }
