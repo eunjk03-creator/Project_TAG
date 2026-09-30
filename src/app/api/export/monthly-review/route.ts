@@ -40,8 +40,11 @@ export async function POST(req: NextRequest) {
     const anomalyRows  = buildMonthlyAnomalyBreakdown(monthRecords, empMap)
 
     const weeklyCap = buildWeeklyCapRows(records, employees, finalAttrMap, monthWeeks)
+    // 엑셀 "52시간초과" 시트는 1회성 초과는 빼고 2회 이상만 — 다이제스트의 "초과자(횟수)"
+    // 목록(고립된 1회도 포함)과는 별개 기준이다(2026-09-30 사용자 요청).
+    const weeklyCapRowsForExcel = weeklyCap.anyOverRows.filter(r => r.overCount >= 2)
 
-    const buffer = buildMonthlyReviewBuffer(anomalyRows, weeklyCap.anyOverRows, monthWeeks)
+    const buffer = buildMonthlyReviewBuffer(anomalyRows, weeklyCapRowsForExcel, monthWeeks)
 
     const fromLabel = from.replace(/-/g, '').slice(2)
     const toLabel   = to.replace(/-/g, '').slice(2)

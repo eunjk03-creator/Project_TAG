@@ -844,6 +844,10 @@ export function buildMonthWeeks(monthFrom: string, monthTo: string, asOf: string
 
 export interface WeeklyCapRow {
   employeeId: string
+  /** 원본 사원번호(표시 전용) — employeeId는 "사원번호_이름" 합성키라 화면/엑셀에 그대로
+   *  보여주면 사번에 이름이 붙어 보인다(2026-09-30 발견). 사번을 보여줘야 하는 곳은 항상
+   *  이 필드를 쓸 것, employeeId를 쓰지 말 것. */
+  rawId:      string
   name:       string
   division:   string
   /** weeks와 같은 순서. 그 주에 레코드가 하나도 없으면 null */
@@ -902,7 +906,7 @@ export function buildWeeklyCapRows(
       else run = 0
     }
     all.push({
-      employeeId, name: emp.name, division: emp.division ?? '—',
+      employeeId, rawId: emp.rawId ?? emp.id.split('_')[0], name: emp.name, division: emp.division ?? '—',
       weekHours: sums, avgHours, overCount, maxRun,
       isAvgOver: avgHours > WEEKLY_CAP_HOURS,
       isRunOver: maxRun >= 2,
@@ -1038,6 +1042,9 @@ export function buildDivisionHours(
 
 export interface MonthlyAnomalyBreakdownRow {
   employeeId: string
+  /** 원본 사원번호(표시 전용) — employeeId는 "사원번호_이름" 합성키라 엑셀 사번 칸에는
+   *  이 필드를 쓸 것(employeeId를 그대로 쓰면 사번에 이름이 붙어 보인다, 2026-09-30). */
+  rawId:      string
   name:       string
   division:   string
   late:       number
@@ -1064,8 +1071,9 @@ export function buildMonthlyAnomalyBreakdown(
 
     if (!byEmp.has(r.employeeId)) {
       const emp = empMap.get(r.employeeId)
+      const rawId = emp?.rawId ?? emp?.id.split('_')[0] ?? r.employeeId.split('_')[0]
       byEmp.set(r.employeeId, {
-        employeeId: r.employeeId, name: emp?.name ?? r.employeeId, division: emp?.division ?? '—',
+        employeeId: r.employeeId, rawId, name: emp?.name ?? r.employeeId, division: emp?.division ?? '—',
         late: 0, shortage: 0, notag: 0, mixed: 0, total: 0,
       })
     }

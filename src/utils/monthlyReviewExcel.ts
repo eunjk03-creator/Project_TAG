@@ -45,7 +45,7 @@ function buildAnomalySheet(rows: MonthlyAnomalyBreakdownRow[]) {
 
   sorted.forEach(row => {
     const fill = band(R)
-    sc(ws, 0, R, row.employeeId, S(fill, false, '333333', 'left'))
+    sc(ws, 0, R, row.rawId, S(fill, false, '333333', 'left'))
     sc(ws, 1, R, row.name,       S(fill, false, '333333', 'left'))
     sc(ws, 2, R, row.division,   S(fill, false, '333333', 'left'))
     const numStyle = (v: number, bold: boolean) => ({
@@ -96,7 +96,7 @@ function buildWeeklyCapSheet(rows: WeeklyCapRow[], weeks: MonthWeek[]) {
     const textStyle = (align: 'left' | 'center' = 'left') =>
       S(fill, highlight, highlight ? 'C00000' : '333333', align, 9)
 
-    sc(ws, 0, R, row.employeeId, textStyle())
+    sc(ws, 0, R, row.rawId, textStyle())
     sc(ws, 1, R, row.name,       textStyle())
     sc(ws, 2, R, row.division,   textStyle())
     row.weekHours.forEach((h, i) => {
