@@ -172,14 +172,17 @@ export interface MonthlyDigestInput {
   belowTargetCount: number
   totalDivisionsCount: number
 
-  /** 근로시간 · 52시간 */
+  /** 근로시간 · 52시간 — scopeDivision === null(전사)일 때만 쓴다 */
   monthAvgHours: number
   scheduledHours: number
   weeklyAvgHours: number
   weekCount: number
-  /** 전사 모드에선 TOP3만 쓰고 "등"을 붙인다. 부문 모드에선 전원 */
+  /** 전사 모드에선 TOP3만 쓰고 "등"을 붙인다. 부문 모드에선 안 씀(아래 anyOverPeople로 대체) */
   avgOverPeople: { name: string; division: string; avgHours: number }[]
   runOverPeople: { name: string; division: string; maxRun: number }[]
+  /** scopeDivision이 있을 때만 — 그 부문에서 52h를 한 번이라도 넘은 사람 전원(캡 없음),
+   *  overCount(주 단위 초과 횟수) 내림차순. 2026-09-30 부문 모드 다이제스트 간소화용. */
+  anyOverPeople: { name: string; overCount: number; isAvgOver: boolean }[]
 
   /** scopeDivision === null일 때만 — 이상치 최다 부문 */
   topAnomalyDivisions: { label: string; total: number }[]
@@ -212,22 +215,47 @@ export function buildMonthlyDigestMarkdown(d: MonthlyDigestInput): string {
 
   // [근로시간 · 52시간]
   lines.push('*[근로시간 · 52시간]*')
-  const diff = d.monthAvgHours - d.scheduledHours
-  lines.push(`• ${d.monthLabel.replace(/^\d+년\s*/, '')} 평균 근로시간 ${d.monthAvgHours.toFixed(1)}시간 (기준 ${d.scheduledHours}시간 대비 ${Math.abs(diff).toFixed(1)}시간 ${diff >= 0 ? '초과' : '미달'})`)
-  lines.push(`• 인당 주 평균 근로시간 ${d.weeklyAvgHours.toFixed(1)}시간 (1인당 ${Math.max(0, d.weeklyAvgHours - 40).toFixed(1)}시간 연장근로)`)
-  const avgRows = cap(d.avgOverPeople)
-  lines.push(`• ${d.weekCount}주 평균 52h 초과자 ${d.avgOverPeople.length}명${avgRows.length ? ` — ${avgRows.map(p => who(p, `${p.avgHours.toFixed(1)}h`)).join(' · ')}${more(d.avgOverPeople)}` : ''}`)
-  const runRows = cap(d.runOverPeople)
-  lines.push(`  └ 2주 이상 연속 초과 ${d.runOverPeople.length}명${runRows.length ? `: ${runRows.map(p => who(p, `${p.maxRun}주`)).join(' · ')}${more(d.runOverPeople)}` : ''}`)
+  if (d.scopeDivision === null) {
+    const diff = d.monthAvgHours - d.scheduledHours
+    lines.push(`• ${d.monthLabel.replace(/^\d+년\s*/, '')} 평균 근로시간 ${d.monthAvgHours.toFixed(1)}시간 (기준 ${d.scheduledHours}시간 대비 ${Math.abs(diff).toFixed(1)}시간 ${diff >= 0 ? '초과' : '미달'})`)
+    lines.push(`• 인당 주 평균 근로시간 ${d.weeklyAvgHours.toFixed(1)}시간 (1인당 ${Math.max(0, d.weeklyAvgHours - 40).toFixed(1)}시간 연장근로)`)
+    const avgRows = cap(d.avgOverPeople)
+    lines.push(`• ${d.weekCount}주 평균 52h 초과자 ${d.avgOverPeople.length}명${avgRows.length ? ` — ${avgRows.map(p => who(p, `${p.avgHours.toFixed(1)}h`)).join(' · ')}${more(d.avgOverPeople)}` : ''}`)
+    const runRows = cap(d.runOverPeople)
+    lines.push(`  └ 2주 이상 연속 초과 ${d.runOverPeople.length}명${runRows.length ? `: ${runRows.map(p => who(p, `${p.maxRun}주`)).join(' · ')}${more(d.runOverPeople)}` : ''}`)
+  } else {
+    // 부문 모드 — 평균초과/연속초과 구분 없이, 한 번이라도 52h 넘은 사람 전원을
+    // "평균초과 인원 / 전체 초과 인원"과 이름별 초과 횟수 목록으로만 단순화(2026-09-30).
+    const avgOverCount = d.anyOverPeople.filter(p => p.isAvgOver).length
+    lines.push(`• ${d.weekCount}주 평균 52시간 초과자 : ${avgOverCount}명 / ${d.anyOverPeople.length}명`)
+    if (d.anyOverPeople.length > 0) {
+      lines.push(`• 52시간 초과자(횟수) : ${d.anyOverPeople.map(p => `${p.name}(${p.overCount}회)`).join(', ')}`)
+    }
+  }
   lines.push('')
 
   // [이상치]
   lines.push('*[이상치]*')
-  if (d.scopeDivision === null && d.topAnomalyDivisions.length > 0) {
-    lines.push(`• 이번 달 이상치 최다 부문: ${d.topAnomalyDivisions.slice(0, 3).map(a => `${a.label} ${a.total}건`).join(' · ')}`)
-  } else if (d.scopeDivision) {
-    const detail = d.anomalyPeople.length > 0 ? ` — ${formatAnomalyPeople(d.anomalyPeople)}` : ''
-    lines.push(`• 이번 달 이상치 ${d.anomalyTotal}건${detail}`)
+  if (d.scopeDivision === null) {
+    if (d.topAnomalyDivisions.length > 0) {
+      lines.push(`• 이번 달 이상치 최다 부문: ${d.topAnomalyDivisions.slice(0, 3).map(a => `${a.label} ${a.total}건`).join(' · ')}`)
+    }
+  } else {
+    // 지각 1회 이상 또는 근무미달 1회 이상인 사람만(미태깅만 있으면 제외), 내림차순
+    // 세로 리스트업 — "이름(지각N, 미달M)" (2026-09-30).
+    const flagged = d.anomalyPeople
+      .filter(p => p.late > 0 || p.shortage > 0)
+      .sort((a, b) => (b.late + b.shortage) - (a.late + a.shortage))
+    if (flagged.length === 0) {
+      lines.push('해당 없음')
+    } else {
+      for (const p of flagged) {
+        const parts: string[] = []
+        if (p.late)     parts.push(`지각${p.late}`)
+        if (p.shortage) parts.push(`미달${p.shortage}`)
+        lines.push(`${p.label}(${parts.join(', ')})`)
+      }
+    }
   }
 
   return lines.join('\n')

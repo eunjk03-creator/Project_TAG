@@ -145,11 +145,15 @@ function DivisionCompareChart({
   )
 }
 
-/** 근태 다이제스트 마크다운 미리보기 + 클립보드 복사 — 발송 버튼은 다음 라운드.
- *  텍스트 조립은 부모(OverviewPage)가 이미 화면에 쓰고 있는 값 그대로 하고, 이 컴포넌트는
- *  완성된 문자열을 보여주고 복사만 담당한다(순수 프레젠테이션). */
-function DigestPreviewCard({ title, markdown }: { title: string; markdown: string }) {
+/** 근태 다이제스트 마크다운 미리보기 + 클립보드 복사(일/주) 또는 엑셀 다운로드(월) —
+ *  발송 버튼은 다음 라운드. 텍스트 조립은 부모(OverviewPage)가 이미 화면에 쓰고 있는 값
+ *  그대로 하고, 이 컴포넌트는 완성된 문자열을 보여주고 복사/다운로드만 담당한다(순수
+ *  프레젠테이션). onDownload가 있으면(월 단위) 버튼이 "다운로드"로 바뀐다 — 선택된 부서와
+ *  무관하게 항상 전체 부서 파일이 내려간다(2026-09-30, 부서별 파일을 안 나누는 이유는
+ *  받는 쪽이 Excel 자체 필터로 부서별 조회를 하기 때문). */
+function DigestPreviewCard({ title, markdown, onDownload }: { title: string; markdown: string; onDownload?: () => Promise<void> }) {
   const [copied, setCopied] = useState(false)
+  const [downloading, setDownloading] = useState(false)
 
   async function handleCopy() {
     try {
@@ -162,15 +166,28 @@ function DigestPreviewCard({ title, markdown }: { title: string; markdown: strin
     }
   }
 
+  async function handleDownload() {
+    if (!onDownload) return
+    setDownloading(true)
+    try {
+      await onDownload()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '다운로드에 실패했습니다')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   return (
     <div className="bg-white rounded-2xl border border-[var(--line)] shadow-sm p-5 space-y-2.5">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-[var(--ink)]">{title}</h3>
         <button
-          onClick={handleCopy}
-          className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[var(--dark)] text-white hover:opacity-90 transition-opacity"
+          onClick={onDownload ? handleDownload : handleCopy}
+          disabled={downloading}
+          className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[var(--dark)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
         >
-          {copied ? '복사됨!' : '마크다운으로 복사'}
+          {onDownload ? (downloading ? '생성 중...' : '다운로드') : (copied ? '복사됨!' : '마크다운으로 복사')}
         </button>
       </div>
       <pre className="text-[11.5px] leading-relaxed text-[var(--ink-2)] bg-[var(--canvas)] rounded-xl p-3.5 whitespace-pre-wrap font-sans">
@@ -557,7 +574,7 @@ export default function OverviewPage() {
   const weeklyCap = useMemo(
     () => period.granularity === 'month'
       ? buildWeeklyCapRows(weeklyCapRecords, ytdScopedEmployees, finalAttrMap, monthWeeks)
-      : { rows: [], avgOverCount: 0, runOverCount: 0, companyWeeklyAvg: 0 },
+      : { rows: [], avgOverCount: 0, runOverCount: 0, companyWeeklyAvg: 0, anyOverRows: [] },
     [period.granularity, weeklyCapRecords, ytdScopedEmployees, finalAttrMap, monthWeeks],
   )
   const monthlyHoursPoints = useMemo(
@@ -1012,6 +1029,34 @@ export default function OverviewPage() {
     setOverviewNotes(prev => new Map(prev).set(division, note))
   }
 
+  // ── 월간 이상치/52시간초과 엑셀 다운로드 — 다이제스트 카드의 "다운로드" 버튼(월 단위 전용).
+  // 선택된 부서(selectedDivision)와 무관하게 항상 그 달 전체 부서 기준으로 만든다 — 부서
+  // 구분은 받는 쪽이 Excel 자체 필터로 건다(2026-09-30).
+  async function handleMonthlyExcelDownload() {
+    const res = await fetch('/api/export/monthly-review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: period.from, to: period.to }),
+    })
+    if (!res.ok) {
+      const { error } = await res.json().catch(() => ({ error: '오류' }))
+      throw new Error(error ?? '파일 생성에 실패했습니다')
+    }
+    const blob        = await res.blob()
+    const url         = URL.createObjectURL(blob)
+    const disposition = res.headers.get('Content-Disposition') ?? ''
+    const match        = disposition.match(/filename\*=UTF-8''(.+)/)
+    const filename     = match ? decodeURIComponent(match[1]) : `근태상세_이상치검토_${period.from}-${period.to}.xlsx`
+
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   // ── 부서 랭킹 TOP3(day/week 전용) — 10개 카드를 다 안 훑어도 어디부터 볼지 한눈에.
   // day는 카드에 실제로 보이는 이상치 총건수 그대로 내림차순(출근율 기준 severity와는 무관 —
   // 화면에 보이는 숫자와 랭킹 기준이 어긋나면 헷갈린다는 피드백으로 통일함, 2026-09-07).
@@ -1211,6 +1256,7 @@ export default function OverviewPage() {
       weekCount: monthWeeks.length,
       avgOverPeople: weeklyCap.rows.filter(r => r.isAvgOver).map(r => ({ name: r.name, division: r.division, avgHours: r.avgHours })),
       runOverPeople: weeklyCap.rows.filter(r => r.isRunOver).map(r => ({ name: r.name, division: r.division, maxRun: r.maxRun })),
+      anyOverPeople: weeklyCap.anyOverRows.map(r => ({ name: r.name, overCount: r.overCount, isAvgOver: r.isAvgOver })),
       topAnomalyDivisions: selectedDivision ? [] : topAnomalyDivisions,
       anomalyPeople: selectedDivision ? empAnomaly : [],
       anomalyTotal: anomalyTotals.total,
@@ -1326,7 +1372,7 @@ export default function OverviewPage() {
                 다음 라운드). 월 단위에서는 옆에 주 52시간 초과자 칸을 나란히 둔다(2열, 칸 구분). */}
             {period.granularity === 'month' ? (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-stretch">
-                <DigestPreviewCard title={digestTitle} markdown={digestMarkdown} />
+                <DigestPreviewCard title={digestTitle} markdown={digestMarkdown} onDownload={handleMonthlyExcelDownload} />
                 <WeeklyCapPanel
                   monthLabel={monthLabel}
                   weeks={monthWeeks}

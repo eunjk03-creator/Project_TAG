@@ -859,12 +859,16 @@ export interface WeeklyCapRow {
 }
 
 export interface WeeklyCapResult {
-  /** isAvgOver || isRunOver 인 사람만, avgHours 내림차순 */
+  /** isAvgOver || isRunOver 인 사람만, avgHours 내림차순 — 화면(WeeklyCapPanel) 전용 */
   rows: WeeklyCapRow[]
   avgOverCount: number
   runOverCount: number
   /** 전 인원의 주 평균 인정근로시간(인당) */
   companyWeeklyAvg: number
+  /** 52h를 한 번이라도 넘은 사람 전원(overCount>=1), overCount 내림차순 — rows는 화면용이라
+   *  평균초과·2주연속만 거르지만, 이건 고립된 1주 초과자도 포함한다(다이제스트 "초과자(횟수)"
+   *  목록·엑셀 다운로드용, 2026-09-30). */
+  anyOverRows: WeeklyCapRow[]
 }
 
 export function buildWeeklyCapRows(
@@ -906,11 +910,13 @@ export function buildWeeklyCapRows(
   }
 
   const rows = all.filter(r => r.isAvgOver || r.isRunOver).sort((a, b) => b.avgHours - a.avgHours)
+  const anyOverRows = all.filter(r => r.overCount > 0).sort((a, b) => b.overCount - a.overCount)
   return {
     rows,
     avgOverCount: rows.filter(r => r.isAvgOver).length,
     runOverCount: rows.filter(r => r.isRunOver).length,
     companyWeeklyAvg: all.length > 0 ? all.reduce((s, r) => s + r.avgHours, 0) / all.length : 0,
+    anyOverRows,
   }
 }
 
@@ -1021,4 +1027,51 @@ export function buildDivisionHours(
       cumAvg:    c && c.people.size > 0 ? c.hours / c.people.size : 0,
     }
   })
+}
+
+// ── 월간 이상치 개인별 집계 — 부서 무관, 지각/미달/미태깅/혼합 상호배타 ─────────────
+// buildEmployeeAnomalyRollup(다른 화면에서 씀)의 flagToAnomalyCategories는 "지각+미달"이
+// 겹친 날을 두 카테고리에 각각 중복 집계해서(지각++, 미달++) late+shortage+notag의 합이
+// total보다 커질 수 있다 — 화면 배지 용도로는 문제없지만, "칸의 합 = 총합계"가 딱 맞아야
+// 하는 엑셀 다운로드용 표에는 못 쓴다. 그래서 혼합 날은 별도 칸(mixed)으로 떼어
+// late+shortage+notag+mixed === total이 항상 성립하게 만든다(2026-09-30, 엑셀 다운로드 스펙).
+
+export interface MonthlyAnomalyBreakdownRow {
+  employeeId: string
+  name:       string
+  division:   string
+  late:       number
+  shortage:   number
+  notag:      number
+  /** 지각+미달이 하루에 겹친 날(LATE_AND_ANOMALY/LATE_AND_EARLY_DEPARTURE) */
+  mixed:      number
+  total:      number
+}
+
+export function buildMonthlyAnomalyBreakdown(
+  records: ProcessedRecord[],
+  empMap:  Map<string, Employee>,
+): MonthlyAnomalyBreakdownRow[] {
+  const byEmp = new Map<string, MonthlyAnomalyBreakdownRow>()
+  for (const r of records) {
+    if (!r.flag) continue
+    let key: 'late' | 'shortage' | 'notag' | 'mixed' | null = null
+    if (r.flag === 'LATE') key = 'late'
+    else if (r.flag === 'ATTENDANCE_ANOMALY' || r.flag === 'EARLY_DEPARTURE') key = 'shortage'
+    else if (r.flag === 'NO_CLOCK_IN' || r.flag === 'NO_CLOCK_OUT') key = 'notag'
+    else if (r.flag === 'LATE_AND_ANOMALY' || r.flag === 'LATE_AND_EARLY_DEPARTURE') key = 'mixed'
+    if (!key) continue
+
+    if (!byEmp.has(r.employeeId)) {
+      const emp = empMap.get(r.employeeId)
+      byEmp.set(r.employeeId, {
+        employeeId: r.employeeId, name: emp?.name ?? r.employeeId, division: emp?.division ?? '—',
+        late: 0, shortage: 0, notag: 0, mixed: 0, total: 0,
+      })
+    }
+    const row = byEmp.get(r.employeeId)!
+    row[key]++
+    row.total++
+  }
+  return [...byEmp.values()].sort((a, b) => b.total - a.total)
 }
